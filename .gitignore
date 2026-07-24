@@ -1,0 +1,30 @@
+# Entorno virtual (pesado, se recrea con requirements.txt)
+.venv/
+venv/
+
+# Cache de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Configuracion local (puede contener la API key -> NO subir)
+config.json
+
+# Datos de contexto del usuario (pueden ser personales)
+contexts/*.md
+
+# Archivos generados en runtime
+assets/_chevron.png
+
+# Fuentes propietarias (descargar aparte, ver assets/fonts/LEEME.txt)
+assets/fonts/*.ttf
+assets/fonts/*.otf
+
+# Empaquetado
+build/
+dist/
+*.spec
+
+# Sistema
+Thumbs.db
+.DS_Store
