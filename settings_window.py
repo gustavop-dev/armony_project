@@ -42,7 +42,6 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         self._w, self._h = (34, 20) if small else (42, 24)
         self._k = 15 if small else 18
         self.setFixedSize(self._w, self._h)
-        self.setCursor(QtCore.Qt.PointingHandCursor)
 
     def paintEvent(self, _e):
         p = QtGui.QPainter(self)
@@ -92,7 +91,6 @@ class Segmented(QtWidgets.QWidget):
         pad = "4px 10px" if small else "6px 14px"
         for i, (val, label) in enumerate(options):
             b = QtWidgets.QPushButton(label)
-            b.setCursor(QtCore.Qt.PointingHandCursor)
             fs = "11px" if small else "12px"
             b.setStyleSheet(self._qss(val == current, pad, fs))
             b.clicked.connect(lambda _c=False, v=val: self._pick(v))
@@ -276,7 +274,6 @@ class NavItem(QtWidgets.QFrame):
 
     def __init__(self, icon, label):
         super().__init__()
-        self.setCursor(QtCore.Qt.PointingHandCursor)
         self._iconname = icon
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(11, 9, 11, 9)
@@ -387,7 +384,6 @@ class SettingsWindow(QtWidgets.QWidget):
     def _win_btn(self, icon, cb, tip, danger=False):
         b = QtWidgets.QPushButton()
         b.setFixedSize(30, 30)
-        b.setCursor(QtCore.Qt.PointingHandCursor)
         b.setToolTip(tip)
         hover = "rgba(217,74,61,0.9)" if danger else "rgba(243,234,212,0.12)"
         b.setStyleSheet(
@@ -444,14 +440,12 @@ class SettingsWindow(QtWidgets.QWidget):
         lay.addWidget(self.saved_dot); lay.addSpacing(7); lay.addWidget(self.saved_lbl)
         lay.addStretch()
         cancel = QtWidgets.QPushButton("Cancelar")
-        cancel.setCursor(QtCore.Qt.PointingHandCursor)
         cancel.setStyleSheet(
             f"QPushButton {{ padding: 10px 18px; border-radius: 10px; border: 1px solid {INPUT_BD}; "
             f"background: transparent; color: #cec5b0; font-size: 13px; }}"
             f"QPushButton:hover {{ background: rgba(243,234,212,0.06); }}")
         cancel.clicked.connect(self._cancel)
         save = QtWidgets.QPushButton("Guardar")
-        save.setCursor(QtCore.Qt.PointingHandCursor)
         save.setStyleSheet(
             f"QPushButton {{ padding: 10px 22px; border-radius: 10px; border: none; "
             f"background: {GOLD}; color: {INK}; font-size: 13px; font-weight: 700; }}"
@@ -620,7 +614,6 @@ class SettingsWindow(QtWidgets.QWidget):
 
         # boton "Nuevo contexto" (fijo arriba)
         add = QtWidgets.QPushButton()
-        add.setCursor(QtCore.Qt.PointingHandCursor)
         add.setFixedHeight(42)
         al = QtWidgets.QHBoxLayout(add); al.setContentsMargins(11, 0, 11, 0); al.setSpacing(8)
         al.addStretch(); al.addWidget(icons.label("plus", GOLD_LT, 15))
@@ -668,7 +661,6 @@ class SettingsWindow(QtWidgets.QWidget):
     def _ctx_card(self, c):
         seld = c["id"] == self.sel_id
         card = QtWidgets.QFrame()
-        card.setCursor(QtCore.Qt.PointingHandCursor)
         card.setStyleSheet(
             f"QFrame {{ border-radius: 12px; border: 1px solid "
             f"{'rgba(242,201,76,0.45)' if seld else 'rgba(243,234,212,0.09)'}; "
@@ -700,8 +692,7 @@ class SettingsWindow(QtWidgets.QWidget):
         return card
 
     def _mini_btn(self, icon, color, cb):
-        b = QtWidgets.QPushButton(); b.setFixedSize(26, 26); b.setCursor(QtCore.Qt.PointingHandCursor)
-        b.setStyleSheet(
+        b = QtWidgets.QPushButton(); b.setFixedSize(26, 26);        b.setStyleSheet(
             f"QPushButton {{ border: 1px solid rgba(243,234,212,0.1); background: rgba(243,234,212,0.04); "
             f"border-radius: 7px; }} QPushButton:hover {{ background: rgba(243,234,212,0.12); }}")
         b.setIcon(QtGui.QIcon(icons.pixmap(icon, color, 13)))

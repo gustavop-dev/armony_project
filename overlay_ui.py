@@ -54,7 +54,10 @@ class ClickFrame(QtWidgets.QFrame):
 
     def __init__(self):
         super().__init__()
-        self.setCursor(QtCore.Qt.PointingHandCursor)
+        # A proposito NO se cambia el cursor. La ventana es invisible al compartir
+        # pantalla, pero el cursor NO lo es: si se volviera una manita al pasar
+        # sobre un boton, quien te ve compartiendo pantalla veria el puntero
+        # transformandose encima de la nada. El overlay se delataria solo.
 
     def mousePressEvent(self, e):
         e.accept()          # no propagar: evita arrastrar la ventana al pulsar
@@ -268,6 +271,56 @@ class StatusBadge(QtWidgets.QWidget):
         self._lbl.setText(texto)
 
 
+class _AutoScroll:
+    """Mantiene un area pegada al final mientras no subas a leer.
+
+    Dos detalles que parecen tonterias y no lo son:
+
+    1. El alto definitivo del contenido no se sabe al pintar, sino cuando Qt
+       recalcula el layout, que es cuando se emite rangeChanged. Bajar antes deja
+       el texto arriba.
+    2. Repintar destruye y recrea los widgets; al vaciarlos el rango cae a cero y
+       con el la posicion. Sin guardarla, subir a releer no serviria de nada.
+    """
+
+    MARGEN = 8      # pixeles de tolerancia para considerarse "al final"
+
+    def __init__(self, scroll):
+        self.scroll = scroll
+        self.seguir = True
+        self.objetivo = None
+        scroll.verticalScrollBar().rangeChanged.connect(
+            lambda *_: self.restaurar())
+
+    def anotar(self):
+        """Antes de repintar: recuerda donde estabas y si venias siguiendo."""
+        sb = self.scroll.verticalScrollBar()
+        self.seguir = sb.value() >= sb.maximum() - self.MARGEN
+        self.objetivo = sb.value()
+
+    def restaurar(self):
+        sb = self.scroll.verticalScrollBar()
+        if self.seguir:
+            sb.setValue(sb.maximum())
+        elif self.objetivo is not None:
+            sb.setValue(min(self.objetivo, sb.maximum()))
+
+    def rueda(self, muescas):
+        """muescas positivas = hacia arriba."""
+        sb = self.scroll.verticalScrollBar()
+        sb.setValue(sb.value() - muescas * 3 * sb.singleStep())
+        # Si te quedas al final se vuelve a seguir; si subes, se deja de seguir.
+        self.seguir = sb.value() >= sb.maximum() - self.MARGEN
+        self.objetivo = sb.value()
+
+    def zona(self):
+        """Rectangulo en pantalla, para el desviador de rueda."""
+        if not self.scroll.isVisible():
+            return None
+        tl = self.scroll.mapToGlobal(QtCore.QPoint(0, 0))
+        return (tl.x(), tl.y(), self.scroll.width(), self.scroll.height())
+
+
 class CodeBlock(QtWidgets.QFrame):
     """Bloque de codigo: cabecera con el lenguaje, boton de copiar y el cuerpo.
 
@@ -331,7 +384,10 @@ class CodeBlock(QtWidgets.QFrame):
         cuerpo.setStyleSheet(
             f"font-family: {T.MONO_STACK}; font-size: 12.5px; "
             f"color: {T.TEXT_BRIGHT}; background: transparent; padding: 9px 11px;")
-        cuerpo.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        # Nada de texto seleccionable: Qt pondria el cursor de texto encima, y el
+        # cursor si se ve al compartir pantalla aunque la ventana no. Ademas la
+        # seleccion no funcionaria (esta zona deja pasar los clics): para eso esta
+        # el boton de copiar.
         lay.addWidget(cuerpo)
 
     def _copiar(self):
@@ -661,13 +717,11 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._part_last = None
         self._shots = []            # miniaturas de las capturas enviadas
         self._copy_buttons = []     # se recrean en cada render
-        self._seguir_abajo = True     # ir al final cuando entre texto nuevo
-        self._scroll_objetivo = None  # posicion a recuperar tras repintar
         self._build()
-        # El alto real se conoce despues de recalcular el layout, no al pintar:
-        # por eso se sigue el final cuando cambia el rango y no con un temporizador,
-        # que llegaba antes y dejaba la respuesta arriba.
-        self.scroll.verticalScrollBar().rangeChanged.connect(self._al_cambiar_rango)
+        # Cada area sigue el final por su cuenta: la respuesta segun se genera y
+        # la transcripcion segun se habla.
+        self._auto = {"answer": _AutoScroll(self.scroll),
+                      "question": _AutoScroll(self.q_scroll)}
         # Animacion: pulso del borde (listening) + caret parpadeante.
         self._anim = QtCore.QTimer(self)
         self._anim.timeout.connect(self._animate)
@@ -783,12 +837,27 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.lbl_question.setTextFormat(QtCore.Qt.RichText)
         self.lbl_question.setAlignment(QtCore.Qt.AlignTop)
         self.lbl_question.setStyleSheet("background: transparent;")
-        il.addWidget(self.lbl_question)
+
+        # La intervencion tambien puede ser larga (alguien que se explaya), asi
+        # que va en su propia area con scroll y sigue al final segun se transcribe.
+        self.q_scroll = QtWidgets.QScrollArea()
+        self.q_scroll.setWidgetResizable(True)
+        self.q_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.q_scroll.setStyleSheet("background: transparent;")
+        self.q_scroll.viewport().setStyleSheet("background: transparent;")
+        qcont = QtWidgets.QWidget()
+        qcont.setStyleSheet("background: transparent;")
+        qlay = QtWidgets.QVBoxLayout(qcont)
+        qlay.setContentsMargins(0, 0, 0, 0)
+        qlay.setSpacing(0)
+        qlay.addWidget(self.lbl_question)
+        qlay.addStretch()
+        self.q_scroll.setWidget(qcont)
+        il.addWidget(self.q_scroll, 1)
         # Pegada al texto, no al fondo de la columna: se lee como una nota de lo
         # que se acaba de transcribir.
         self.skip_pill = SkipPill()
         il.addWidget(self.skip_pill, 0, QtCore.Qt.AlignLeft)
-        il.addStretch(1)
         izq.setStyleSheet(f"border-right: 1px solid {T.DIVIDER_FAINT};")
         lay.addWidget(izq, 35)          # participante: columna mas estrecha
 
@@ -919,8 +988,12 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
             f'{html.escape(self._question_text)}{cursor}</div>')
 
     def set_question(self, texto, caret=False):
+        # Igual que la respuesta: si estabas al final, sigue bajando segun se
+        # transcribe; si subiste a releer, se queda donde lo dejaste.
+        self._auto["question"].anotar()
         self._question_text = texto
         self._render_question()
+        QtCore.QTimer.singleShot(0, self._auto["question"].restaurar)
 
     def show_skip(self, texto="No question — Alt+5 to answer"):
         """Deja claro que no se esta esperando ninguna respuesta."""
@@ -937,44 +1010,23 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._raw += delta
         self._render(richtext.parse_answer(self._raw))
 
-    # ---------------- scroll de la respuesta
-    def answer_zone(self):
-        """Rectangulo de pantalla donde la rueda debe mover la respuesta.
+    # ---------------- scroll (respuesta y transcripcion)
+    def wheel_zones(self):
+        """Zonas que capturan la rueda: [(rectangulo, nombre)].
 
-        Lo consulta el desviador de rueda (wheelscroll): con click-through la
-        ventana no recibe el raton, asi que la zona hay que decirsela nosotros.
+        Las consulta el desviador de rueda (wheelscroll): con click-through la
+        ventana no recibe el raton, asi que hay que decirle donde actuar.
         """
         if not self.isVisible():
-            return None
-        tl = self.scroll.mapToGlobal(QtCore.QPoint(0, 0))
-        return (tl.x(), tl.y(), self.scroll.width(), self.scroll.height())
+            return []
+        return [(auto.zona(), nombre) for nombre, auto in self._auto.items()
+                if auto.zona()]
 
-    def scroll_answer(self, muescas):
-        """Mueve la respuesta. muescas positivas = hacia arriba."""
-        sb = self.scroll.verticalScrollBar()
-        sb.setValue(sb.value() - muescas * 3 * sb.singleStep())
-        # Si te quedas al final, se vuelve a seguir el texto nuevo; si has subido,
-        # se deja de seguir hasta que bajes otra vez.
-        self._seguir_abajo = sb.value() >= sb.maximum() - 8
-        self._scroll_objetivo = sb.value()
-
-    def _restaurar_scroll(self):
-        """Recupera la posicion despues de repintar.
-
-        Cada trozo del streaming reconstruye los widgets, y al vaciarlos el rango
-        se queda en cero y la posicion se pierde: sin esto, subir a releer no
-        servia de nada porque el siguiente trozo te devolvia al principio.
-        """
-        sb = self.scroll.verticalScrollBar()
-        if self._seguir_abajo:
-            sb.setValue(sb.maximum())
-        elif self._scroll_objetivo is not None:
-            sb.setValue(min(self._scroll_objetivo, sb.maximum()))
-
-    def _al_cambiar_rango(self, _minimo, _maximo):
-        # El alto definitivo solo se sabe cuando Qt recalcula el layout, que es
-        # justo cuando se emite esto.
-        self._restaurar_scroll()
+    def scroll_zone(self, nombre, muescas):
+        """Mueve la zona indicada. muescas positivas = hacia arriba."""
+        auto = self._auto.get(nombre)
+        if auto is not None:
+            auto.rueda(muescas)
 
     # ---------------- capturas enviadas
     def add_shot(self, pixmap):
@@ -1036,10 +1088,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
     def _render(self, secciones):
         # Solo se sigue al final si YA estabas al final. Si has subido a releer
         # algo, el siguiente trozo del streaming no te arrastra de vuelta.
-        sb = self.scroll.verticalScrollBar()
-        self._seguir_abajo = sb.value() >= sb.maximum() - 8
-        self._scroll_objetivo = sb.value()
-
+        self._auto["answer"].anotar()
         self._clear_layout()
         self._copy_buttons = []
         fila = 0
@@ -1078,7 +1127,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
 
         # Red de seguridad para cuando el rango no cambia (mismo alto, otro
         # texto): rangeChanged no se emitiria y no habria a que enganchar.
-        QtCore.QTimer.singleShot(0, self._restaurar_scroll)
+        QtCore.QTimer.singleShot(0, self._auto["answer"].restaurar)
 
 
 def parse_sections(raw):

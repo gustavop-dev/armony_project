@@ -100,10 +100,16 @@ abre las KeyTips de la cinta ni se te escribe el número en la celda.
 Todos tienen su botón en la barra superior con el atajo escrito al lado, así que
 no hay que recordarlos.
 
-Si la respuesta es larga, **la rueda del ratón la desplaza con solo poner el cursor
-encima**, sin perder el click-through: mientras apuntas al panel la rueda es suya y
-lo que hay debajo no se mueve; en cuanto sales, todo vuelve a la normalidad. Y si
-subes a releer algo, el texto que siga llegando no te devuelve al final.
+**La rueda del ratón desplaza con solo poner el cursor encima**, tanto la
+transcripción como la respuesta, y sin perder el click-through: mientras apuntas al
+panel la rueda es suya y lo que hay debajo no se mueve; en cuanto sales, todo vuelve
+a la normalidad. Las dos columnas van siguiendo el final según entra texto nuevo,
+pero si subes a releer algo se quedan quietas hasta que vuelvas a bajar.
+
+**El cursor nunca cambia de forma sobre el overlay.** No es un descuido: la ventana
+es invisible al compartir pantalla, pero el cursor no lo es. Si se convirtiera en
+manita sobre un botón invisible, quien te viera compartiendo pantalla vería el
+puntero transformándose sobre la nada, y el overlay se delataría solo.
 
 ### Cuándo responde (y cuándo no)
 

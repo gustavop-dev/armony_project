@@ -35,7 +35,6 @@ class SettingsDialog(QtWidgets.QDialog):
         hl.addWidget(titulo)
         hl.addStretch()
         cerrar = QtWidgets.QPushButton("✕")
-        cerrar.setCursor(QtCore.Qt.PointingHandCursor)
         cerrar.setFixedSize(26, 26)
         cerrar.setObjectName("closeBtn")
         cerrar.clicked.connect(self.reject)

@@ -53,44 +53,45 @@ user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
 
 class _Bridge(QtCore.QObject):
     """Lleva la muesca de rueda del hilo del hook al hilo de Qt (en cola)."""
-    wheeled = QtCore.Signal(int)
+    wheeled = QtCore.Signal(str, int)
 
     def __init__(self, destino):
         super().__init__()
         self._destino = destino
         self.wheeled.connect(self._run, QtCore.Qt.QueuedConnection)
 
-    @QtCore.Slot(int)
-    def _run(self, muescas):
-        self._destino(muescas)
+    @QtCore.Slot(str, int)
+    def _run(self, nombre, muescas):
+        self._destino(nombre, muescas)
 
 
 class WheelForwarder:
     """Desvia la rueda al overlay cuando el cursor esta sobre su zona scrollable."""
 
     def __init__(self, on_scroll):
-        """on_scroll(muescas): positivo = hacia arriba. Corre en el hilo de Qt."""
+        """on_scroll(nombre, muescas): positivo = arriba. Corre en el hilo de Qt."""
         self._bridge = _Bridge(on_scroll)
         self._proc = HOOKPROC(self._on_mouse)   # referencia viva o crash
         self._hook = None
         self._thread = None
         self._tid = 0
         self._ready = threading.Event()
-        self._zona = None        # (x, y, ancho, alto) en coordenadas de pantalla
+        self._zonas = ()     # ((x, y, ancho, alto), nombre) en coords de pantalla
 
-    # -- zona activa ---------------------------------------------------------
-    def set_zone(self, zona):
-        """Publica el rectangulo que captura la rueda. None = no capturar nada.
+    # -- zonas activas -------------------------------------------------------
+    def set_zones(self, zonas):
+        """Publica las zonas que capturan la rueda. Vacio = no capturar nada.
 
-        Se llama desde el hilo de Qt; el hook solo lee la tupla.
+        Se llama desde el hilo de Qt; el hook solo lee la tupla ya construida,
+        que es lo unico que se puede compartir entre hilos sin liarla.
         """
-        self._zona = tuple(zona) if zona else None
+        self._zonas = tuple((tuple(r), n) for r, n in (zonas or []) if r)
 
-    def _dentro(self, x, y):
-        z = self._zona
-        if not z:
-            return False
-        return z[0] <= x < z[0] + z[2] and z[1] <= y < z[1] + z[3]
+    def _zona_en(self, x, y):
+        for (zx, zy, ancho, alto), nombre in self._zonas:
+            if zx <= x < zx + ancho and zy <= y < zy + alto:
+                return nombre
+        return None
 
     # -- ciclo de vida -------------------------------------------------------
     def install(self):
@@ -124,7 +125,7 @@ class WheelForwarder:
             self._thread.join(2.0)
         self._thread = None
         self._hook = None
-        self._zona = None
+        self._zonas = ()
 
     @property
     def active(self):
@@ -135,13 +136,14 @@ class WheelForwarder:
         # El hook de raton se llama para CADA movimiento: aqui no puede haber
         # nada lento o Windows lo descarta por LowLevelHooksTimeout.
         try:
-            if nCode == HC_ACTION and wParam == WM_MOUSEWHEEL and self._zona:
+            if nCode == HC_ACTION and wParam == WM_MOUSEWHEEL and self._zonas:
                 ms = MSLLHOOKSTRUCT.from_address(lParam)
-                if self._dentro(ms.pt.x, ms.pt.y):
+                nombre = self._zona_en(ms.pt.x, ms.pt.y)
+                if nombre is not None:
                     delta = ctypes.c_short((ms.mouseData >> 16) & 0xFFFF).value
                     muescas = delta // RUEDA_POR_MUESCA
                     if muescas:
-                        self._bridge.wheeled.emit(muescas)
+                        self._bridge.wheeled.emit(nombre, muescas)
                     return 1        # tragada: lo de debajo no se mueve
         except Exception:
             pass

@@ -63,7 +63,7 @@ class OverlayApp(QtCore.QObject):
 
         # La rueda sobre la respuesta la desvia un hook: con click-through la
         # ventana no recibe raton, ni siquiera la rueda.
-        self.wheel = WheelForwarder(self.panel.scroll_answer)
+        self.wheel = WheelForwarder(self.panel.scroll_zone)
         self.wheel.install()
 
     # ------------------------------------------------ colocacion en pantalla
@@ -112,9 +112,9 @@ class OverlayApp(QtCore.QObject):
         # cortar el movimiento a medio camino.
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
             return
-        # Aprovechamos este tick para publicarle al hook donde esta la respuesta.
-        self.wheel.set_zone(self.panel.answer_zone() if self.settings is None
-                            else None)
+        # Aprovechamos este tick para publicarle al hook donde puede actuar.
+        self.wheel.set_zones(self.panel.wheel_zones() if self.settings is None
+                             else [])
         objetivos = [
             (self.top, self.top.interactive_widgets()),
             (self.panel, self.panel.interactive_widgets()),
