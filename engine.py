@@ -34,9 +34,13 @@ SENTINEL = "NO_RESPONSE"
 # cosa: el pantallazo suele ser solo una PARTE del problema, y el resto esta en
 # lo que llevan un rato contando. Ahi compensa mandar el hilo largo, que ademas
 # se paga una vez y no en cada frase.
-MEMORIA = 60              # intervenciones que se guardan en memoria
-CONTEXTO_VOZ = 18         # las que acompañan a una pregunta hablada
-CONTEXTO_CAPTURA = 40     # las que acompañan a un pantallazo
+# Ojo al contar: cada turno respondido deja DOS entradas (lo que dijeron y lo
+# que se sugirio), asi que estos numeros son entradas, no turnos. Se doblaron al
+# empezar a guardar las sugerencias para que el hilo real siguiera siendo el
+# mismo que antes.
+MEMORIA = 120             # entradas en memoria (~60 turnos)
+CONTEXTO_VOZ = 36         # las que acompañan a una pregunta hablada (~18 turnos)
+CONTEXTO_CAPTURA = 80     # las que acompañan a un pantallazo (~40 turnos)
 LIMITE_CHARS_CAPTURA = 8000   # tope por si alguien se explaya de verdad
 
 # De cada sugerencia se guarda un resumen corto, no la respuesta entera: sirve

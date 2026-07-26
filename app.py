@@ -406,8 +406,11 @@ class OverlayApp(QtCore.QObject):
             self.panel.set_status("Nothing to answer yet")
 
     def on_error(self, msg):
+        # Nada de set_hint: vaciaria el panel y perderias la sugerencia que
+        # estabas leyendo, justo en el peor momento. El error va en el badge y
+        # en la pastilla, que no tocan la respuesta.
         self.panel.set_status("Error")
-        self.panel.set_hint(f"Error: {msg}")
+        self.panel.show_skip(f"Error: {msg[:80]}")
 
     def shutdown(self):
         self._timer.stop()

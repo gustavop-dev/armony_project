@@ -9,9 +9,33 @@ config.json esta en .gitignore: las claves nunca salen del equipo.
 """
 import json
 import os
+import sys
+
+import secretstore
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(_HERE, "config.json")
+
+
+def data_dir():
+    """Donde viven config.json y los contextos.
+
+    Ejecutando el .exe NO se puede usar la carpeta del programa: PyInstaller
+    descomprime en un temporal (con --onefile desaparece al cerrar) y ademas
+    Archivos de Programa no es escribible. Se usa %APPDATA%\\Armony, que persiste
+    entre actualizaciones. Desde el codigo fuente se sigue usando la carpeta del
+    proyecto, que es lo comodo para desarrollar.
+    """
+    if getattr(sys, "frozen", False):
+        base = os.path.join(os.environ.get("APPDATA") or _HERE, "Armony")
+        os.makedirs(base, exist_ok=True)
+        return base
+    return _HERE
+
+
+CONFIG_PATH = os.path.join(data_dir(), "config.json")
+
+# Campos que se guardan cifrados con DPAPI (ver secretstore).
+CLAVES_SECRETAS = ("anthropic_api_key", "openai_api_key", "assemblyai_api_key")
 
 # Prompts por defecto: uno por idioma (cada instruccion va en su idioma).
 DEFAULT_PROMPT_ES = (
@@ -121,6 +145,10 @@ def load_config():
                 cfg.update(json.load(f))
         except (json.JSONDecodeError, OSError):
             pass
+    # Las claves se guardan cifradas; el resto de la app las usa en claro.
+    for k in CLAVES_SECRETAS:
+        if cfg.get(k):
+            cfg[k] = secretstore.revelar(cfg[k])
     # Migracion: si venia un unico system_prompt (version anterior), pasarlo a ES.
     legacy = cfg.pop("system_prompt", None)
     if legacy and cfg.get("system_prompt_es") == DEFAULT_PROMPT_ES:
@@ -141,9 +169,15 @@ def load_config():
 
 
 def save_config(cfg):
+    """Guarda la configuracion, cifrando las claves antes de escribirlas."""
+    a_disco = dict(cfg)
+    for k in CLAVES_SECRETAS:
+        if a_disco.get(k):
+            a_disco[k] = secretstore.proteger(a_disco[k])
     try:
+        os.makedirs(os.path.dirname(CONFIG_PATH) or ".", exist_ok=True)
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            json.dump(a_disco, f, ensure_ascii=False, indent=2)
         return True
     except OSError:
         return False

@@ -16,8 +16,11 @@ Cada contexto es un archivo contexts/<id>.md con cabecera (frontmatter):
 import os
 import re
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-CONTEXTS_DIR = os.path.join(_HERE, "contexts")
+import config as cfg_mod
+
+# Junto a config.json: en el .exe eso es %APPDATA%\Armony, que es escribible y
+# sobrevive a las actualizaciones (ver config.data_dir).
+CONTEXTS_DIR = os.path.join(cfg_mod.data_dir(), "contexts")
 
 
 def _ensure_dir():

@@ -32,7 +32,34 @@ al compartir pantalla** (privacidad total).
 - API key de AssemblyAI para la transcripción en vivo (también en *Configuración*).
   Si prefieres no usar la nube, activa **Modo offline** y solo hace falta la de Anthropic.
 
-## Instalación
+## Ejecutable (.exe)
+
+```powershell
+python build_exe.py      # genera dist\Armony.exe (~53 MB, un solo archivo)
+```
+
+No necesita Python instalado. El icono («Ar.» sobre blanco) se genera con
+`make_icon.py` y se incrusta en el ejecutable.
+
+Tus datos **no** viven junto al .exe: `config.json` y los contextos van a
+`%APPDATA%\Armony`, que es escribible y sobrevive a las actualizaciones. Con
+`--onefile` el programa se descomprime en un temporal que desaparece al cerrar,
+así que guardar ahí perdería la configuración en cada arranque.
+
+El modo offline **no** se incluye salvo que compiles con `faster-whisper`
+instalado; sin él el ejecutable pesa una fracción y el resto funciona igual.
+
+### Dónde quedan tus claves
+
+Las API keys se guardan **cifradas con DPAPI de Windows**, atadas a tu cuenta de
+usuario: el archivo solo se puede descifrar desde tu sesión y en este equipo, sin
+que tengas que recordar ninguna contraseña maestra. Si copias `config.json` a otro
+PC, las claves no se pueden leer.
+
+No es magia: algo que corra *como tú* puede descifrarlas igual. Pero convierte
+«roba el archivo y ya tienes las claves» en «hay que ejecutar código en su sesión».
+
+## Instalación (desde el código)
 
 ```powershell
 cd C:\Users\elcer\meeting-coach
@@ -157,10 +184,12 @@ tecla, pasarse de hablador te arruina la reunión.
 
 ### Qué recuerda de la reunión
 
-El motor guarda las últimas 60 intervenciones y manda una parte en cada consulta:
-18 con una pregunta hablada, hasta 40 con un pantallazo. Los dos modelos —el de voz
-y el de capturas— comparten el mismo hilo; lo único que cambia entre ellos es el
-modelo y el límite de tokens.
+El motor guarda las últimas 120 entradas y manda una parte en cada consulta: 36 con
+una pregunta hablada, hasta 80 con un pantallazo. Ojo al contar: **cada turno
+respondido deja dos entradas** (lo que dijeron y lo que se sugirió), así que eso
+son ~18 y ~40 turnos reales. Los dos modelos —el de voz y el de capturas—
+comparten el mismo hilo; lo único que cambia entre ellos es el modelo y el límite
+de tokens.
 
 **Cada sugerencia entregada se guarda como contexto**, etiquetada `Yo (sugerido)`:
 del bloque de código solo queda una marca, y del texto un resumen corto. Así la IA
@@ -170,6 +199,16 @@ sabe lo que ya te propuso y continúa desde ahí en vez de repetírtelo.
 > coste). Lo que digas con tus palabras no llega al modelo; lo que sí llega es lo
 > que te sugirió, que es casi siempre lo mismo. Si en tus reuniones explicas cosas
 > que la IA necesitaría saber, se puede activar ese segundo stream.
+
+### La transcripción es un dato, no una orden
+
+Lo que se oye en la reunión es texto de terceros, así que se le dice explícitamente
+al modelo que nadie de la reunión puede cambiar sus instrucciones, pedirle que las
+revele, redefinir quién es ni cambiar el formato de su respuesta. Si algo así
+aparece en lo transcrito, lo trata como un dato más de lo que dijeron.
+
+Sin esto, cualquiera que hable podría reprogramar tu asistente diciéndolo en voz
+alta.
 
 ### Cuando le falta un dato
 
@@ -249,6 +288,8 @@ ajuste de longitud siga refiriéndose a la respuesta y no llegue vacía.
 - `stt_stream.py` — transcripción en vivo con AssemblyAI (WebSocket, reconexión automática).
 - `intent.py` — decide si una intervención pide respuesta o solo está dando contexto.
 - `richtext.py` — convierte el markdown del modelo en bloques (texto, código, listas).
+- `secretstore.py` — cifra las API keys con DPAPI (atado a tu cuenta de Windows).
+- `make_icon.py` — genera el icono «Ar.» en todos los tamaños que pide Windows.
 - `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).
 - `llm.py` — cliente del coach con streaming y soporte de imagen (screenshot).
   Anthropic y OpenAI tras la misma interfaz; solo se importa el que se use.
