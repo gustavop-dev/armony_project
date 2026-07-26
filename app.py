@@ -362,7 +362,9 @@ def main():
     })
     app.installNativeEventFilter(hk)
     ok, fallidos = hk.register()
-    if fallidos:
+    if fallidos and not hk.exclusive_alt:
+        # Sin el hook de Alt dependemos de RegisterHotKey, y ahi si estorba que
+        # otra aplicacion tenga la combinacion tomada.
         ui.panel.set_status("Shortcuts in use: " + ", ".join(fallidos))
 
     faltan = T.fonts_missing()
