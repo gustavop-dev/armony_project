@@ -42,7 +42,10 @@ DEFAULTS = {
     "anthropic_api_key": "",
     "llm_model": "claude-haiku-4-5",   # el mas rapido; cambiar a claude-opus-4-8 para mas calidad
     "openai_api_key": "",
-    "openai_model": "gpt-5.4-mini",    # rapido y suficiente para sugerir respuestas
+    # gpt-5.4-nano queda fuera a proposito: es el mas rapido, pero 1 de cada 5
+    # veces ignora la instruccion de callarse cuando no hay pregunta y escribe
+    # excusas en el panel. La velocidad no compensa ensuciar la pantalla.
+    "openai_model": "gpt-5.6-terra",   # 0,8 s hasta la primera palabra
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
     # texto llega palabra a palabra mientras se habla, no al terminar la frase.

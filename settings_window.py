@@ -176,11 +176,12 @@ def _schema():
                  secret=True, placeholder="sk-proj-…",
                  hint="Solo si el proveedor es OpenAI."),
             dict(key="openai_model", label="Modelo de OpenAI", type="select",
-                 hint="nano = el más rápido; mini = equilibrado; el grande da "
-                      "mejores respuestas pero tarda más.",
-                 options=[("gpt-5.4-nano", "GPT-5.4 nano — el más rápido"),
-                          ("gpt-5.4-mini", "GPT-5.4 mini — equilibrado (recomendado)"),
-                          ("gpt-5.4", "GPT-5.4 — más calidad, más lento")]),
+                 hint="El tiempo es hasta la PRIMERA palabra en pantalla, medido "
+                      "desde este equipo (mediana de 5 llamadas). Varía con tu red.",
+                 options=[("gpt-5.4-mini", "GPT-5.4 mini — 0,7 s"),
+                          ("gpt-5.6-terra", "GPT-5.6 terra — 0,8 s (recomendado)"),
+                          ("gpt-5.6-luna", "GPT-5.6 luna — 1,2 s"),
+                          ("gpt-5.6-sol", "GPT-5.6 sol — 1,3 s")]),
             dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
                  secret=True, placeholder="…",
                  hint="Transcripción en vivo en la nube. Sin ella solo funciona "

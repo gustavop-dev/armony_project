@@ -276,6 +276,10 @@ class OverlayApp(QtCore.QObject):
             return
         if self.settings is not None:
             return
+        # Releer del disco, no usar la copia cargada al arrancar: al guardar se
+        # escribe el formulario entero, y una copia vieja borraria cualquier
+        # ajuste cambiado por fuera mientras la app estaba abierta.
+        self.cfg = cfg_mod.load_config()
         # La configuracion es una vista aparte: el overlay desaparece mientras esta.
         self.top.hide(); self.panel.hide(); self.collapsed.hide()
         self._ct_timer.stop()
