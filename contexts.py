@@ -102,6 +102,11 @@ def _matches_lang(ctx_lang, meeting_lang):
     """Un contexto aplica si es 'both', o coincide con el idioma de la reunion.
 
     Con idioma de reunion 'auto', aplican todos.
+
+    Nota: la app llama siempre con 'auto', es decir, le manda al modelo todos los
+    contextos activos. Filtrar por idioma dejaba al modelo sin la mitad de lo que
+    necesita justo cuando la reunion cambia de idioma, que es cuando mas falta
+    hace. El campo 'lang' de cada contexto queda para organizarlos.
     """
     if meeting_lang not in ("es", "en"):
         return True

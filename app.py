@@ -190,7 +190,8 @@ class OverlayApp(QtCore.QObject):
         self.panel.clear_shots()
         self._answer_lleva_capturas = False
         import contexts as ctx_mod
-        n = ctx_mod.active_count(self.cfg.get("language", "es"))
+        # Todos los activos, sin filtrar por idioma: es lo que se le manda.
+        n = ctx_mod.active_count("auto")
         chip = f"{n} context{'s' if n != 1 else ''} loaded · " if n else ""
         if test:
             self.panel.set_hint("TEST MODE — audio + transcription only (no AI).")

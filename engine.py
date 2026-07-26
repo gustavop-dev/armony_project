@@ -27,6 +27,21 @@ import intent
 SENTINEL = "NO_RESPONSE"
 
 
+def _prompt_bilingue(cfg):
+    """Junta las dos versiones del prompt del coach, la española y la inglesa.
+
+    Son las mismas instrucciones escritas en cada idioma, y se mandan las dos a
+    proposito: asi el modelo tiene sus reglas en el idioma que toque cuando la
+    reunion cambia de uno a otro, sin tener que reiniciar nada.
+    """
+    es = (cfg.get("system_prompt_es") or "").strip()
+    en = (cfg.get("system_prompt_en") or "").strip()
+    if es and en:
+        return (f"{es}\n\n---\n\n(The same instructions in English; follow "
+                f"whichever matches the language being spoken.)\n\n{en}")
+    return es or en or (cfg.get("system_prompt") or "")
+
+
 class CoachEngine(QtCore.QObject):
     sysLevel = QtCore.Signal(int)
     micLevel = QtCore.Signal(int)
@@ -133,15 +148,17 @@ class CoachEngine(QtCore.QObject):
 
         if not self._test_mode:
             try:
-                # Opcion B: el idioma de la reunion elige el prompt del coach y
-                # filtra los contextos. Se congela AQUI para no romper el cache.
+                # Se le da TODO: los dos prompts del coach y todos los contextos
+                # activos, sin filtrar por idioma. En una reunion real se cambia
+                # de idioma a media frase, y si el prompt o el contexto vinieran
+                # filtrados por el idioma configurado, justo al cambiar se
+                # quedaria sin la mitad de lo que necesita. Se congela AQUI para
+                # no romper el cache a media llamada.
                 import contexts as ctx_mod
-                lang = cfg.get("language", "es")
-                plang = lang if lang in ("es", "en") else "es"   # 'auto' -> es para el prompt
-                base = cfg.get(f"system_prompt_{plang}") or cfg.get("system_prompt", "")
-                extra = ctx_mod.active_text(lang)
-                sys_prompt = base + (
-                    "\n\n# Contexto de esta reunion\n" + extra if extra else "")
+                sys_prompt = _prompt_bilingue(cfg)
+                extra = ctx_mod.active_text("auto")     # 'auto' = todos
+                if extra:
+                    sys_prompt += "\n\n# Contexto de esta reunion\n" + extra
                 # Cada proveedor trae su clave y sus dos modelos: uno para las
                 # preguntas habladas y otro, mas capaz, para las capturas.
                 p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"

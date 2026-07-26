@@ -77,6 +77,22 @@ Desmárcalo y añade la API key para las sugerencias reales.
    modelo es lo que hay **debajo** del overlay: las ventanas de la app están
    excluidas de la captura, así que no se tapan a sí mismas el contenido.
 
+### Reuniones que cambian de idioma
+
+Pasa constantemente: se habla en español y de pronto alguien salta al inglés. Está
+cubierto de punta a punta:
+
+- **La transcripción** lo detecta sola, incluso a mitad de frase. Comprobado con
+  audio mixto, limpio y con ruido: transcribe bien las dos partes tanto con el
+  idioma fijado como en `Auto`.
+- **La respuesta sale en el idioma de la última pregunta**, aunque el prompt y el
+  contexto estén en otro. Si te preguntan en inglés, lees en inglés.
+- **Al modelo se le manda todo**: las dos versiones del prompt del coach (ES y EN)
+  y *todos* los contextos activos, sin filtrar por idioma. El campo `Idioma` de
+  cada contexto queda solo para organizarlos. Filtrarlos dejaría al modelo sin la
+  mitad de lo que necesita justo cuando la reunión cambia de idioma, que es cuando
+  más falta hace.
+
 ### Cómo se pinta la respuesta
 
 El modelo contesta en markdown y el panel lo renderiza: secciones, **negritas**,

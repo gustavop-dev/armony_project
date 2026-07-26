@@ -808,7 +808,11 @@ class SettingsWindow(QtWidgets.QWidget):
         v.addLayout(top)
         # selector de idioma del contexto
         langrow = QtWidgets.QHBoxLayout()
-        ll = QtWidgets.QLabel("Idioma"); ll.setStyleSheet(f"color: #948b78; font-size: 12px;")
+        ll = QtWidgets.QLabel("Idioma")
+        ll.setToolTip("Solo para organizarlos: todos los contextos activos se le "
+                      "mandan a la IA, en el idioma que estén, porque la reunión "
+                      "puede cambiar de idioma a media frase.")
+        ll.setStyleSheet(f"color: #948b78; font-size: 12px;")
         seg = Segmented([("es", "ES"), ("en", "EN"), ("both", "Ambos")],
                         c.get("lang", "both"), small=True)
         seg.changed.connect(lambda val, cid=c["id"]: self._ctx_set_lang(cid, val))
