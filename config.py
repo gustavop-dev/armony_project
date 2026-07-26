@@ -1,7 +1,10 @@
 """Carga y guarda la configuracion de la app en config.json (junto a este archivo).
 
-Guarda: API key de Anthropic, modelo LLM, tamano de Whisper, dispositivo (auto/cpu/cuda),
-idioma, prompt de coach y estado de "ventana invisible".
+Guarda: API keys (Anthropic y AssemblyAI), modelo LLM, ajustes de transcripcion
+(nube o modo offline con Whisper), idioma, prompt de coach y estado de "ventana
+invisible".
+
+config.json esta en .gitignore: las claves nunca salen del equipo.
 """
 import json
 import os
@@ -33,8 +36,20 @@ DEFAULT_SYSTEM_PROMPT = DEFAULT_PROMPT_ES   # compatibilidad
 DEFAULTS = {
     "anthropic_api_key": "",
     "llm_model": "claude-haiku-4-5",   # el mas rapido; cambiar a claude-opus-4-8 para mas calidad
-    "whisper_size": "base",            # tiny | base | small | medium
-    "whisper_device": "auto",          # auto | cpu | cuda
+    # --- Transcripcion ---
+    # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
+    # texto llega palabra a palabra mientras se habla, no al terminar la frase.
+    "assemblyai_api_key": "",
+    "assemblyai_model": "universal-3-5-pro",
+    # Confianza para dar el turno por terminado (0-1). Mas alto = mas prudente,
+    # espera mas antes de cerrar el turno; mas bajo = reacciona antes.
+    "end_of_turn_threshold": 0.4,
+    # Modo offline: vuelve a la transcripcion local con Whisper. Sirve si no hay
+    # internet o no quieres que el audio salga del equipo. Mas lento y no da
+    # texto en vivo: hay que esperar a que la frase termine.
+    "offline_mode": False,
+    "whisper_size": "base",            # tiny | base | small | medium (solo offline)
+    "whisper_device": "auto",          # auto | cpu | cuda (solo offline)
     "language": "es",                  # es | en | auto (None)
     # Prompt del coach por idioma (Opcion B: el idioma solo afecta a coach + contexts).
     "system_prompt_es": DEFAULT_PROMPT_ES,

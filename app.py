@@ -134,6 +134,7 @@ class OverlayApp(QtCore.QObject):
         e.micLevel.connect(self.panel.set_mic_level)
         e.sttLatency.connect(self.on_latency)
         e.transcript.connect(self.on_transcript)
+        e.partial.connect(self.on_partial)
         e.respStart.connect(self.on_resp_start)
         e.respDelta.connect(self.panel.append_answer)
         e.respDone.connect(self.on_resp_done)
@@ -156,6 +157,11 @@ class OverlayApp(QtCore.QObject):
         # Sin key y sin modo prueba: solo avisa (no salta a settings de golpe).
         if not test and not self.cfg.get("anthropic_api_key"):
             self.panel.set_status("Add your API key in Settings (⚙) to start")
+            return
+        # La transcripcion en la nube necesita su propia key; en modo offline no.
+        if not self.cfg.get("offline_mode") and not self.cfg.get("assemblyai_api_key"):
+            self.panel.set_status("Add your AssemblyAI key in Settings (⚙), "
+                                  "or turn on Offline mode")
             return
         self._running = True
         self._elapsed = 0
@@ -291,6 +297,11 @@ class OverlayApp(QtCore.QObject):
         if self._running:
             self.panel.set_latency(ms)
 
+    def on_partial(self, texto):
+        """Texto provisional: se repinta mientras la persona sigue hablando."""
+        if self._running:
+            self.panel.set_question(texto, caret=True)
+
     def on_transcript(self, fuente, texto):
         if not self._running:
             return
@@ -336,6 +347,7 @@ class OverlayApp(QtCore.QObject):
             self.engine.sysLevel.disconnect()
             self.engine.micLevel.disconnect()
             self.engine.transcript.disconnect()
+            self.engine.partial.disconnect()
             self.engine.respStart.disconnect()
             self.engine.respDelta.disconnect()
             self.engine.respDone.disconnect()

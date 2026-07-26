@@ -1,6 +1,16 @@
-"""Motor de Meeting Coach: audio -> transcripcion local -> Claude (streaming).
+"""Motor de Meeting Coach: audio -> transcripcion -> Claude (streaming).
 
 Sin dependencias de interfaz: expone senales Qt y no sabe como se dibuja nada.
+
+Hay dos caminos de transcripcion, y cambian bastante el comportamiento:
+
+  En la nube (por defecto, AssemblyAI): el audio de la reunion viaja continuo y
+  el texto vuelve palabra a palabra mientras la persona habla. El fin de turno
+  lo decide el propio modelo.
+
+  Offline (Whisper local): se corta el audio en frases por silencio y cada una
+  se transcribe entera. No hay texto en vivo y se nota mas retardo, pero no sale
+  nada del equipo y funciona sin internet.
 """
 import time
 import queue
@@ -16,6 +26,7 @@ class CoachEngine(QtCore.QObject):
     micLevel = QtCore.Signal(int)
     sttLatency = QtCore.Signal(int)       # ms que tardo la ultima transcripcion
     transcript = QtCore.Signal(str, str)  # (fuente, texto): fuente = 'system' | 'mic'
+    partial = QtCore.Signal(str)          # texto provisional, se repinta en vivo
     respStart = QtCore.Signal()
     respDelta = QtCore.Signal(str)
     respDone = QtCore.Signal()
@@ -29,13 +40,24 @@ class CoachEngine(QtCore.QObject):
         self._history = deque(maxlen=8)
         self._audio = None
         self._transcriber = None
+        self._stt = None
         self._coach = None
         self._worker = None
         self._stop_event = None
         self._test_mode = False
+        self._offline = False
         self._auto_normalize = True
         self._transcribe_mic = True
         self._last_question = ""
+
+        # Agrupacion de turnos (solo en la nube). AssemblyAI cierra un turno por
+        # cada frase, asi que un "¿Como vais? ¿Llegamos el viernes?" llega en dos
+        # trozos. Responder a cada uno seria atropellado: se acumulan y solo se
+        # llama a Claude cuando pasa _turn_gap sin que nadie hable.
+        self._turn_lock = threading.Lock()
+        self._turn_parts = []
+        self._turn_timer = None
+        self._turn_gap = 0.7
 
     def start(self, cfg, test_mode=False):
         """test_mode: solo audio + transcripcion (sin API key, sin llamar a Claude)."""
@@ -49,29 +71,54 @@ class CoachEngine(QtCore.QObject):
         self._last_question = ""
         self._running = True
         self._test_mode = test_mode
+        self._offline = bool(cfg.get("offline_mode", False))
         self._auto_normalize = bool(cfg.get("auto_normalize", True))
         self._transcribe_mic = bool(cfg.get("transcribe_mic", True))
+        self._turn_gap = float(cfg.get("silence_hang", 0.7))
+        self._turn_parts = []
         # La inicializacion (cargar modelo) puede tardar: hazla en un hilo.
         threading.Thread(target=self._init_and_run, args=(cfg,), daemon=True).start()
 
     def _init_and_run(self, cfg):
         # Importes tardios para que la ventana abra rapido.
-        from transcribe import Transcriber
         from llm import Coach
         from audio import AudioEngine
 
-        try:
-            self.status.emit("Cargando modelo de transcripcion (primera vez descarga)...")
-            self._transcriber = Transcriber(
-                size=cfg["whisper_size"],
-                device=cfg["whisper_device"],
-                language=cfg["language"],
+        if self._offline:
+            from transcribe import Transcriber
+            try:
+                self.status.emit(
+                    "Cargando modelo de transcripcion (primera vez descarga)...")
+                self._transcriber = Transcriber(
+                    size=cfg["whisper_size"],
+                    device=cfg["whisper_device"],
+                    language=cfg["language"],
+                )
+                self.status.emit(f"Whisper listo en {self._transcriber.device.upper()}.")
+            except Exception as e:
+                self.error.emit(f"No se pudo cargar Whisper: {e}")
+                self._running = False
+                return
+        else:
+            from stt_stream import StreamingSTT
+            if not cfg.get("assemblyai_api_key"):
+                self.error.emit(
+                    "Falta la API key de AssemblyAI. Ponla en Ajustes, o activa "
+                    "el modo offline para transcribir con Whisper local.")
+                self._running = False
+                return
+            self._stt = StreamingSTT(
+                api_key=cfg["assemblyai_api_key"],
+                on_partial=self._on_stt_partial,
+                on_final=self._on_stt_final,
+                on_status=lambda m: self._running and self.status.emit(m),
+                on_error=lambda m: self._running and self.error.emit(m),
+                language=cfg.get("language", "es"),
+                model=cfg.get("assemblyai_model", "universal-3-5-pro"),
+                end_of_turn_threshold=cfg.get("end_of_turn_threshold", 0.4),
             )
-            self.status.emit(f"Whisper listo en {self._transcriber.device.upper()}.")
-        except Exception as e:
-            self.error.emit(f"No se pudo cargar Whisper: {e}")
-            self._running = False
-            return
+            self._stt.start()
+            self.status.emit("Conectando la transcripcion en vivo...")
 
         if not self._test_mode:
             try:
@@ -113,7 +160,12 @@ class CoachEngine(QtCore.QObject):
             on_status=lambda m: self._running and self.status.emit(m),
             # Transcribir el micro en Modo prueba, o si el usuario lo activo para
             # tener acta completa y dar contexto a Claude de lo que ya respondio.
-            capture_mic_utterances=self._test_mode or self._transcribe_mic,
+            # En la nube solo se transcribe la reunion: un unico stream. Tu micro
+            # sigue midiendo nivel (la barra) pero no se manda a transcribir.
+            capture_mic_utterances=self._offline and (self._test_mode
+                                                      or self._transcribe_mic),
+            on_system_pcm=None if self._offline else self._stt.feed,
+            segment_system=self._offline,
             gain_system=cfg.get("gain_system", 1.0),
             gain_mic=cfg.get("gain_mic", 1.0),
             speech_threshold=cfg.get("speech_threshold", 0.012),
@@ -122,11 +174,62 @@ class CoachEngine(QtCore.QObject):
             mic_echo_gate=cfg.get("mic_echo_gate", True),
         )
         self._audio.start()
-        if self._test_mode:
+        if self._test_mode and self._offline:
             self.status.emit(
                 "MODO PRUEBA: transcribe reunion y microfono. No se llama a Claude.")
+        elif self._test_mode:
+            self.status.emit(
+                "MODO PRUEBA: transcribe la reunion en vivo. No se llama a Claude.")
         else:
             self.status.emit("Escuchando la reunion. Habla y aparecera la sugerencia.")
+
+    # ---------------------------------------------- transcripcion en la nube
+    # Estos tres metodos los llama el hilo del WebSocket: nada de trabajo pesado
+    # aqui dentro, solo emitir senales y dejar la respuesta al worker.
+    def _on_stt_partial(self, texto):
+        # Se muestra lo ya cerrado de esta intervencion mas lo que se esta
+        # diciendo: el texto crece de corrido en vez de saltar en cada frase.
+        if not self._running:
+            return
+        with self._turn_lock:
+            previo = " ".join(self._turn_parts)
+        self.partial.emit((previo + " " + texto).strip())
+
+    def _on_stt_final(self, texto, latencia_ms):
+        if not self._running:
+            return
+        self.sttLatency.emit(latencia_ms)
+        if self._test_mode:
+            self.transcript.emit("system", texto)
+            self.status.emit(f"Transcrito en {latencia_ms} ms (reunion).")
+            return
+        with self._turn_lock:
+            self._turn_parts.append(texto)
+            acumulado = " ".join(self._turn_parts)
+            if self._turn_timer is not None:
+                self._turn_timer.cancel()
+            self._turn_timer = threading.Timer(self._turn_gap, self._flush_turn)
+            self._turn_timer.daemon = True
+            self._turn_timer.start()
+        self.partial.emit(acumulado)
+
+    def _flush_turn(self):
+        """Se cumplio la pausa: lo dicho hasta aqui es una intervencion completa."""
+        with self._turn_lock:
+            texto = " ".join(self._turn_parts).strip()
+            self._turn_parts = []
+            self._turn_timer = None
+        if texto and self._running:
+            self._history.append(("Ellos", texto))
+            self.transcript.emit("system", texto)
+            self._queue.put({"type": "respond", "text": texto})
+
+    def _cancel_turn_timer(self):
+        with self._turn_lock:
+            if self._turn_timer is not None:
+                self._turn_timer.cancel()
+                self._turn_timer = None
+            self._turn_parts = []
 
     def _on_utterance(self, audio, source="system", reason="silence"):
         # Mantener la cola corta: si hay atraso, quedarse con lo mas reciente.
@@ -211,6 +314,9 @@ class CoachEngine(QtCore.QObject):
                             # Se guarda como contexto pero no se responde todavia.
                             self.status.emit(
                                 "Sigue hablando... (guardado como contexto)")
+                elif item["type"] == "respond":
+                    # Turno cerrado en la nube: ya se acumulo todo lo que dijeron.
+                    self._respond(item["text"], images=None)
                 elif item["type"] == "screenshot":
                     self.status.emit("Analizando la pantalla...")
                     self._respond(self._last_question or "(ver la pantalla)",
@@ -255,9 +361,16 @@ class CoachEngine(QtCore.QObject):
         if self._stop_event is not None:
             self._stop_event.set()
 
+        # Primero el audio: deja de alimentar al transcriptor. Despues el stream,
+        # que ademas cierra la conexion (se factura por tiempo conectado).
         if self._audio:
             self._audio.stop()
             self._audio = None
+
+        self._cancel_turn_timer()
+        if self._stt is not None:
+            self._stt.stop()
+            self._stt = None
 
         q = self._queue
         q.put(None)                      # desbloquea al worker si esta esperando

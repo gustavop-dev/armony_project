@@ -118,17 +118,24 @@ class AudioEngine:
     def __init__(self, on_sys_level, on_mic_level, on_utterance, on_status,
                  capture_mic_utterances=False, gain_system=1.0, gain_mic=1.0,
                  speech_threshold=0.012, silence_hang=0.7, max_utterance=8.0,
-                 mic_echo_gate=True):
+                 mic_echo_gate=True, on_system_pcm=None, segment_system=True):
         """on_utterance(audio, source, reason).
 
         source: 'system' | 'mic'.  reason: 'silence' (fin de turno) | 'maxlen' (corte).
         gain_*: ganancia digital aplicada antes de medir nivel y detectar voz.
         speech_threshold: mas bajo = mas sensible.
         capture_mic_utterances: transcribir tambien el microfono (Modo prueba).
+
+        on_system_pcm(bloque_f32_16k): audio continuo de la reunion, sin cortar.
+            Lo usa la transcripcion en streaming, que necesita el flujo entero y
+            decide ella misma donde termina cada turno.
+        segment_system: cortar la reunion en frases por silencio. Solo hace falta
+            en modo offline (Whisper transcribe frases sueltas, no un flujo).
         """
         self.on_sys_level = on_sys_level
         self.on_mic_level = on_mic_level
         self.on_status = on_status
+        self.on_system_pcm = on_system_pcm
         self.gain_system = float(gain_system)
         self.gain_mic = float(gain_mic)
         self.speech_threshold = float(speech_threshold)
@@ -141,7 +148,8 @@ class AudioEngine:
                           silence_hang=silence_hang,
                           max_utt=max_utterance)
         self._seg_sys = _Segmenter(
-            lambda a, r: on_utterance(a, "system", r), **seg_kwargs)
+            lambda a, r: on_utterance(a, "system", r), **seg_kwargs) \
+            if segment_system else None
         self._seg_mic = _Segmenter(
             lambda a, r: on_utterance(a, "mic", r), **seg_kwargs) \
             if capture_mic_utterances else None
@@ -244,7 +252,14 @@ class AudioEngine:
                     # Suenan los altavoces: marcar ventana de posible eco en el micro.
                     self._sys_active_until = time.monotonic() + 0.25
                 block16 = soxr.resample(arr, rate, TARGET_RATE).astype(np.float32)
-                self._seg_sys.process(block16)
+                if self.on_system_pcm is not None:
+                    # El flujo continuo va al streaming; no se corta nada aqui.
+                    try:
+                        self.on_system_pcm(block16)
+                    except Exception:
+                        pass
+                if self._seg_sys is not None:
+                    self._seg_sys.process(block16)
             else:
                 # El nivel se muestra SIEMPRE (asi ves que el micro esta vivo),
                 # pero no lo transcribimos si es probable que sea eco.

@@ -1,7 +1,7 @@
 # Meeting Coach
 
 Asistente de reuniones para **practicar y entrenar** cómo responder en vivo. Escucha el
-audio de la reunión (salida del sistema) y tu micrófono, transcribe localmente y te sugiere
+audio de la reunión (salida del sistema) y tu micrófono, transcribe en vivo y te sugiere
 con Claude qué podrías responder — todo en una ventana que **tú ves pero que es invisible
 al compartir pantalla** (privacidad total).
 
@@ -12,7 +12,11 @@ al compartir pantalla** (privacidad total).
 - **Escucha dos fuentes** con medidores en vivo para verificar que ambas se oyen:
   - *Reunión (sistema):* lo que dicen los demás (WASAPI loopback). Es lo que se transcribe.
   - *Micrófono:* tu voz (solo medidor de verificación).
-- **Transcribe en local** con `faster-whisper` (sin enviar audio a la nube).
+- **Transcribe en vivo** con AssemblyAI (Universal Streaming): el texto aparece palabra a
+  palabra mientras la otra persona habla, y es el propio modelo quien detecta cuándo
+  terminó de hablar.
+- **Modo offline** opcional: transcribe en este equipo con `faster-whisper`, sin enviar
+  audio a la nube. Más lento y sin texto en vivo, pero funciona sin internet.
 - **Sugiere respuestas** con Claude en streaming (aparecen token por token).
 - **Screenshot → Claude:** botón para mandar una captura de pantalla y preguntar (visión).
 - **Invisible al compartir pantalla:** `SetWindowDisplayAffinity` (Windows 10 2004+/11).
@@ -22,6 +26,8 @@ al compartir pantalla** (privacidad total).
 - Windows 10 (build 19041+) u 11.
 - Python 3.10 u 3.11 recomendado.
 - API key de Anthropic (se pone en la interfaz, en *Configuración*).
+- API key de AssemblyAI para la transcripción en vivo (también en *Configuración*).
+  Si prefieres no usar la nube, activa **Modo offline** y solo hace falta la de Anthropic.
 
 ## Instalación
 
@@ -75,7 +81,14 @@ CTranslate2 no busca sola. `cuda_setup.py` las registra automáticamente al arra
 
 ## Rendimiento / latencia
 
-Medido en GTX 1660 SUPER (6 GB), transcripción de una frase de 3 s:
+**En vivo (AssemblyAI, por defecto).** El texto va apareciendo mientras la persona habla,
+así que no se espera a que termine la frase. Medido con audio real del sistema: **76–84 ms**
+desde la última palabra hasta el texto final. A eso se le suma la pausa de fin de turno
+(ajuste *Pausa de fin de turno*, 0.7 s por defecto) y ~0.5 s del primer token de Claude
+Haiku. Coste aproximado: **$0.45 por hora de reunión** — se factura el tiempo conectado,
+no el audio enviado, y la conexión solo existe mientras la reunión está en marcha.
+
+**Modo offline (Whisper local).** Medido en GTX 1660 SUPER (6 GB), frase de 3 s:
 
 | Modelo Whisper | Tiempo STT | Presupuesto total hasta la sugerencia |
 |---|---|---|
@@ -93,8 +106,10 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
 
 ## Notas técnicas
 
-- `audio.py` — captura WASAPI (loopback + micrófono), niveles y segmentación por silencio.
-- `transcribe.py` — `faster-whisper` (CUDA si hay, si no CPU int8).
+- `audio.py` — captura WASAPI (loopback + micrófono), niveles, flujo continuo para el
+  streaming y segmentación por silencio (esta última solo hace falta en modo offline).
+- `stt_stream.py` — transcripción en vivo con AssemblyAI (WebSocket, reconexión automática).
+- `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).
 - `llm.py` — cliente Anthropic con streaming y soporte de imagen (screenshot).
 - `overlay.py` — modo invisible a la captura de pantalla.
 - `app.py` — interfaz (PySide6) y orquestación.
@@ -102,6 +117,5 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
 
 ## Ideas a futuro
 
-- Transcripción parcial en vivo (antes de terminar la frase) para bajar aún más la latencia.
-- Detección de idioma automática y respuestas por proveedor (Claude/OpenAI) elegible.
+- Respuestas por proveedor (Claude/OpenAI) elegible.
 - El agente que se conecta a la videollamada y da soporte a clientes.
