@@ -72,6 +72,11 @@ Desmárcalo y añade la API key para las sugerencias reales.
    La miniatura se queda en el panel de respuesta, alineada a la derecha como el
    mensaje que acabas de enviar, y la respuesta aparece debajo.
 
+   La captura es **silenciosa**: sin destello, sin sonido y sin aviso de Windows.
+   El único acuse de recibo es esa miniatura, que solo ves tú. Y lo que se manda al
+   modelo es lo que hay **debajo** del overlay: las ventanas de la app están
+   excluidas de la captura, así que no se tapan a sí mismas el contenido.
+
 ### Cómo se pinta la respuesta
 
 El modelo contesta en markdown y el panel lo renderiza: secciones, **negritas**,

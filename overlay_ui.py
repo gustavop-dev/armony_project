@@ -1178,28 +1178,8 @@ class CollapsedButton(QtWidgets.QWidget, _Draggable):
         super().resizeEvent(e)
 
 
-class FlashOverlay(QtWidgets.QWidget):
-    """Destello blanco al capturar pantalla."""
-
-    def __init__(self):
-        super().__init__()
-        self.setWindowFlags(
-            QtCore.Qt.FramelessWindowHint
-            | QtCore.Qt.WindowStaysOnTopHint
-            | QtCore.Qt.Tool
-            | QtCore.Qt.WindowTransparentForInput
-        )
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
-        self.setStyleSheet("background: white;")
-        self._anim = QtCore.QPropertyAnimation(self, b"windowOpacity", self)
-        self._anim.setDuration(500)
-        self._anim.setStartValue(0.9)
-        self._anim.setEndValue(0.0)
-        self._anim.finished.connect(self.hide)
-
-    def flash(self, geo):
-        self.setGeometry(geo)
-        self.setWindowOpacity(0.9)
-        self.show()
-        self._anim.stop()
-        self._anim.start()
+# Aqui vivia FlashOverlay, un destello blanco a pantalla completa al capturar.
+# Se elimino: era la unica ventana de la app SIN proteccion de captura, asi que
+# todo el overlay era invisible al compartir pantalla menos ese flashazo, que
+# ademas podia colarse en la propia imagen enviada al modelo. El acuse de recibo
+# de la captura es la miniatura en el panel, que solo ve el usuario.

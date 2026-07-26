@@ -17,7 +17,7 @@ import theme as T
 from engine import CoachEngine
 from overlay import set_capture_protection, set_no_activate, set_click_through
 from wheelscroll import WheelForwarder
-from overlay_ui import TopBar, TranscriptPanel, CollapsedButton, FlashOverlay
+from overlay_ui import TopBar, TranscriptPanel, CollapsedButton
 from settings_window import SettingsWindow
 import hotkeys as HK
 
@@ -31,7 +31,6 @@ class OverlayApp(QtCore.QObject):
         self.top = TopBar()
         self.panel = TranscriptPanel()
         self.collapsed = CollapsedButton()
-        self.flash = FlashOverlay()
 
         self._visible = True
         self._running = False
@@ -239,8 +238,11 @@ class OverlayApp(QtCore.QObject):
         if not self._running:
             self.panel.set_status("Start the meeting first")
             return
+        # Sin destello ni aviso de ningun tipo: la captura tiene que ser
+        # indistinguible de no hacer nada. El unico acuse de recibo es la
+        # miniatura en el panel, que solo ves tu (el panel esta excluido de
+        # cualquier grabacion o compartir pantalla).
         pantalla = QtWidgets.QApplication.primaryScreen()
-        self.flash.flash(pantalla.geometry())
         pm = pantalla.grabWindow(0)
         if pm.width() > 1280:
             pm = pm.scaledToWidth(1280, QtCore.Qt.SmoothTransformation)
