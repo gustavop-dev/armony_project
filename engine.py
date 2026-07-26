@@ -142,17 +142,17 @@ class CoachEngine(QtCore.QObject):
                 extra = ctx_mod.active_text(lang)
                 sys_prompt = base + (
                     "\n\n# Contexto de esta reunion\n" + extra if extra else "")
-                proveedor = cfg.get("llm_provider", "anthropic")
-                if proveedor == "openai":
-                    clave, modelo = cfg["openai_api_key"], cfg["openai_model"]
-                else:
-                    clave, modelo = cfg["anthropic_api_key"], cfg["llm_model"]
+                # Cada proveedor trae su clave y sus dos modelos: uno para las
+                # preguntas habladas y otro, mas capaz, para las capturas.
+                p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"
                 self._coach = Coach(
-                    api_key=clave,
-                    model=modelo,
+                    api_key=cfg[f"{p}_api_key"],
                     system_prompt=sys_prompt,
-                    max_tokens=int(cfg.get("max_tokens", 400)),
-                    provider=proveedor,
+                    provider=p,
+                    model_voice=cfg[f"{p}_model_voice"],
+                    tokens_voice=int(cfg[f"{p}_tokens_voice"]),
+                    model_vision=cfg[f"{p}_model_vision"],
+                    tokens_vision=int(cfg[f"{p}_tokens_vision"]),
                 )
             except Exception as e:
                 self.error.emit(f"No se pudo iniciar Claude: {e}")

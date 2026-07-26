@@ -167,12 +167,29 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
   Latencia total ~1.35 s.
 - **Portátil Ryzen 5 5600H (sin NVIDIA):** corre en **CPU**. Usa `Tamaño Whisper = base`
   y cierra apps pesadas (8 GB de RAM es ajustado). Latencia ~1.5–2.5 s.
-- Modelo por defecto en Anthropic: `claude-haiku-4-5` (el más rápido). Cambia a
-  `claude-opus-4-8` para más calidad a costa de algo de latencia.
-- En OpenAI, `gpt-5.4-mini` responde en ~1–2 s hasta la primera palabra. Ojo: los
-  modelos GPT-5 razonan antes de responder y ese razonamiento gasta del mismo
-  presupuesto de tokens, así que `llm.py` reserva margen aparte para que el ajuste
-  de *longitud máxima* siga refiriéndose a la respuesta y no llegue vacía.
+### Dos modelos, uno por cada uso
+
+En *Configuración → Conexión* solo aparece el proveedor que tengas elegido (o las
+opciones de Anthropic, o las de OpenAI, nunca las dos), y cada uno se configura con
+**dos modelos**, porque los dos usos no se parecen en nada:
+
+| Uso | Qué manda | Por defecto |
+|---|---|---|
+| **Preguntas habladas** | La latencia: la respuesta tiene que estar antes de que el silencio se note | `gpt-5.6-terra` · `claude-haiku-4-5` |
+| **Capturas de pantalla** | La capacidad: suele haber código que resolver, y unos segundos de más no se notan porque estás leyendo | `gpt-5.6-sol` · `claude-sonnet-5` |
+
+Cada uno con su propia **longitud máxima de respuesta**, justo debajo del modelo:
+400 tokens bastan para una respuesta hablada, pero el código se queda corto ahí, así
+que las capturas van con 1200.
+
+Tiempos de GPT medidos desde este equipo (mediana de 5 llamadas, hasta la primera
+palabra en pantalla): `gpt-5.4-mini` 0,7 s · `gpt-5.6-terra` 0,8 s ·
+`gpt-5.6-luna` 1,2 s · `gpt-5.6-sol` 1,3 s. De **calidad** no hay medida, así que
+las opciones no están ordenadas por «listas».
+
+Ojo con los modelos GPT-5: razonan antes de responder y ese razonamiento gasta del
+mismo presupuesto de tokens, así que `llm.py` reserva margen aparte para que el
+ajuste de longitud siga refiriéndose a la respuesta y no llegue vacía.
 
 ## Notas técnicas
 

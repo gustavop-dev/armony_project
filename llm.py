@@ -19,12 +19,25 @@ _RESERVA_RAZONAMIENTO = 1000
 
 
 class Coach:
-    def __init__(self, api_key, model="claude-haiku-4-5", system_prompt="",
-                 max_tokens=400, provider=ANTHROPIC):
+    """Cliente del coach. Usa un modelo distinto segun de donde venga la pregunta.
+
+    Hablada: manda la latencia, la respuesta tiene que llegar antes de que el
+    silencio se note. Con captura de pantalla: manda la capacidad, porque suele
+    haber codigo que resolver, y un par de segundos de mas no molestan porque
+    estas leyendo.
+    """
+
+    def __init__(self, api_key, system_prompt="", provider=ANTHROPIC,
+                 model_voice="claude-haiku-4-5", tokens_voice=400,
+                 model_vision=None, tokens_vision=None):
         self.provider = (provider or ANTHROPIC).lower()
-        self.model = model
         self.system_prompt = system_prompt
-        self.max_tokens = int(max_tokens)
+        self.model_voice = model_voice
+        self.tokens_voice = int(tokens_voice)
+        # Sin modelo de capturas configurado se usa el mismo que para voz: mejor
+        # responder algo que fallar por configuracion incompleta.
+        self.model_vision = model_vision or model_voice
+        self.tokens_vision = int(tokens_vision or tokens_voice)
         # Importe perezoso: solo se exige tener instalado el proveedor que se usa.
         if self.provider == OPENAI:
             from openai import OpenAI
@@ -100,19 +113,26 @@ class Coach:
             quiere una sugerencia si o si.
         """
         prompt = self._prompt(context_text, latest, images, note, allow_silence)
+        modelo, tokens = self.elegir_modelo(images)
         try:
             if self.provider == OPENAI:
-                self._stream_openai(prompt, images, on_delta)
+                self._stream_openai(prompt, images, on_delta, modelo, tokens)
             else:
-                self._stream_anthropic(prompt, images, on_delta)
+                self._stream_anthropic(prompt, images, on_delta, modelo, tokens)
             if on_done:
                 on_done()
         except Exception as e:
             if on_error:
                 on_error(str(e))
 
+    def elegir_modelo(self, images):
+        """(modelo, tokens) segun haya captura de pantalla o no."""
+        if images:
+            return self.model_vision, self.tokens_vision
+        return self.model_voice, self.tokens_voice
+
     # ---------------------------------------------------------------- backends
-    def _stream_anthropic(self, prompt, images, on_delta):
+    def _stream_anthropic(self, prompt, images, on_delta, modelo, tokens):
         content = []
         for img in (images or []):
             content.append({
@@ -122,8 +142,8 @@ class Coach:
         content.append({"type": "text", "text": prompt})
 
         with self.client.messages.stream(
-            model=self.model,
-            max_tokens=self.max_tokens,
+            model=modelo,
+            max_tokens=tokens,
             system=self.system_prompt,
             messages=[{"role": "user", "content": content}],
         ) as stream:
@@ -131,7 +151,7 @@ class Coach:
                 if on_delta:
                     on_delta(text)
 
-    def _stream_openai(self, prompt, images, on_delta):
+    def _stream_openai(self, prompt, images, on_delta, modelo, tokens):
         content = []
         for img in (images or []):
             content.append({"type": "input_image",
@@ -139,10 +159,10 @@ class Coach:
         content.append({"type": "input_text", "text": prompt})
 
         with self.client.responses.stream(
-            model=self.model,
+            model=modelo,
             instructions=self.system_prompt,
             input=[{"role": "user", "content": content}],
-            max_output_tokens=self.max_tokens + _RESERVA_RAZONAMIENTO,
+            max_output_tokens=tokens + _RESERVA_RAZONAMIENTO,
         ) as stream:
             for ev in stream:
                 if ev.type == "response.output_text.delta" and on_delta:

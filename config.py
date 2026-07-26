@@ -36,16 +36,30 @@ DEFAULT_SYSTEM_PROMPT = DEFAULT_PROMPT_ES   # compatibilidad
 
 DEFAULTS = {
     # --- Proveedor de las respuestas ---
-    # 'anthropic' | 'openai'. Cada uno con su clave y su modelo, para poder
+    # 'anthropic' | 'openai'. Cada uno con su clave y sus modelos, para poder
     # cambiar de uno a otro sin volver a escribir nada.
+    #
+    # Hay DOS modelos por proveedor porque los dos usos no se parecen:
+    #   voz     -> alguien pregunta hablando. Manda la latencia: la respuesta
+    #              tiene que estar antes de que el silencio se note.
+    #   captura -> hay un ejercicio o codigo en pantalla. Manda la capacidad, y
+    #              un par de segundos de mas no se notan porque estas leyendo.
     "llm_provider": "anthropic",
+
     "anthropic_api_key": "",
-    "llm_model": "claude-haiku-4-5",   # el mas rapido; cambiar a claude-opus-4-8 para mas calidad
+    "anthropic_model_voice": "claude-haiku-4-5",     # el mas rapido
+    "anthropic_tokens_voice": 400,
+    "anthropic_model_vision": "claude-sonnet-5",     # mas capaz para codigo
+    "anthropic_tokens_vision": 1200,                 # el codigo ocupa
+
     "openai_api_key": "",
     # gpt-5.4-nano queda fuera a proposito: es el mas rapido, pero 1 de cada 5
     # veces ignora la instruccion de callarse cuando no hay pregunta y escribe
     # excusas en el panel. La velocidad no compensa ensuciar la pantalla.
-    "openai_model": "gpt-5.6-terra",   # 0,8 s hasta la primera palabra
+    "openai_model_voice": "gpt-5.6-terra",           # 0,8 s a la primera palabra
+    "openai_tokens_voice": 400,
+    "openai_model_vision": "gpt-5.6-sol",
+    "openai_tokens_vision": 1200,
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
     # texto llega palabra a palabra mientras se habla, no al terminar la frase.
@@ -66,7 +80,6 @@ DEFAULTS = {
     "system_prompt_en": DEFAULT_PROMPT_EN,
     "invisible_on_share": True,        # ocultar la ventana al compartir pantalla
     "window_opacity": 0.65,            # 0.15 (muy transparente) a 1.0 (opaco)
-    "max_tokens": 400,
 
     # --- Sensibilidad y ganancia ---
     # Ganancia digital aplicada antes de medir el nivel y de detectar voz.
@@ -112,6 +125,18 @@ def load_config():
     legacy = cfg.pop("system_prompt", None)
     if legacy and cfg.get("system_prompt_es") == DEFAULT_PROMPT_ES:
         cfg["system_prompt_es"] = legacy
+
+    # Migracion: antes habia UN modelo por proveedor y un unico max_tokens. Lo
+    # guardado se conserva como modelo de voz, para no cambiarle la configuracion
+    # a nadie por debajo; el de capturas se queda con el valor por defecto.
+    for viejo, nuevo in (("llm_model", "anthropic_model_voice"),
+                         ("openai_model", "openai_model_voice")):
+        anterior = cfg.pop(viejo, None)
+        if anterior:
+            cfg[nuevo] = anterior
+    tokens = cfg.pop("max_tokens", None)
+    if tokens:
+        cfg["anthropic_tokens_voice"] = cfg["openai_tokens_voice"] = int(tokens)
     return cfg
 
 
