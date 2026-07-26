@@ -37,6 +37,7 @@ class OverlayApp(QtCore.QObject):
         self._elapsed = 0
         self._responding = False
         self._shots = []          # capturas acumuladas, pendientes de enviar
+        self._answer_lleva_capturas = False   # la respuesta en curso las ilustra
         self.settings = None      # ventana de configuracion abierta (o None)
 
         self._timer = QtCore.QTimer(self)
@@ -127,6 +128,7 @@ class OverlayApp(QtCore.QObject):
         self.top.toggleClicked.connect(self.toggle_overlay)
         self.top.settingsClicked.connect(self.open_settings)
         self.top.generateClicked.connect(self.generate)
+        self.top.answerNowClicked.connect(self.answer_now)
         self.collapsed.clicked.connect(self.toggle_overlay)
 
         e = self.engine
@@ -177,6 +179,8 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_status("Loading…", "loading")   # feedback inmediato
         self.panel.set_question("")
         self.panel.hide_skip()
+        self.panel.clear_shots()
+        self._answer_lleva_capturas = False
         import contexts as ctx_mod
         n = ctx_mod.active_count(self.cfg.get("language", "es"))
         chip = f"{n} context{'s' if n != 1 else ''} loaded · " if n else ""
@@ -236,6 +240,9 @@ class OverlayApp(QtCore.QObject):
         buf.open(QtCore.QIODevice.WriteOnly)
         pm.save(buf, "PNG")
         self._shots.append(bytes(ba.toBase64()).decode("ascii"))
+        # Verla en el panel confirma que se capturo lo que querias, antes de
+        # gastar una llamada al modelo.
+        self.panel.add_shot(pm)
         self.top.set_generate_enabled(True)
         n = len(self._shots)
         self.panel.set_status(
@@ -251,6 +258,8 @@ class OverlayApp(QtCore.QObject):
             return
         self.engine.request_screenshots(list(self._shots))
         self._shots.clear()
+        # Las miniaturas se quedan: acompañan a la respuesta que van a producir.
+        self._answer_lleva_capturas = True
         self.top.set_generate_enabled(False)
         self.panel.set_status("Analyzing…")
 
@@ -351,6 +360,11 @@ class OverlayApp(QtCore.QObject):
             return
         self._responding = True
         self.panel.hide_skip()           # ya hay respuesta en camino
+        # Si esta respuesta no viene de las capturas, estas ya no la ilustran.
+        if self._answer_lleva_capturas:
+            self._answer_lleva_capturas = False
+        else:
+            self.panel.clear_shots()
         self.panel.clear_answer()
         self.panel.set_state("generating")   # borde dorado vivo mientras genera
         self.panel.set_status("Drafting…")

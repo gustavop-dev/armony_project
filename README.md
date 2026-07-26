@@ -68,7 +68,20 @@ Desmárcalo y añade la API key para las sugerencias reales.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
 4. Cuando alguien hable en la reunión, verás la transcripción **en vivo** y, cuando
    te pregunten algo, la **respuesta sugerida**.
-5. Botón **Captura pantalla + preguntar** para preguntas visuales.
+5. **`Alt+2`** captura la pantalla (puedes encadenar varias) y **`Alt+3`** las manda.
+   La miniatura se queda en el panel de respuesta, alineada a la derecha como el
+   mensaje que acabas de enviar, y la respuesta aparece debajo.
+
+### Cómo se pinta la respuesta
+
+El modelo contesta en markdown y el panel lo renderiza: secciones, **negritas**,
+`código en línea`, listas y **bloques de código** con su lenguaje y un botón para
+copiar. El código se muestra tal cual, con sus saltos de línea e indentación.
+
+Cuando la pregunta llega por voz, la respuesta es una explicación breve para decir
+en voz alta. Cuando llega por captura de pantalla, el prompt pide además la
+**solución completa** en un bloque de código copiable y la explicación de tú a tú.
+En los dos casos, siempre en primera persona: lo que se lee es lo que tú dirías.
 
 ### Atajos
 
@@ -83,6 +96,9 @@ abre las KeyTips de la cinta ni se te escribe el número en la celda.
 | `Alt+3` | Generar respuesta con las capturas tomadas |
 | `Alt+4` | Iniciar / detener la reunión |
 | `Alt+5` | Responder ahora a lo último que dijeron |
+
+Todos tienen su botón en la barra superior con el atajo escrito al lado, así que
+no hay que recordarlos.
 
 ### Cuándo responde (y cuándo no)
 
@@ -148,6 +164,7 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
   streaming y segmentación por silencio (esta última solo hace falta en modo offline).
 - `stt_stream.py` — transcripción en vivo con AssemblyAI (WebSocket, reconexión automática).
 - `intent.py` — decide si una intervención pide respuesta o solo está dando contexto.
+- `richtext.py` — convierte el markdown del modelo en bloques (texto, código, listas).
 - `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).
 - `llm.py` — cliente del coach con streaming y soporte de imagen (screenshot).
   Anthropic y OpenAI tras la misma interfaz; solo se importa el que se use.

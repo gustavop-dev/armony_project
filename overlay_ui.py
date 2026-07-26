@@ -12,6 +12,7 @@ import math
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import icons
+import richtext
 import theme as T
 
 
@@ -267,6 +268,102 @@ class StatusBadge(QtWidgets.QWidget):
         self._lbl.setText(texto)
 
 
+class CodeBlock(QtWidgets.QFrame):
+    """Bloque de codigo: cabecera con el lenguaje, boton de copiar y el cuerpo.
+
+    El cuerpo va en texto plano y monoespaciado a proposito: asi los saltos de
+    linea y la indentacion salen tal cual los escribio el modelo, que es lo unico
+    que hace legible el codigo.
+    """
+
+    def __init__(self, lenguaje, codigo):
+        super().__init__()
+        self._codigo = codigo
+        self.setStyleSheet(f"""
+            CodeBlock {{
+                background: {T.KBD_BG};
+                border: 1px solid {T.DIVIDER_FAINT};
+                border-radius: 8px;
+            }}
+            QLabel {{ background: transparent; border: none; }}
+        """)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        cab = QtWidgets.QWidget()
+        cl = QtWidgets.QHBoxLayout(cab)
+        cl.setContentsMargins(10, 5, 6, 5)
+        cl.setSpacing(8)
+        etq = QtWidgets.QLabel((lenguaje or "code").upper())
+        ef = etq.font(); ef.setPixelSize(10); ef.setWeight(QtGui.QFont.DemiBold)
+        ef.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 0.8)
+        etq.setFont(ef)
+        etq.setStyleSheet(f"color: {T.GOLD_LABEL}; background: transparent;")
+        cl.addWidget(etq)
+        cl.addStretch()
+
+        self.btn_copy = ClickFrame()
+        self.btn_copy.setStyleSheet(f"""
+            QFrame {{ border: 1px solid {T.BTN_BORDER}; border-radius: 6px;
+                      background: {T.BTN_BG}; }}
+            QFrame:hover {{ background: {T.BTN_BG_HOVER}; }}
+            QLabel {{ border: none; background: transparent; }}
+        """)
+        bl = QtWidgets.QHBoxLayout(self.btn_copy)
+        bl.setContentsMargins(8, 3, 8, 3)
+        self.lbl_copy = QtWidgets.QLabel("Copy")
+        cf = self.lbl_copy.font(); cf.setPixelSize(10); self.lbl_copy.setFont(cf)
+        self.lbl_copy.setStyleSheet(f"color: {T.TEXT_DIM}; background: transparent;")
+        bl.addWidget(self.lbl_copy)
+        self.btn_copy.clicked.connect(self._copiar)
+        cl.addWidget(self.btn_copy)
+        lay.addWidget(cab)
+
+        sep = QtWidgets.QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background: {T.DIVIDER_FAINT}; border: none;")
+        lay.addWidget(sep)
+
+        cuerpo = QtWidgets.QLabel(codigo)
+        cuerpo.setTextFormat(QtCore.Qt.PlainText)      # respeta saltos y espacios
+        cuerpo.setWordWrap(True)
+        cuerpo.setStyleSheet(
+            f"font-family: {T.MONO_STACK}; font-size: 12.5px; "
+            f"color: {T.TEXT_BRIGHT}; background: transparent; padding: 9px 11px;")
+        cuerpo.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        lay.addWidget(cuerpo)
+
+    def _copiar(self):
+        QtWidgets.QApplication.clipboard().setText(self._codigo)
+        self.lbl_copy.setText("Copied")
+        QtCore.QTimer.singleShot(1400, lambda: self.lbl_copy.setText("Copy"))
+
+
+class ShotThumb(QtWidgets.QFrame):
+    """Miniatura de una captura enviada, al estilo de un mensaje propio."""
+
+    def __init__(self, pixmap, ancho=190):
+        super().__init__()
+        self.setStyleSheet(f"""
+            ShotThumb {{ background: {T.KBD_BG_LIGHT};
+                         border: 1px solid {T.PANEL_BORDER};
+                         border-radius: 8px; }}
+            QLabel {{ border: none; background: transparent; }}
+        """)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(5, 5, 5, 4)
+        lay.setSpacing(3)
+        img = QtWidgets.QLabel()
+        img.setPixmap(pixmap.scaledToWidth(ancho, QtCore.Qt.SmoothTransformation))
+        lay.addWidget(img)
+        pie = QtWidgets.QLabel("screenshot sent")
+        pf = pie.font(); pf.setPixelSize(9); pie.setFont(pf)
+        pie.setStyleSheet(f"color: {T.TEXT_FAINT}; background: transparent;")
+        pie.setAlignment(QtCore.Qt.AlignRight)
+        lay.addWidget(pie)
+
+
 class SkipPill(QtWidgets.QLabel):
     """Aviso de que NO va a haber respuesta.
 
@@ -350,6 +447,7 @@ class TopBar(QtWidgets.QWidget, _Draggable):
     startStopClicked = QtCore.Signal()
     screenshotClicked = QtCore.Signal()
     generateClicked = QtCore.Signal()
+    answerNowClicked = QtCore.Signal()
     toggleClicked = QtCore.Signal()
     settingsClicked = QtCore.Signal()
 
@@ -422,7 +520,9 @@ class TopBar(QtWidgets.QWidget, _Draggable):
         lay.addWidget(self.btn_meeting)
         self._paint_meeting()
 
-        # Orden de izquierda a derecha: 4 (meeting), 3 (generate), 2 (screenshot), 1 (show/hide).
+        # Orden de izquierda a derecha: 4 (meeting), 3 (generate), 5 (answer now),
+        # 2 (screenshot), 1 (show/hide). No es el orden de los numeros: se agrupan
+        # los dos que hacen responder a la IA (3 y 5), que es como se usan.
 
         # --- generar (se ilumina cuando hay capturas listas) ---
         self.btn_gen = ClickFrame()
@@ -440,6 +540,13 @@ class TopBar(QtWidgets.QWidget, _Draggable):
         self.btn_gen.clicked.connect(self.generateClicked)
         lay.addWidget(self.btn_gen)
         self.set_generate_enabled(False)
+
+        # --- responder ahora (red de seguridad si no se detecto la pregunta) ---
+        self.btn_answer = self._pill("Answer now", ("Alt", "5"), icono="chat")
+        self.btn_answer.setToolTip(
+            "Responde a lo último que dijeron, aunque no pareciera una pregunta")
+        self.btn_answer.clicked.connect(self.answerNowClicked)
+        lay.addWidget(self.btn_answer)
 
         # --- captura de pantalla ---
         self.btn_shot = self._pill("Screenshot", ("Alt", "2"), icono="camera")
@@ -552,6 +659,8 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._caret_on = True
         self._anim_phase = 0
         self._part_last = None
+        self._shots = []            # miniaturas de las capturas enviadas
+        self._copy_buttons = []     # se recrean en cada render
         self._build()
         # Animacion: pulso del borde (listening) + caret parpadeante.
         self._anim = QtCore.QTimer(self)
@@ -598,8 +707,13 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         super().resizeEvent(e)
 
     def interactive_widgets(self):
-        """Zonas que responden al mouse: cabecera (mover), scroll y el agarre."""
-        return [self._drag_header, self.scroll.verticalScrollBar(), self.resize_grip]
+        """Zonas que responden al mouse: cabecera (mover), scroll, agarre y copiar.
+
+        Se consulta cada 30 ms desde app.py, asi que los botones de copiar que se
+        crean en cada render entran solos.
+        """
+        return ([self._drag_header, self.scroll.verticalScrollBar(),
+                 self.resize_grip] + self._copy_buttons)
 
     # ---------------- encabezado
     def _header(self):
@@ -815,7 +929,18 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
 
     def append_answer(self, delta):
         self._raw += delta
-        self._render(parse_sections(self._raw))
+        self._render(richtext.parse_answer(self._raw))
+
+    # ---------------- capturas enviadas
+    def add_shot(self, pixmap):
+        """Muestra la captura recien tomada encima de la respuesta."""
+        self._shots.append(pixmap)
+        self._render(richtext.parse_answer(self._raw))
+
+    def clear_shots(self):
+        if self._shots:
+            self._shots = []
+            self._render(richtext.parse_answer(self._raw))
 
     def set_hint(self, texto):
         self._raw = ""
@@ -829,50 +954,88 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
     def _clear_layout(self):
         while self.answer_lay.count() > 1:
             it = self.answer_lay.takeAt(0)
-            if it.widget():
-                it.widget().deleteLater()
+            w = it.widget()
+            if w is not None:
+                # Quitarlo del padre YA: deleteLater no se procesa hasta que el
+                # bucle de eventos vuelve arriba, y con el streaming repintando
+                # en cada trozo los viejos se quedaban encima de los nuevos.
+                w.setParent(None)
+                w.deleteLater()
+
+    # Estilo del `codigo en linea` dentro de un parrafo.
+    _CODE_INLINE = (f"font-family: {T.MONO_STACK}; background: rgba(0,0,0,0.35); "
+                    f"color: {T.GOLD_LIGHT};")
+
+    def _parrafo(self, texto):
+        lab = QtWidgets.QLabel(
+            f'<div style="line-height:150%; color:{T.ANSWER_TEXT}; font-size:14px;">'
+            f'{richtext.inline_html(texto, self._CODE_INLINE)}</div>')
+        lab.setWordWrap(True)
+        lab.setTextFormat(QtCore.Qt.RichText)
+        lab.setStyleSheet("background: transparent;")
+        return lab
+
+    def _vinetas(self, items):
+        filas = "".join(
+            f'<tr><td style="color:{T.GOLD};padding-right:7px;">•</td>'
+            f'<td>{richtext.inline_html(it, self._CODE_INLINE)}</td></tr>'
+            for it in items)
+        lab = QtWidgets.QLabel(
+            f'<table style="line-height:150%; color:{T.ANSWER_TEXT}; '
+            f'font-size:14px;" cellspacing="0">{filas}</table>')
+        lab.setWordWrap(True)
+        lab.setTextFormat(QtCore.Qt.RichText)
+        lab.setStyleSheet("background: transparent;")
+        return lab
 
     def _render(self, secciones):
         self._clear_layout()
-        for i, (etiqueta, texto) in enumerate(secciones):
-            bloque = QtWidgets.QWidget()
-            bl = QtWidgets.QVBoxLayout(bloque)
+        self._copy_buttons = []
+        fila = 0
+
+        # Las capturas enviadas van arriba y alineadas a la derecha, como el
+        # mensaje que acabas de mandar en un chat; la respuesta viene debajo.
+        for pm in self._shots:
+            caja = QtWidgets.QWidget()
+            cl = QtWidgets.QHBoxLayout(caja)
+            cl.setContentsMargins(0, 0, 0, 0)
+            cl.addStretch()
+            cl.addWidget(ShotThumb(pm))
+            caja.setStyleSheet("background: transparent;")
+            self.answer_lay.insertWidget(fila, caja)
+            fila += 1
+
+        for etiqueta, bloques in secciones:
+            caja = QtWidgets.QWidget()
+            bl = QtWidgets.QVBoxLayout(caja)
             bl.setContentsMargins(0, 0, 0, 0)
-            bl.setSpacing(3)
-            bloque.setStyleSheet("background: transparent;")
-            lab = _tracked(etiqueta, 11, QtGui.QFont.Bold, T.GOLD_LABEL, 1.0, upper=True)
-            bl.addWidget(lab)
-            cuerpo = QtWidgets.QLabel(
-                f'<div style="line-height:150%; color:{T.ANSWER_TEXT}; font-size:14px;">'
-                f'{html.escape(texto)}</div>')
-            cuerpo.setWordWrap(True)
-            cuerpo.setTextFormat(QtCore.Qt.RichText)
-            cuerpo.setStyleSheet("background: transparent;")
-            bl.addWidget(cuerpo)
-            self.answer_lay.insertWidget(i, bloque)
+            bl.setSpacing(6)
+            caja.setStyleSheet("background: transparent;")
+            bl.addWidget(_tracked(etiqueta, 11, QtGui.QFont.Bold, T.GOLD_LABEL,
+                                  1.0, upper=True))
+            for bloque in bloques:
+                if bloque[0] == richtext.CODE:
+                    cb = CodeBlock(bloque[1], bloque[2])
+                    self._copy_buttons.append(cb.btn_copy)
+                    bl.addWidget(cb)
+                elif bloque[0] == richtext.BULLETS:
+                    bl.addWidget(self._vinetas(bloque[1]))
+                else:
+                    bl.addWidget(self._parrafo(bloque[1]))
+            self.answer_lay.insertWidget(fila, caja)
+            fila += 1
+
         QtCore.QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(
             self.scroll.verticalScrollBar().maximum()))
 
 
 def parse_sections(raw):
-    """Convierte la respuesta del modelo en secciones (etiqueta, texto).
+    """Version plana (etiqueta, texto) de la respuesta.
 
-    Formato esperado: lineas '## Etiqueta' seguidas del texto de la seccion.
-    Si el modelo no usa secciones, devuelve una sola bajo 'Respuesta'.
+    El panel ya no la usa —pinta bloques con richtext—, pero se mantiene porque
+    es una forma comoda de comprobar por fuera que el modelo respeta el formato.
     """
-    secciones, etiqueta, buf = [], None, []
-    for linea in raw.splitlines():
-        if linea.startswith("## "):
-            if etiqueta:
-                secciones.append((etiqueta, " ".join(buf).strip()))
-            etiqueta, buf = linea[3:].strip(), []
-        elif linea.strip():
-            buf.append(linea.strip())
-    if etiqueta:
-        secciones.append((etiqueta, " ".join(buf).strip()))
-    if not secciones and raw.strip():
-        secciones = [("Respuesta", raw.strip())]
-    return [(e, t) for e, t in secciones if t]
+    return richtext.solo_texto(richtext.parse_answer(raw))
 
 
 # --------------------------------------------------------------- auxiliares

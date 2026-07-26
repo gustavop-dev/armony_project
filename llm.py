@@ -38,21 +38,39 @@ class Coach:
         n_img = len(images or [])
         extra = f"\n\nIndicacion mia para orientar la respuesta: \"{note}\"" if note else ""
         if n_img:
-            extra += (f"\n\nAdjunto {n_img} captura(s) de mi pantalla. Si contienen el "
-                      "enunciado o el codigo del que se habla, respondele a eso.")
+            # Con capturas la pregunta suele ser tecnica: hace falta la solucion
+            # entera, no un resumen hablado. El codigo va en su propio bloque para
+            # que el panel lo pinte como codigo y se pueda copiar.
+            extra += (
+                f"\n\nAdjunto {n_img} captura(s) de mi pantalla. Si contienen el "
+                "enunciado o el codigo del que se habla, respondele a eso.\n"
+                "Si hay que escribir o corregir codigo:\n"
+                "- Da la solucion COMPLETA, lista para usar, dentro de un bloque "
+                "cercado con ``` y el lenguaje (por ejemplo ```python).\n"
+                "- No cortes el codigo ni pongas '...': tiene que poder copiarse "
+                "y ejecutarse.\n"
+                "- Despues explicamela hablada, como si yo se la estuviera "
+                "explicando a la otra persona de tu a tu: que hace, por que "
+                "funciona y su coste si viene al caso. Sin dar clase.")
         prompt = (
             "Contexto reciente de la reunion. 'Ellos' son los demas participantes "
             "y 'Yo' es lo que ya he dicho:\n"
             f"{context_text or '(sin contexto previo)'}\n\n"
             f"Lo ultimo que dijeron los demas: \"{latest}\"{extra}\n\n"
             "Dame, en primera persona y listo para decir en voz alta, que deberia "
-            "responder yo. IMPORTANTE: no repitas lo que yo ya dije en el contexto; "
-            "si ya respondi algo, continua o complementa.\n\n"
+            "responder yo. SIEMPRE en primera persona, como si yo estuviera "
+            "hablando: nunca en tercera persona, ni en tono de documentacion, ni "
+            "diciendome lo que 'podrias responder'. IMPORTANTE: no repitas lo que "
+            "yo ya dije en el contexto; si ya respondi algo, continua o "
+            "complementa.\n\n"
             "FORMATO OBLIGATORIO: divide la respuesta en secciones, cada una con un "
             "encabezado en su propia linea que empiece por '## '. Usa de una a cuatro "
             "secciones con encabezados cortos y propios, elegidos segun la pregunta "
             "(por ejemplo '## Answer', '## Context', '## Example', '## Next step'). "
-            "Cada seccion, una o dos frases. Sin texto fuera de las secciones."
+            "Cada seccion, una o dos frases; los bloques de codigo pueden ser tan "
+            "largos como haga falta. Dentro de las secciones puedes usar "
+            "**negritas**, `codigo en linea`, listas con '- ' y bloques cercados "
+            "con ```lenguaje. Sin texto fuera de las secciones."
         )
         if allow_silence:
             # Segunda puerta: en una reunion la mayor parte del tiempo el otro
