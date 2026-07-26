@@ -15,6 +15,10 @@ import icons
 import richtext
 import theme as T
 
+# Cada cuanto se repinta la respuesta mientras llega. Bastante mas rapido que
+# leer, pero mil veces menos trabajo que reconstruir el panel en cada trozo.
+INTERVALO_REPINTADO = 90    # ms
+
 
 # --------------------------------------------------------------- utilidades
 
@@ -717,6 +721,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._part_last = None
         self._shots = []            # miniaturas de las capturas enviadas
         self._copy_buttons = []     # se recrean en cada render
+        self._repintado_pendiente = False
         self._build()
         # Cada area sigue el final por su cuenta: la respuesta segun se genera y
         # la transcripcion segun se habla.
@@ -1007,7 +1012,20 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._render([])
 
     def append_answer(self, delta):
+        """Añade un trozo de la respuesta y programa el repintado.
+
+        Repintar en cada trozo era insostenible: el panel se reconstruye entero
+        (secciones, bloques de codigo, botones) y llegan decenas de trozos por
+        segundo, asi que se atascaba justo mientras escribes la respuesta. Se
+        agrupan y se repinta a ritmo fijo, que ademas es mas legible.
+        """
         self._raw += delta
+        if not self._repintado_pendiente:
+            self._repintado_pendiente = True
+            QtCore.QTimer.singleShot(INTERVALO_REPINTADO, self._repintar)
+
+    def _repintar(self):
+        self._repintado_pendiente = False
         self._render(richtext.parse_answer(self._raw))
 
     # ---------------- scroll (respuesta y transcripcion)
@@ -1053,10 +1071,11 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
             it = self.answer_lay.takeAt(0)
             w = it.widget()
             if w is not None:
-                # Quitarlo del padre YA: deleteLater no se procesa hasta que el
-                # bucle de eventos vuelve arriba, y con el streaming repintando
-                # en cada trozo los viejos se quedaban encima de los nuevos.
-                w.setParent(None)
+                # hide() y a la cola de borrado. NADA de setParent(None): eso
+                # convierte el widget en una ventana de nivel superior, y
+                # repintando en cada trozo del streaming salian decenas de
+                # ventanas sueltas parpadeando encima de todo.
+                w.hide()
                 w.deleteLater()
 
     # Estilo del `codigo en linea` dentro de un parrafo.
