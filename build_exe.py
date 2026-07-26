@@ -31,6 +31,35 @@ def instalado(modulo):
         return False
 
 
+def dlls_de_openssl():
+    """Localiza libssl/libcrypto cuando el Python base es de conda.
+
+    En un Python normal esas DLL viven en DLLs\\ y PyInstaller las encuentra
+    solo. Conda las pone en Library\\bin, donde no mira, y el ejecutable arranca
+    perfectamente pero explota en la PRIMERA conexion HTTPS con
+    'DLL load failed while importing _ssl'. Como aqui la primera conexion es al
+    iniciar la reunion, el fallo aparece justo al pulsar Iniciar.
+    """
+    candidatos = []
+    for raiz in {sys.base_prefix, sys.prefix}:
+        for sub in ("Library\\bin", "DLLs", ""):
+            carpeta = os.path.join(raiz, sub) if sub else raiz
+            if not os.path.isdir(carpeta):
+                continue
+            for nombre in os.listdir(carpeta):
+                bajo = nombre.lower()
+                if bajo.endswith(".dll") and ("libssl" in bajo or "libcrypto" in bajo):
+                    candidatos.append(os.path.join(carpeta, nombre))
+    # sin duplicados, conservando el orden de busqueda
+    vistos, salida = set(), []
+    for ruta in candidatos:
+        clave = os.path.basename(ruta).lower()
+        if clave not in vistos:
+            vistos.add(clave)
+            salida.append(ruta)
+    return salida
+
+
 def main():
     icono = os.path.join(HERE, "assets", "armony.ico")
     if not os.path.exists(icono):
@@ -48,6 +77,11 @@ def main():
         "--icon", icono,
         "--add-data", f"{os.path.join(HERE, 'assets')}{SEP}assets",
     ]
+
+    for dll in dlls_de_openssl():
+        print(f"OpenSSL: incluyendo {os.path.basename(dll)}")
+        cmd += ["--add-binary", f"{dll}{SEP}."]
+
     if instalado("faster_whisper"):
         print("faster-whisper detectado: se incluye el modo offline.")
         cmd += ["--collect-all", "faster_whisper", "--collect-all", "ctranslate2"]
