@@ -76,6 +76,10 @@ Desmárcalo y añade la API key para las sugerencias reales.
    contextos, el historial reciente de la reunión etiquetado por hablante y lo
    último que dijeron. El modelo ve el pantallazo *dentro* de la conversación.
 
+   Y se manda **mucho más hilo que en una pregunta hablada** (hasta 40
+   intervenciones frente a 18), porque el pantallazo suele ser solo una parte del
+   problema: el resto está en lo que llevan un rato contando.
+
    La captura es **silenciosa**: sin destello, sin sonido y sin aviso de Windows.
    El único acuse de recibo es esa miniatura, que solo ves tú. Y lo que se manda al
    modelo es lo que hay **debajo** del overlay: las ventanas de la app están
@@ -150,6 +154,22 @@ cada frase llenaría el panel de ruido. Hay dos filtros antes de molestar a la I
 Si preguntaron y la transcripción se comió los signos, **`Alt+5`** fuerza la respuesta.
 Por eso los filtros pueden permitirse ser prudentes: quedarse corto se arregla con una
 tecla, pasarse de hablador te arruina la reunión.
+
+### Qué recuerda de la reunión
+
+El motor guarda las últimas 60 intervenciones y manda una parte en cada consulta:
+18 con una pregunta hablada, hasta 40 con un pantallazo. Los dos modelos —el de voz
+y el de capturas— comparten el mismo hilo; lo único que cambia entre ellos es el
+modelo y el límite de tokens.
+
+**Cada sugerencia entregada se guarda como contexto**, etiquetada `Yo (sugerido)`:
+del bloque de código solo queda una marca, y del texto un resumen corto. Así la IA
+sabe lo que ya te propuso y continúa desde ahí en vez de repetírtelo.
+
+> Tu micrófono **no se transcribe** (sería una segunda conexión y el doble de
+> coste). Lo que digas con tus palabras no llega al modelo; lo que sí llega es lo
+> que te sugirió, que es casi siempre lo mismo. Si en tus reuniones explicas cosas
+> que la IA necesitaría saber, se puede activar ese segundo stream.
 
 ### Cuando le falta un dato
 

@@ -66,8 +66,10 @@ class Coach:
                 "explicando a la otra persona de tu a tu: que hace, por que "
                 "funciona y su coste si viene al caso. Sin dar clase.")
         prompt = (
-            "Contexto reciente de la reunion. 'Ellos' son los demas participantes "
-            "y 'Yo' es lo que ya he dicho:\n"
+            "Contexto reciente de la reunion. 'Ellos' son los demas "
+            "participantes; 'Yo' es lo que ya he dicho; y 'Yo (sugerido)' es lo "
+            "que me sugeriste antes, que muy probablemente dije con mis palabras "
+            "-- dalo por dicho: no lo repitas, continua desde ahi:\n"
             f"{context_text or '(sin contexto previo)'}\n\n"
             f"Lo ultimo que dijeron los demas: \"{latest}\"{extra}\n\n"
             "IDIOMA: responde en el MISMO idioma en que esta lo ultimo que "

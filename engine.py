@@ -12,6 +12,7 @@ Hay dos caminos de transcripcion, y cambian bastante el comportamiento:
   se transcribe entera. No hay texto en vivo y se nota mas retardo, pero no sale
   nada del equipo y funciona sin internet.
 """
+import re
 import time
 import queue
 import threading
@@ -25,6 +26,34 @@ import intent
 # Palabra con la que el modelo avisa de que no le han preguntado nada. Nunca
 # llega a pintarse: se usa solo para decidir que no hay nada que sugerir.
 SENTINEL = "NO_RESPONSE"
+
+# Cuanta reunion se recuerda y cuanta se manda en cada respuesta.
+#
+# Una pregunta hablada se responde con lo justo: manda la latencia y lo que
+# acaban de decir explica casi siempre lo que preguntan. Una captura es otra
+# cosa: el pantallazo suele ser solo una PARTE del problema, y el resto esta en
+# lo que llevan un rato contando. Ahi compensa mandar el hilo largo, que ademas
+# se paga una vez y no en cada frase.
+MEMORIA = 60              # intervenciones que se guardan en memoria
+CONTEXTO_VOZ = 18         # las que acompañan a una pregunta hablada
+CONTEXTO_CAPTURA = 40     # las que acompañan a un pantallazo
+LIMITE_CHARS_CAPTURA = 8000   # tope por si alguien se explaya de verdad
+
+# De cada sugerencia se guarda un resumen corto, no la respuesta entera: sirve
+# para que no te repita lo mismo, no para reconstruirla.
+RESUMEN_SUGERENCIA = 240
+
+
+def _resumen(texto, limite=RESUMEN_SUGERENCIA):
+    """Version corta de una sugerencia, para guardarla como contexto.
+
+    Fuera los bloques de codigo y los encabezados: ocupan muchisimo y no son lo
+    que tu dirias en voz alta, que es lo unico que hace falta recordar.
+    """
+    sin_codigo = re.sub(r"```.*?```", " [código] ", texto or "", flags=re.S)
+    sin_titulos = re.sub(r"^#+ .*$", "", sin_codigo, flags=re.M)
+    limpio = " ".join(sin_titulos.split())
+    return limpio[:limite] + ("…" if len(limpio) > limite else "")
 
 
 def _prompt_bilingue(cfg):
@@ -59,7 +88,9 @@ class CoachEngine(QtCore.QObject):
         super().__init__()
         self._running = False
         self._queue = queue.Queue()
-        self._history = deque(maxlen=8)
+        # Se guarda bastante mas de lo que se manda en cada respuesta: asi una
+        # captura puede llevarse el hilo largo de la conversacion (ver _contexto).
+        self._history = deque(maxlen=MEMORIA)
         self._audio = None
         self._transcriber = None
         self._stt = None
@@ -422,18 +453,41 @@ class CoachEngine(QtCore.QObject):
             except Exception as e:
                 self.error.emit(str(e))
 
+    def _contexto(self, con_captura, latest=None):
+        """Transcripcion reciente, etiquetada por hablante.
+
+        Con captura se manda mucho mas hilo: el pantallazo suele ser una parte
+        del problema y el resto esta en lo que llevan rato contando. Se recorta
+        por el final, que es lo que mas pesa en lo que estan preguntando ahora.
+        """
+        previas = list(self._history)
+        # Lo que se responde ahora va aparte, en 'latest': si estuviera tambien
+        # aqui, el modelo lo veria dos veces.
+        if previas and latest is not None and previas[-1][1] == latest:
+            previas = previas[:-1]
+        cuantas = CONTEXTO_CAPTURA if con_captura else CONTEXTO_VOZ
+        lineas = [f"{quien}: {texto}" for quien, texto in previas[-cuantas:]]
+        if con_captura:
+            recortado, total = [], 0
+            for linea in reversed(lineas):
+                if total + len(linea) > LIMITE_CHARS_CAPTURA:
+                    break
+                recortado.append(linea)
+                total += len(linea)
+            lineas = list(reversed(recortado))
+        return "\n".join(lineas)
+
     def _respond(self, latest, images=None, note="", permitir_silencio=False):
         # Contexto etiquetado por hablante: Claude ve quien dijo cada cosa y sabe
         # que respondiste tu, evitando sugerirte que repitas.
         self._last_question = latest
-        previas = list(self._history)[:-1] if len(self._history) > 1 else []
-        context = "\n".join(f"{quien}: {texto}" for quien, texto in previas)
+        context = self._contexto(bool(images), latest)
 
         # Puerta 2: la respuesta puede empezar por el centinela, asi que no se
         # pinta nada hasta tener letras suficientes para descartarlo. Son once
         # caracteres: ni se nota, y evita que el panel parpadee con una respuesta
         # que va a desaparecer.
-        estado = {"buffer": "", "abierto": False, "callado": False}
+        estado = {"buffer": "", "abierto": False, "callado": False, "todo": ""}
 
         def abrir():
             estado["abierto"] = True
@@ -443,6 +497,7 @@ class CoachEngine(QtCore.QObject):
         def on_delta(txt):
             if estado["callado"]:
                 return
+            estado["todo"] += txt
             if estado["abierto"]:
                 self.respDelta.emit(txt)
                 return
@@ -464,6 +519,13 @@ class CoachEngine(QtCore.QObject):
                 if not estado["buffer"].strip():
                     return                  # respuesta vacia: no hay nada que pintar
                 abrir()                     # respuesta mas corta que el centinela
+            # La sugerencia entregada pasa a ser contexto. No se transcribe tu
+            # voz (seria un segundo stream), pero lo normal es que hayas dicho
+            # algo parecido a esto, y con ello el modelo deja de repetirse y
+            # puede continuar en vez de volver a empezar.
+            resumen = _resumen(estado["todo"])
+            if resumen:
+                self._history.append(("Yo (sugerido)", resumen))
             self.respDone.emit()
 
         self._coach.stream_response(
