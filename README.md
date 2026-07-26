@@ -100,6 +100,11 @@ abre las KeyTips de la cinta ni se te escribe el número en la celda.
 Todos tienen su botón en la barra superior con el atajo escrito al lado, así que
 no hay que recordarlos.
 
+Si la respuesta es larga, **la rueda del ratón la desplaza con solo poner el cursor
+encima**, sin perder el click-through: mientras apuntas al panel la rueda es suya y
+lo que hay debajo no se mueve; en cuanto sales, todo vuelve a la normalidad. Y si
+subes a releer algo, el texto que siga llegando no te devuelve al final.
+
 ### Cuándo responde (y cuándo no)
 
 En una reunión la gente da mucho más contexto del que pregunta, así que responder a
@@ -168,7 +173,10 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
 - `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).
 - `llm.py` — cliente del coach con streaming y soporte de imagen (screenshot).
   Anthropic y OpenAI tras la misma interfaz; solo se importa el que se use.
-- `overlay.py` — modo invisible a la captura de pantalla.
+- `overlay.py` — modo invisible a la captura de pantalla y click-through.
+- `wheelscroll.py` — desvía la rueda del ratón al overlay cuando el cursor está
+  encima. Hace falta porque el click-through (`WS_EX_TRANSPARENT`) vuelve la
+  ventana transparente a *todo* el ratón, rueda incluida.
 - `app.py` — interfaz (PySide6) y orquestación.
 - `config.py` / `config.json` — ajustes (la API key se guarda localmente).
 

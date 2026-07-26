@@ -16,6 +16,7 @@ import config as cfg_mod
 import theme as T
 from engine import CoachEngine
 from overlay import set_capture_protection, set_no_activate, set_click_through
+from wheelscroll import WheelForwarder
 from overlay_ui import TopBar, TranscriptPanel, CollapsedButton, FlashOverlay
 from settings_window import SettingsWindow
 import hotkeys as HK
@@ -59,6 +60,11 @@ class OverlayApp(QtCore.QObject):
         self._ct_timer = QtCore.QTimer(self)
         self._ct_timer.timeout.connect(self._update_click_through)
         self._ct_timer.start(30)
+
+        # La rueda sobre la respuesta la desvia un hook: con click-through la
+        # ventana no recibe raton, ni siquiera la rueda.
+        self.wheel = WheelForwarder(self.panel.scroll_answer)
+        self.wheel.install()
 
     # ------------------------------------------------ colocacion en pantalla
     def _place(self):
@@ -106,6 +112,9 @@ class OverlayApp(QtCore.QObject):
         # cortar el movimiento a medio camino.
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
             return
+        # Aprovechamos este tick para publicarle al hook donde esta la respuesta.
+        self.wheel.set_zone(self.panel.answer_zone() if self.settings is None
+                            else None)
         objetivos = [
             (self.top, self.top.interactive_widgets()),
             (self.panel, self.panel.interactive_widgets()),
@@ -400,6 +409,7 @@ class OverlayApp(QtCore.QObject):
     def shutdown(self):
         self._timer.stop()
         self._ct_timer.stop()
+        self.wheel.uninstall()
         try:
             self.engine.sysLevel.disconnect()
             self.engine.micLevel.disconnect()

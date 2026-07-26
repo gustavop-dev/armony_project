@@ -661,7 +661,13 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._part_last = None
         self._shots = []            # miniaturas de las capturas enviadas
         self._copy_buttons = []     # se recrean en cada render
+        self._seguir_abajo = True     # ir al final cuando entre texto nuevo
+        self._scroll_objetivo = None  # posicion a recuperar tras repintar
         self._build()
+        # El alto real se conoce despues de recalcular el layout, no al pintar:
+        # por eso se sigue el final cuando cambia el rango y no con un temporizador,
+        # que llegaba antes y dejaba la respuesta arriba.
+        self.scroll.verticalScrollBar().rangeChanged.connect(self._al_cambiar_rango)
         # Animacion: pulso del borde (listening) + caret parpadeante.
         self._anim = QtCore.QTimer(self)
         self._anim.timeout.connect(self._animate)
@@ -931,6 +937,45 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._raw += delta
         self._render(richtext.parse_answer(self._raw))
 
+    # ---------------- scroll de la respuesta
+    def answer_zone(self):
+        """Rectangulo de pantalla donde la rueda debe mover la respuesta.
+
+        Lo consulta el desviador de rueda (wheelscroll): con click-through la
+        ventana no recibe el raton, asi que la zona hay que decirsela nosotros.
+        """
+        if not self.isVisible():
+            return None
+        tl = self.scroll.mapToGlobal(QtCore.QPoint(0, 0))
+        return (tl.x(), tl.y(), self.scroll.width(), self.scroll.height())
+
+    def scroll_answer(self, muescas):
+        """Mueve la respuesta. muescas positivas = hacia arriba."""
+        sb = self.scroll.verticalScrollBar()
+        sb.setValue(sb.value() - muescas * 3 * sb.singleStep())
+        # Si te quedas al final, se vuelve a seguir el texto nuevo; si has subido,
+        # se deja de seguir hasta que bajes otra vez.
+        self._seguir_abajo = sb.value() >= sb.maximum() - 8
+        self._scroll_objetivo = sb.value()
+
+    def _restaurar_scroll(self):
+        """Recupera la posicion despues de repintar.
+
+        Cada trozo del streaming reconstruye los widgets, y al vaciarlos el rango
+        se queda en cero y la posicion se pierde: sin esto, subir a releer no
+        servia de nada porque el siguiente trozo te devolvia al principio.
+        """
+        sb = self.scroll.verticalScrollBar()
+        if self._seguir_abajo:
+            sb.setValue(sb.maximum())
+        elif self._scroll_objetivo is not None:
+            sb.setValue(min(self._scroll_objetivo, sb.maximum()))
+
+    def _al_cambiar_rango(self, _minimo, _maximo):
+        # El alto definitivo solo se sabe cuando Qt recalcula el layout, que es
+        # justo cuando se emite esto.
+        self._restaurar_scroll()
+
     # ---------------- capturas enviadas
     def add_shot(self, pixmap):
         """Muestra la captura recien tomada encima de la respuesta."""
@@ -989,6 +1034,12 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         return lab
 
     def _render(self, secciones):
+        # Solo se sigue al final si YA estabas al final. Si has subido a releer
+        # algo, el siguiente trozo del streaming no te arrastra de vuelta.
+        sb = self.scroll.verticalScrollBar()
+        self._seguir_abajo = sb.value() >= sb.maximum() - 8
+        self._scroll_objetivo = sb.value()
+
         self._clear_layout()
         self._copy_buttons = []
         fila = 0
@@ -1025,8 +1076,9 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
             self.answer_lay.insertWidget(fila, caja)
             fila += 1
 
-        QtCore.QTimer.singleShot(0, lambda: self.scroll.verticalScrollBar().setValue(
-            self.scroll.verticalScrollBar().maximum()))
+        # Red de seguridad para cuando el rango no cambia (mismo alto, otro
+        # texto): rangeChanged no se emitiria y no habria a que enganchar.
+        QtCore.QTimer.singleShot(0, self._restaurar_scroll)
 
 
 def parse_sections(raw):
