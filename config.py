@@ -1,6 +1,7 @@
 """Carga y guarda la configuracion de la app en config.json (junto a este archivo).
 
-Guarda: API keys (Anthropic y AssemblyAI), modelo LLM, ajustes de transcripcion
+Guarda: API keys (Anthropic, OpenAI y AssemblyAI), proveedor y modelo, ajustes
+de transcripcion
 (nube o modo offline con Whisper), idioma, prompt de coach y estado de "ventana
 invisible".
 
@@ -34,8 +35,14 @@ DEFAULT_PROMPT_EN = (
 DEFAULT_SYSTEM_PROMPT = DEFAULT_PROMPT_ES   # compatibilidad
 
 DEFAULTS = {
+    # --- Proveedor de las respuestas ---
+    # 'anthropic' | 'openai'. Cada uno con su clave y su modelo, para poder
+    # cambiar de uno a otro sin volver a escribir nada.
+    "llm_provider": "anthropic",
     "anthropic_api_key": "",
     "llm_model": "claude-haiku-4-5",   # el mas rapido; cambiar a claude-opus-4-8 para mas calidad
+    "openai_api_key": "",
+    "openai_model": "gpt-5.4-mini",    # rapido y suficiente para sugerir respuestas
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
     # texto llega palabra a palabra mientras se habla, no al terminar la frase.

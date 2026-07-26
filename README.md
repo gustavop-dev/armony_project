@@ -17,7 +17,9 @@ al compartir pantalla** (privacidad total).
   terminó de hablar.
 - **Modo offline** opcional: transcribe en este equipo con `faster-whisper`, sin enviar
   audio a la nube. Más lento y sin texto en vivo, pero funciona sin internet.
-- **Sugiere respuestas** con Claude en streaming (aparecen token por token).
+- **Sugiere respuestas** en streaming (aparecen token por token), con **Claude
+  (Anthropic) o GPT (OpenAI)** — se elige en *Configuración*, cada uno con su clave
+  y su modelo.
 - **Screenshot → Claude:** botón para mandar una captura de pantalla y preguntar (visión).
 - **Invisible al compartir pantalla:** `SetWindowDisplayAffinity` (Windows 10 2004+/11).
 
@@ -25,7 +27,8 @@ al compartir pantalla** (privacidad total).
 
 - Windows 10 (build 19041+) u 11.
 - Python 3.10 u 3.11 recomendado.
-- API key de Anthropic (se pone en la interfaz, en *Configuración*).
+- API key del proveedor de respuestas que elijas: **Anthropic** u **OpenAI**
+  (se pone en la interfaz, en *Configuración*).
 - API key de AssemblyAI para la transcripción en vivo (también en *Configuración*).
   Si prefieres no usar la nube, activa **Modo offline** y solo hace falta la de Anthropic.
 
@@ -59,7 +62,8 @@ Desmárcalo y añade la API key para las sugerencias reales.
 > En operación normal solo se transcribe el audio del sistema (lo que dicen los demás);
 > tu micrófono es únicamente un medidor de nivel.
 
-1. Abre **Configuración** y pega tus **API keys** (Anthropic y AssemblyAI). Guarda.
+1. Abre **Configuración**, elige el **proveedor de respuestas** y pega su API key,
+   más la de **AssemblyAI**. Guarda.
 2. Pulsa **Iniciar**.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
 4. Cuando alguien hable en la reunión, verás la transcripción **en vivo** y, cuando
@@ -131,8 +135,12 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
   Latencia total ~1.35 s.
 - **Portátil Ryzen 5 5600H (sin NVIDIA):** corre en **CPU**. Usa `Tamaño Whisper = base`
   y cierra apps pesadas (8 GB de RAM es ajustado). Latencia ~1.5–2.5 s.
-- Modelo LLM por defecto: `claude-haiku-4-5` (el más rápido). Cambia a `claude-opus-4-8`
-  para más calidad a costa de algo de latencia.
+- Modelo por defecto en Anthropic: `claude-haiku-4-5` (el más rápido). Cambia a
+  `claude-opus-4-8` para más calidad a costa de algo de latencia.
+- En OpenAI, `gpt-5.4-mini` responde en ~1–2 s hasta la primera palabra. Ojo: los
+  modelos GPT-5 razonan antes de responder y ese razonamiento gasta del mismo
+  presupuesto de tokens, así que `llm.py` reserva margen aparte para que el ajuste
+  de *longitud máxima* siga refiriéndose a la respuesta y no llegue vacía.
 
 ## Notas técnicas
 
@@ -141,7 +149,8 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
 - `stt_stream.py` — transcripción en vivo con AssemblyAI (WebSocket, reconexión automática).
 - `intent.py` — decide si una intervención pide respuesta o solo está dando contexto.
 - `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).
-- `llm.py` — cliente Anthropic con streaming y soporte de imagen (screenshot).
+- `llm.py` — cliente del coach con streaming y soporte de imagen (screenshot).
+  Anthropic y OpenAI tras la misma interfaz; solo se importa el que se use.
 - `overlay.py` — modo invisible a la captura de pantalla.
 - `app.py` — interfaz (PySide6) y orquestación.
 - `config.py` / `config.json` — ajustes (la API key se guarda localmente).

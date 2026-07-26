@@ -156,8 +156,12 @@ class OverlayApp(QtCore.QObject):
         test = bool(self.cfg.get("test_mode", False))
         # En Modo prueba NO se necesita API key: arranca directo.
         # Sin key y sin modo prueba: solo avisa (no salta a settings de golpe).
-        if not test and not self.cfg.get("anthropic_api_key"):
-            self.panel.set_status("Add your API key in Settings (⚙) to start")
+        proveedor = self.cfg.get("llm_provider", "anthropic")
+        clave_llm = self.cfg.get("openai_api_key" if proveedor == "openai"
+                                 else "anthropic_api_key")
+        if not test and not clave_llm:
+            nombre = "OpenAI" if proveedor == "openai" else "Anthropic"
+            self.panel.set_status(f"Add your {nombre} API key in Settings (⚙) to start")
             return
         # La transcripcion en la nube necesita su propia key; en modo offline no.
         if not self.cfg.get("offline_mode") and not self.cfg.get("assemblyai_api_key"):

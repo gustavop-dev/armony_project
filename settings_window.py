@@ -159,14 +159,28 @@ def _schema():
     return [
         ("connection", "bolt", "Conexión",
          "Credenciales y modelos que alimentan la transcripción y las respuestas.", [
+            dict(key="llm_provider", label="Proveedor de respuestas", type="select",
+                 hint="Quién redacta las sugerencias. Cada proveedor usa su propia "
+                      "clave y su propio modelo, elegidos abajo.",
+                 options=[("anthropic", "Anthropic (Claude)"),
+                          ("openai", "OpenAI (GPT)")]),
             dict(key="anthropic_api_key", label="API key de Anthropic", type="text",
                  secret=True, placeholder="sk-ant-…",
-                 hint="Sin ella no arranca la reunión (salvo Modo prueba)."),
-            dict(key="llm_model", label="Modelo", type="select",
+                 hint="Solo si el proveedor es Anthropic."),
+            dict(key="llm_model", label="Modelo de Anthropic", type="select",
                  hint="Haiku = más rápido; Opus = más inteligente.",
                  options=[("claude-haiku-4-5", "Claude Haiku 4.5"),
                           ("claude-opus-4-8", "Claude Opus 4.8"),
                           ("claude-sonnet-5", "Claude Sonnet 5")]),
+            dict(key="openai_api_key", label="API key de OpenAI", type="text",
+                 secret=True, placeholder="sk-proj-…",
+                 hint="Solo si el proveedor es OpenAI."),
+            dict(key="openai_model", label="Modelo de OpenAI", type="select",
+                 hint="nano = el más rápido; mini = equilibrado; el grande da "
+                      "mejores respuestas pero tarda más.",
+                 options=[("gpt-5.4-nano", "GPT-5.4 nano — el más rápido"),
+                          ("gpt-5.4-mini", "GPT-5.4 mini — equilibrado (recomendado)"),
+                          ("gpt-5.4", "GPT-5.4 — más calidad, más lento")]),
             dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
                  secret=True, placeholder="…",
                  hint="Transcripción en vivo en la nube. Sin ella solo funciona "
