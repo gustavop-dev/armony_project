@@ -267,6 +267,37 @@ class StatusBadge(QtWidgets.QWidget):
         self._lbl.setText(texto)
 
 
+class SkipPill(QtWidgets.QLabel):
+    """Aviso de que NO va a haber respuesta.
+
+    Sin esto, un silencio es ambiguo: no sabes si la IA esta tardando o si ha
+    decidido que ahi no habia ninguna pregunta. Va debajo de la transcripcion,
+    discreta, y desaparece en cuanto vuelven a hablar.
+    """
+
+    def __init__(self):
+        super().__init__("")
+        f = self.font(); f.setPixelSize(11); self.setFont(f)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Maximum,
+                           QtWidgets.QSizePolicy.Fixed)
+        self.setStyleSheet(
+            "QLabel {"
+            f"  color: {T.TEXT_FAINT};"
+            "   background: rgba(243,234,212,0.05);"
+            "   border: 1px solid rgba(243,234,212,0.10);"
+            "   border-radius: 9px;"
+            "   padding: 3px 9px;"
+            "}")
+        self.setVisible(False)
+
+    def show_text(self, texto):
+        self.setText(texto)
+        self.setVisible(True)
+
+    def hide_pill(self):
+        self.setVisible(False)
+
+
 class AudioBars(QtWidgets.QWidget):
     """Las tres barras del encabezado. Reflejan el nivel real del audio."""
 
@@ -632,7 +663,12 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.lbl_question.setTextFormat(QtCore.Qt.RichText)
         self.lbl_question.setAlignment(QtCore.Qt.AlignTop)
         self.lbl_question.setStyleSheet("background: transparent;")
-        il.addWidget(self.lbl_question, 1)
+        il.addWidget(self.lbl_question)
+        # Pegada al texto, no al fondo de la columna: se lee como una nota de lo
+        # que se acaba de transcribir.
+        self.skip_pill = SkipPill()
+        il.addWidget(self.skip_pill, 0, QtCore.Qt.AlignLeft)
+        il.addStretch(1)
         izq.setStyleSheet(f"border-right: 1px solid {T.DIVIDER_FAINT};")
         lay.addWidget(izq, 35)          # participante: columna mas estrecha
 
@@ -765,6 +801,13 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
     def set_question(self, texto, caret=False):
         self._question_text = texto
         self._render_question()
+
+    def show_skip(self, texto="No question — Alt+5 to answer"):
+        """Deja claro que no se esta esperando ninguna respuesta."""
+        self.skip_pill.show_text(texto)
+
+    def hide_skip(self):
+        self.skip_pill.hide_pill()
 
     def clear_answer(self):
         self._raw = ""

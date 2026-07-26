@@ -33,6 +33,7 @@ class CoachEngine(QtCore.QObject):
     sttLatency = QtCore.Signal(int)       # ms que tardo la ultima transcripcion
     transcript = QtCore.Signal(str, str)  # (fuente, texto): fuente = 'system' | 'mic'
     partial = QtCore.Signal(str)          # texto provisional, se repinta en vivo
+    noAnswer = QtCore.Signal(str)         # no habra sugerencia, y por que
     respStart = QtCore.Signal()
     respDelta = QtCore.Signal(str)
     respDone = QtCore.Signal()
@@ -251,6 +252,7 @@ class CoachEngine(QtCore.QObject):
             self._queue.put({"type": "respond", "text": texto, "auto": True})
         else:
             self.status.emit("Sin pregunta todavia: guardado como contexto.")
+            self.noAnswer.emit("no_question")
 
     def answer_now(self):
         """Responde a lo ultimo que dijeron aunque no pareciera una pregunta.
@@ -370,6 +372,7 @@ class CoachEngine(QtCore.QObject):
                             else:
                                 self.status.emit(
                                     "Sin pregunta todavia: guardado como contexto.")
+                                self.noAnswer.emit("no_question")
                         else:
                             # Monologo cortado por longitud: aun esta hablando.
                             # Se guarda como contexto pero no se responde todavia.
@@ -427,6 +430,7 @@ class CoachEngine(QtCore.QObject):
         def on_done():
             if estado["callado"]:
                 self.status.emit("Sin pregunta todavia: guardado como contexto.")
+                self.noAnswer.emit("model_declined")
                 return
             if not estado["abierto"]:
                 if not estado["buffer"].strip():

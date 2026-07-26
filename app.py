@@ -135,6 +135,7 @@ class OverlayApp(QtCore.QObject):
         e.sttLatency.connect(self.on_latency)
         e.transcript.connect(self.on_transcript)
         e.partial.connect(self.on_partial)
+        e.noAnswer.connect(self.on_no_answer)
         e.respStart.connect(self.on_resp_start)
         e.respDelta.connect(self.panel.append_answer)
         e.respDone.connect(self.on_resp_done)
@@ -171,6 +172,7 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_listening(True)
         self.panel.set_status("Loading…", "loading")   # feedback inmediato
         self.panel.set_question("")
+        self.panel.hide_skip()
         import contexts as ctx_mod
         n = ctx_mod.active_count(self.cfg.get("language", "es"))
         chip = f"{n} context{'s' if n != 1 else ''} loaded · " if n else ""
@@ -190,6 +192,7 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_listening(False)
         self.panel.set_status("Idle")
         self.panel.clear_latency()
+        self.panel.hide_skip()
         self.engine.stop()
 
     def _tick(self):
@@ -258,6 +261,7 @@ class OverlayApp(QtCore.QObject):
         if not self._running:
             self.panel.set_status("Start the meeting first")
             return
+        self.panel.hide_skip()
         self.panel.set_status("Answering…")
         self.engine.answer_now()
 
@@ -314,7 +318,17 @@ class OverlayApp(QtCore.QObject):
     def on_partial(self, texto):
         """Texto provisional: se repinta mientras la persona sigue hablando."""
         if self._running:
+            self.panel.hide_skip()       # vuelven a hablar: el aviso ya no aplica
             self.panel.set_question(texto, caret=True)
+
+    def on_no_answer(self, motivo):
+        """Avisa de que no va a haber sugerencia, para no dejarte esperando."""
+        if not self._running:
+            return
+        if motivo == "model_declined":
+            self.panel.show_skip("Not a question — Alt+5 to answer")
+        else:
+            self.panel.show_skip("No question yet — Alt+5 to answer")
 
     def on_transcript(self, fuente, texto):
         if not self._running:
@@ -328,6 +342,7 @@ class OverlayApp(QtCore.QObject):
         if not self._running:
             return
         self._responding = True
+        self.panel.hide_skip()           # ya hay respuesta en camino
         self.panel.clear_answer()
         self.panel.set_state("generating")   # borde dorado vivo mientras genera
         self.panel.set_status("Drafting…")
@@ -350,8 +365,9 @@ class OverlayApp(QtCore.QObject):
         elif "sigue hablando" in bajo:
             self.panel.set_status("Still talking…")
         elif "sin pregunta" in bajo:
+            # El aviso visible es la pastilla (on_no_answer); aqui solo el badge.
+            # Nada de set_hint: borraria la respuesta anterior del panel.
             self.panel.set_status("Context saved")
-            self.panel.set_hint("No question yet — Alt+5 to answer anyway.")
         elif "nada que responder" in bajo:
             self.panel.set_status("Nothing to answer yet")
 
@@ -367,6 +383,7 @@ class OverlayApp(QtCore.QObject):
             self.engine.micLevel.disconnect()
             self.engine.transcript.disconnect()
             self.engine.partial.disconnect()
+            self.engine.noAnswer.disconnect()
             self.engine.respStart.disconnect()
             self.engine.respDelta.disconnect()
             self.engine.respDone.disconnect()
