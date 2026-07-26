@@ -409,7 +409,12 @@ class CoachEngine(QtCore.QObject):
                                   permitir_silencio=item.get("auto", False))
                 elif item["type"] == "screenshot":
                     self.status.emit("Analizando la pantalla...")
-                    self._respond(self._last_question or "(ver la pantalla)",
+                    # Lo ultimo OIDO, no la ultima pregunta respondida: cuando
+                    # comparten pantalla lo normal es decir "mira esto", que el
+                    # filtro no toma por pregunta. Con _last_question se le
+                    # emparejaba la captura a algo dicho hace rato, o a nada.
+                    self._respond(self._last_heard or self._last_question
+                                  or "(ver la pantalla)",
                                   images=item["images"])
                 elif item["type"] == "regen":
                     self._respond(self._last_question, images=None,

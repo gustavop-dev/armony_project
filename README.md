@@ -72,6 +72,10 @@ Desmárcalo y añade la API key para las sugerencias reales.
    La miniatura se queda en el panel de respuesta, alineada a la derecha como el
    mensaje que acabas de enviar, y la respuesta aparece debajo.
 
+   Con la captura **no va solo la imagen**: se manda el prompt del sistema con tus
+   contextos, el historial reciente de la reunión etiquetado por hablante y lo
+   último que dijeron. El modelo ve el pantallazo *dentro* de la conversación.
+
    La captura es **silenciosa**: sin destello, sin sonido y sin aviso de Windows.
    El único acuse de recibo es esa miniatura, que solo ves tú. Y lo que se manda al
    modelo es lo que hay **debajo** del overlay: las ventanas de la app están
@@ -146,6 +150,17 @@ cada frase llenaría el panel de ruido. Hay dos filtros antes de molestar a la I
 Si preguntaron y la transcripción se comió los signos, **`Alt+5`** fuerza la respuesta.
 Por eso los filtros pueden permitirse ser prudentes: quedarse corto se arregla con una
 tecla, pasarse de hablador te arruina la reunión.
+
+### Cuando le falta un dato
+
+Si para responder ha tenido que suponer algo importante (no sabe su stack, el
+volumen, qué lenguaje quieren), añade al final una sección **Necesito saber** con
+*una* pregunta corta, escrita como se la dirías tú a la otra persona para soltarla
+en voz alta.
+
+Nunca en lugar de la respuesta: primero propone, y la pregunta va después. Y si ya
+te dijeron que ese dato no te lo pueden dar —o que justo eso es lo que tienes que
+resolver— no vuelve a preguntar: propone y deja sus suposiciones por escrito.
 
 ## GPU NVIDIA (importante)
 

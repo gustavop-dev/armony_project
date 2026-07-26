@@ -87,7 +87,19 @@ class Coach:
             "Cada seccion, una o dos frases; los bloques de codigo pueden ser tan "
             "largos como haga falta. Dentro de las secciones puedes usar "
             "**negritas**, `codigo en linea`, listas con '- ' y bloques cercados "
-            "con ```lenguaje. Sin texto fuera de las secciones."
+            "con ```lenguaje. Sin texto fuera de las secciones.\n\n"
+            "CUANDO HAYAS TENIDO QUE SUPONER ALGO IMPORTANTE para responder "
+            "(no sabes su stack, su volumen, que lenguaje quieren, que parte les "
+            "preocupa...): responde IGUALMENTE con tu propuesta, di en una linea "
+            "que lo estas suponiendo, y AÑADE al final una seccion "
+            "'## Necesito saber' con UNA pregunta corta: la que mas cambiaria tu "
+            "respuesta. Escribela como yo se la diria a la otra persona, para "
+            "poder soltarla en voz alta tal cual.\n"
+            "Dos limites: NUNCA respondas solo con la pregunta, porque sin "
+            "propuesta no me sirves de nada en mitad de una reunion; y si ya me "
+            "dijeron que ese dato no me lo pueden dar, o que justo eso es lo que "
+            "tengo que resolver, no vuelvas a preguntarlo: propon y deja claras "
+            "tus suposiciones."
         )
         if allow_silence:
             # Segunda puerta: en una reunion la mayor parte del tiempo el otro
