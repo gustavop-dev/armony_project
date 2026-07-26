@@ -9,6 +9,7 @@ Atajos actuales (pensados para teclado 60%, sin teclas F):
     Alt+2    captura de pantalla (se pueden encadenar varias)
     Alt+3    generar respuesta con las capturas tomadas
     Alt+4    iniciar / detener la reunion
+    Alt+5    responder ahora a lo ultimo que dijeron (aunque no pareciera pregunta)
 
 Se usa Alt (no Shift) porque Alt no interviene al escribir texto; con Shift+tecla
 se bloquearia esa tecla en todo el sistema.
@@ -46,7 +47,7 @@ MOD_CONTROL = 0x0002
 MOD_ALT = 0x0001
 MOD_NOREPEAT = 0x4000        # evita repeticion al mantener pulsado
 
-VK_1, VK_2, VK_3, VK_4 = 0x31, 0x32, 0x33, 0x34   # teclas '1'..'4' de la fila superior
+VK_1, VK_2, VK_3, VK_4, VK_5 = 0x31, 0x32, 0x33, 0x34, 0x35   # fila superior '1'..'5'
 
 # Alt + numero: comodo en teclado 60% (todo en la capa principal, sin Fn) y Alt
 # no se usa al escribir, asi que no bloquea ninguna tecla del teclado.
@@ -57,8 +58,10 @@ BINDINGS = {
     2: (MOD_ALT, VK_2, "Alt+2"),
     3: (MOD_ALT, VK_3, "Alt+3"),
     4: (MOD_ALT, VK_4, "Alt+4"),
+    5: (MOD_ALT, VK_5, "Alt+5"),
 }
 ACTION_TOGGLE, ACTION_SHOT, ACTION_GENERATE, ACTION_MEETING = 1, 2, 3, 4
+ACTION_ANSWER = 5
 
 # --- constantes del hook de bajo nivel -------------------------------------
 WH_KEYBOARD_LL = 13

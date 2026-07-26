@@ -20,6 +20,12 @@ from collections import deque
 import numpy as np
 from PySide6 import QtCore
 
+import intent
+
+# Palabra con la que el modelo avisa de que no le han preguntado nada. Nunca
+# llega a pintarse: se usa solo para decidir que no hay nada que sugerir.
+SENTINEL = "NO_RESPONSE"
+
 
 class CoachEngine(QtCore.QObject):
     sysLevel = QtCore.Signal(int)
@@ -48,7 +54,9 @@ class CoachEngine(QtCore.QObject):
         self._offline = False
         self._auto_normalize = True
         self._transcribe_mic = True
-        self._last_question = ""
+        self._language = "es"
+        self._last_question = ""      # ultima a la que SI se respondio
+        self._last_heard = ""         # ultimo turno oido, se respondiera o no
 
         # Agrupacion de turnos (solo en la nube). AssemblyAI cierra un turno por
         # cada frase, asi que un "¿Como vais? ¿Llegamos el viernes?" llega en dos
@@ -69,6 +77,8 @@ class CoachEngine(QtCore.QObject):
         self._stop_event = threading.Event()
         self._history.clear()
         self._last_question = ""
+        self._last_heard = ""
+        self._language = cfg.get("language", "es")
         self._running = True
         self._test_mode = test_mode
         self._offline = bool(cfg.get("offline_mode", False))
@@ -203,26 +213,69 @@ class CoachEngine(QtCore.QObject):
             self.transcript.emit("system", texto)
             self.status.emit(f"Transcrito en {latencia_ms} ms (reunion).")
             return
+        # Si la frase ya trae la pregunta, no se espera la pausa: se responde en
+        # cuanto se sabe que hay algo que responder.
+        hay_pregunta = intent.parece_pregunta(texto, self._language)
         with self._turn_lock:
             self._turn_parts.append(texto)
             acumulado = " ".join(self._turn_parts)
             if self._turn_timer is not None:
                 self._turn_timer.cancel()
-            self._turn_timer = threading.Timer(self._turn_gap, self._flush_turn)
-            self._turn_timer.daemon = True
-            self._turn_timer.start()
+                self._turn_timer = None
+            if not hay_pregunta:
+                self._turn_timer = threading.Timer(self._turn_gap, self._flush_turn)
+                self._turn_timer.daemon = True
+                self._turn_timer.start()
         self.partial.emit(acumulado)
+        if hay_pregunta:
+            self._flush_turn()
 
     def _flush_turn(self):
-        """Se cumplio la pausa: lo dicho hasta aqui es una intervencion completa."""
+        """Cierra la intervencion y decide si merece respuesta.
+
+        Puerta 1: si no parece pregunta ni peticion, no se molesta a Claude. El
+        texto NO se pierde: queda en el historial y sera contexto de la proxima
+        respuesta. Y si la transcripcion se comio los signos y aqui no se vio la
+        pregunta, queda el atajo de responder ahora.
+        """
         with self._turn_lock:
             texto = " ".join(self._turn_parts).strip()
             self._turn_parts = []
             self._turn_timer = None
-        if texto and self._running:
+        if not texto or not self._running:
+            return
+        self._history.append(("Ellos", texto))
+        self.transcript.emit("system", texto)
+        self._last_heard = texto
+        if intent.parece_pregunta(texto, self._language):
+            self._queue.put({"type": "respond", "text": texto, "auto": True})
+        else:
+            self.status.emit("Sin pregunta todavia: guardado como contexto.")
+
+    def answer_now(self):
+        """Responde a lo ultimo que dijeron aunque no pareciera una pregunta.
+
+        Es la red de seguridad de la puerta 1: si preguntaron y la transcripcion
+        no puso los signos, esto lo arregla sin esperar a nada.
+        """
+        if not self._running or self._test_mode:
+            return
+        with self._turn_lock:
+            pendiente = " ".join(self._turn_parts).strip()
+            self._turn_parts = []
+            if self._turn_timer is not None:
+                self._turn_timer.cancel()
+                self._turn_timer = None
+        texto = pendiente or self._last_heard
+        if not texto:
+            self.status.emit("Aun no hay nada que responder.")
+            return
+        if pendiente:
+            # Estaban hablando ahora mismo: se cierra el turno aqui.
             self._history.append(("Ellos", texto))
             self.transcript.emit("system", texto)
-            self._queue.put({"type": "respond", "text": texto})
+            self._last_heard = texto
+        self._queue.put({"type": "respond", "text": texto, "auto": False})
 
     def _cancel_turn_timer(self):
         with self._turn_lock:
@@ -306,9 +359,17 @@ class CoachEngine(QtCore.QObject):
                     # En operacion normal solo respondemos a lo que dicen los demas.
                     if source == "system":
                         self._history.append(("Ellos", text))
+                        self._last_heard = text
                         if reason == "silence":
-                            # Hubo pausa: te cedieron el turno -> sugerir respuesta.
-                            self._respond(text, images=None)
+                            # Hubo pausa: te cedieron el turno. Aun asi, solo se
+                            # responde si pidieron algo (misma puerta 1 que en la
+                            # nube); si no, queda de contexto.
+                            if intent.parece_pregunta(text, self._language):
+                                self._respond(text, images=None,
+                                              permitir_silencio=True)
+                            else:
+                                self.status.emit(
+                                    "Sin pregunta todavia: guardado como contexto.")
                         else:
                             # Monologo cortado por longitud: aun esta hablando.
                             # Se guarda como contexto pero no se responde todavia.
@@ -316,7 +377,10 @@ class CoachEngine(QtCore.QObject):
                                 "Sigue hablando... (guardado como contexto)")
                 elif item["type"] == "respond":
                     # Turno cerrado en la nube: ya se acumulo todo lo que dijeron.
-                    self._respond(item["text"], images=None)
+                    # 'auto' distingue lo que dispara el filtro de lo que pides tu
+                    # a mano: si lo pides tu, Claude no puede callarse.
+                    self._respond(item["text"], images=None,
+                                  permitir_silencio=item.get("auto", False))
                 elif item["type"] == "screenshot":
                     self.status.emit("Analizando la pantalla...")
                     self._respond(self._last_question or "(ver la pantalla)",
@@ -327,21 +391,58 @@ class CoachEngine(QtCore.QObject):
             except Exception as e:
                 self.error.emit(str(e))
 
-    def _respond(self, latest, images=None, note=""):
+    def _respond(self, latest, images=None, note="", permitir_silencio=False):
         # Contexto etiquetado por hablante: Claude ve quien dijo cada cosa y sabe
         # que respondiste tu, evitando sugerirte que repitas.
         self._last_question = latest
         previas = list(self._history)[:-1] if len(self._history) > 1 else []
         context = "\n".join(f"{quien}: {texto}" for quien, texto in previas)
-        self.respStart.emit()
+
+        # Puerta 2: la respuesta puede empezar por el centinela, asi que no se
+        # pinta nada hasta tener letras suficientes para descartarlo. Son once
+        # caracteres: ni se nota, y evita que el panel parpadee con una respuesta
+        # que va a desaparecer.
+        estado = {"buffer": "", "abierto": False, "callado": False}
+
+        def abrir():
+            estado["abierto"] = True
+            self.respStart.emit()
+            self.respDelta.emit(estado["buffer"])
+
+        def on_delta(txt):
+            if estado["callado"]:
+                return
+            if estado["abierto"]:
+                self.respDelta.emit(txt)
+                return
+            estado["buffer"] += txt
+            limpio = estado["buffer"].lstrip()
+            if len(limpio) < len(SENTINEL):
+                return                      # todavia no se sabe que es
+            if limpio.startswith(SENTINEL):
+                estado["callado"] = True
+                return
+            abrir()
+
+        def on_done():
+            if estado["callado"]:
+                self.status.emit("Sin pregunta todavia: guardado como contexto.")
+                return
+            if not estado["abierto"]:
+                if not estado["buffer"].strip():
+                    return                  # respuesta vacia: no hay nada que pintar
+                abrir()                     # respuesta mas corta que el centinela
+            self.respDone.emit()
+
         self._coach.stream_response(
             context_text=context,
             latest=latest,
             images=images,
             note=note,
-            on_delta=self.respDelta.emit,
-            on_done=self.respDone.emit,
+            on_delta=on_delta,
+            on_done=on_done,
             on_error=self.error.emit,
+            allow_silence=permitir_silencio,
         )
 
     def stop(self):

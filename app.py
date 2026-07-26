@@ -247,6 +247,20 @@ class OverlayApp(QtCore.QObject):
         self.top.set_generate_enabled(False)
         self.panel.set_status("Analyzing…")
 
+    def answer_now(self):
+        """Alt+5: fuerza la respuesta a lo ultimo que dijeron.
+
+        Sirve cuando preguntaron pero la transcripcion no puso los signos y el
+        filtro lo tomo por contexto.
+        """
+        if self.settings is not None:
+            return
+        if not self._running:
+            self.panel.set_status("Start the meeting first")
+            return
+        self.panel.set_status("Answering…")
+        self.engine.answer_now()
+
     def open_settings(self):
         # No se puede abrir la configuracion con la reunion en curso.
         if self._running:
@@ -335,6 +349,11 @@ class OverlayApp(QtCore.QObject):
             self.panel.set_status("Listening")
         elif "sigue hablando" in bajo:
             self.panel.set_status("Still talking…")
+        elif "sin pregunta" in bajo:
+            self.panel.set_status("Context saved")
+            self.panel.set_hint("No question yet — Alt+5 to answer anyway.")
+        elif "nada que responder" in bajo:
+            self.panel.set_status("Nothing to answer yet")
 
     def on_error(self, msg):
         self.panel.set_status("Error")
@@ -371,6 +390,7 @@ def main():
         HK.ACTION_SHOT: ui.take_shot,
         HK.ACTION_GENERATE: ui.generate,
         HK.ACTION_MEETING: ui.toggle_meeting,
+        HK.ACTION_ANSWER: ui.answer_now,
     })
     app.installNativeEventFilter(hk)
     ok, fallidos = hk.register()

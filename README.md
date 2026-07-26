@@ -59,11 +59,41 @@ Desmárcalo y añade la API key para las sugerencias reales.
 > En operación normal solo se transcribe el audio del sistema (lo que dicen los demás);
 > tu micrófono es únicamente un medidor de nivel.
 
-1. Abre **Configuración** y pega tu **API key de Anthropic**. Guarda.
-2. Pulsa **Iniciar** (la primera vez descarga el modelo Whisper).
+1. Abre **Configuración** y pega tus **API keys** (Anthropic y AssemblyAI). Guarda.
+2. Pulsa **Iniciar**.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
-4. Cuando alguien hable en la reunión, verás la transcripción y la **respuesta sugerida**.
+4. Cuando alguien hable en la reunión, verás la transcripción **en vivo** y, cuando
+   te pregunten algo, la **respuesta sugerida**.
 5. Botón **Captura pantalla + preguntar** para preguntas visuales.
+
+### Atajos
+
+Funcionan aunque el foco esté en Zoom, Meet o Excel. Mientras la app corre, el Alt
+queda reservado para ella: la aplicación de debajo no lo recibe, así que Excel no
+abre las KeyTips de la cinta ni se te escribe el número en la celda.
+
+| Atajo | Qué hace |
+|---|---|
+| `Alt+1` | Mostrar / ocultar el overlay |
+| `Alt+2` | Captura de pantalla (se pueden encadenar varias) |
+| `Alt+3` | Generar respuesta con las capturas tomadas |
+| `Alt+4` | Iniciar / detener la reunión |
+| `Alt+5` | Responder ahora a lo último que dijeron |
+
+### Cuándo responde (y cuándo no)
+
+En una reunión la gente da mucho más contexto del que pregunta, así que responder a
+cada frase llenaría el panel de ruido. Hay dos filtros antes de molestar a la IA:
+
+1. **En tu equipo, gratis:** si la intervención no parece pregunta ni petición, ni se
+   llama a Claude. El texto no se pierde — queda en el historial y será contexto de la
+   próxima respuesta.
+2. **Claude:** lo que pasa el primer filtro puede seguir sin ser una pregunta ("y bueno,
+   qué te digo…"). En ese caso el modelo se calla y no se pinta nada.
+
+Si preguntaron y la transcripción se comió los signos, **`Alt+5`** fuerza la respuesta.
+Por eso los filtros pueden permitirse ser prudentes: quedarse corto se arregla con una
+tecla, pasarse de hablador te arruina la reunión.
 
 ## GPU NVIDIA (importante)
 
@@ -109,6 +139,7 @@ Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Cl
 - `audio.py` — captura WASAPI (loopback + micrófono), niveles, flujo continuo para el
   streaming y segmentación por silencio (esta última solo hace falta en modo offline).
 - `stt_stream.py` — transcripción en vivo con AssemblyAI (WebSocket, reconexión automática).
+- `intent.py` — decide si una intervención pide respuesta o solo está dando contexto.
 - `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).
 - `llm.py` — cliente Anthropic con streaming y soporte de imagen (screenshot).
 - `overlay.py` — modo invisible a la captura de pantalla.

@@ -14,12 +14,17 @@ class Coach:
         self.client = anthropic.Anthropic(api_key=api_key)
 
     def stream_response(self, context_text, latest, images=None, note=None,
-                        on_delta=None, on_done=None, on_error=None):
+                        on_delta=None, on_done=None, on_error=None,
+                        allow_silence=False):
         """Genera la respuesta sugerida en streaming.
 
         context_text: transcripcion reciente (contexto).
         latest: la ultima frase de los demas (lo que hay que responder).
         image_b64: PNG en base64 opcional (screenshot) para preguntas visuales.
+        allow_silence: permitir que el modelo se calle si no le han preguntado
+            nada. Devuelve NO_RESPONSE y quien llama decide no mostrar nada.
+            Se desactiva cuando el usuario pide la respuesta a mano: entonces
+            quiere una sugerencia si o si.
         """
         content = []
         for img in (images or []):
@@ -46,6 +51,17 @@ class Coach:
             "(por ejemplo '## Answer', '## Context', '## Example', '## Next step'). "
             "Cada seccion, una o dos frases. Sin texto fuera de las secciones."
         )
+        if allow_silence:
+            # Segunda puerta: en una reunion la mayor parte del tiempo el otro
+            # esta dando contexto, no preguntando. El filtro local ya descarto lo
+            # evidente; aqui se descarta lo que solo lo parecia.
+            prompt += (
+                "\n\nANTES DE RESPONDER: mira si en 'lo ultimo que dijeron' hay "
+                "de verdad una pregunta o una peticion dirigida a mi. Si solo "
+                "estan contando algo, dando contexto o pensando en voz alta, "
+                "responde EXACTAMENTE la palabra NO_RESPONSE y nada mas, sin "
+                "secciones ni explicaciones. Ante la duda, responde normal."
+            )
         content.append({"type": "text", "text": prompt})
 
         try:
