@@ -12,6 +12,7 @@ Hay dos caminos de transcripcion, y cambian bastante el comportamiento:
   se transcribe entera. No hay texto en vivo y se nota mas retardo, pero no sale
   nada del equipo y funciona sin internet.
 """
+import os
 import re
 import time
 import queue
@@ -111,6 +112,7 @@ class CoachEngine(QtCore.QObject):
         self._last_question = ""      # ultima a la que SI se respondio
         self._last_heard = ""         # ultimo turno oido, se respondiera o no
         self._t_pregunta = 0.0        # cuando se cerro la pregunta (para el e2e)
+        self._registro = []           # acta de la reunion, para repasarla luego
 
         # Agrupacion de turnos (solo en la nube). AssemblyAI cierra un turno por
         # cada frase, asi que un "¿Como vais? ¿Llegamos el viernes?" llega en dos
@@ -141,6 +143,7 @@ class CoachEngine(QtCore.QObject):
         self._turn_gap = float(cfg.get("silence_hang", 0.7))
         self._turn_parts = []
         self._t_pregunta = 0.0
+        self._registro = []
 
         metricas.iniciar()
         p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"
@@ -327,6 +330,7 @@ class CoachEngine(QtCore.QObject):
         if not texto or not self._running:
             return
         self._history.append(("Ellos", texto))
+        self._registro.append(("Ellos", texto))
         self.transcript.emit("system", texto)
         self._last_heard = texto
         metricas.contar("intervenciones")
@@ -574,6 +578,9 @@ class CoachEngine(QtCore.QObject):
             resumen = _resumen(estado["todo"])
             if resumen:
                 self._history.append(("Yo (sugerido)", resumen))
+            # En el acta va la sugerencia ENTERA, con su codigo: es lo que luego
+            # quieres releer para ver si la respuesta te sirvio de verdad.
+            self._registro.append(("Sugerido", estado["todo"]))
             self.respDone.emit()
 
         self._coach.stream_response(
@@ -631,7 +638,33 @@ class CoachEngine(QtCore.QObject):
         try:
             import config as cfg_mod
             ruta = metricas.guardar(cfg_mod.data_dir())
+            self._guardar_acta(cfg_mod.data_dir())
             if ruta:
                 self.status.emit(f"Métricas de la sesión guardadas en {ruta}")
         except Exception:
             pass
+
+    def _guardar_acta(self, carpeta):
+        """Deja la conversacion en un .md para poder repasarla despues.
+
+        Sin esto, al terminar la reunion no queda ni rastro de lo que se dijo ni
+        de lo que se sugirio, y no hay forma de revisar si las respuestas
+        sirvieron o de afinar el prompt con casos reales.
+        """
+        if not self._registro:
+            return
+        try:
+            destino = os.path.join(carpeta, "sesiones")
+            os.makedirs(destino, exist_ok=True)
+            ruta = os.path.join(destino,
+                                f"sesion-{time.strftime('%Y%m%d-%H%M%S')}.md")
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(f"# Reunion del {time.strftime('%d/%m/%Y %H:%M')}\n\n")
+                for quien, texto in self._registro:
+                    if quien == "Sugerido":
+                        f.write(f"### Sugerido\n\n{texto.strip()}\n\n")
+                    else:
+                        f.write(f"**{quien}:** {texto.strip()}\n\n")
+            return ruta
+        except OSError:
+            return None

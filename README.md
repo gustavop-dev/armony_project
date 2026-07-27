@@ -308,6 +308,37 @@ Ojo con los modelos GPT-5: razonan antes de responder y ese razonamiento gasta d
 mismo presupuesto de tokens, así que `llm.py` reserva margen aparte para que el
 ajuste de longitud siga refiriéndose a la respuesta y no llegue vacía.
 
+## Que suene a ti, no a documentación
+
+El riesgo de un coach así no es que se equivoque: es que te haga sonar a máquina.
+Si te sugiere *"y dejar el audit trail"* y el otro pregunta «¿el qué?», quedas
+vendido por una palabra que no elegiste.
+
+El prompt lo prohíbe explícitamente: nada de términos técnicos en inglés sueltos,
+nada de palabras de manual (*idempotencia*, *trazabilidad*, *observabilidad*), y
+una regla de oro — **no usar una palabra que no sabrías defender si te preguntan
+qué significa**. Si el término hace falta de verdad, lo aclara en la misma frase
+como quien lo explica de paso.
+
+Medido con cuatro preguntas de entrevista, contando términos de jerga:
+
+| | Jerga |
+|---|---|
+| Prompt anterior | 6 |
+| Prompt actual | 1 |
+
+Y el caso concreto, «¿cómo garantizarías atomicidad?»: antes decía *"usaría
+restricciones de base de datos e **idempotencia**"*; ahora dice *"lo enviaría con
+un proceso que registra que ya lo hizo, **para que un reintento no duplique el
+efecto**"*. Lo mismo, dicho como lo diría una persona.
+
+## El acta de cada reunión
+
+Al detener la reunión se guarda la conversación completa en
+`%APPDATA%\Armony\sesiones\` como markdown: lo que dijeron y lo que se te sugirió,
+con el código incluido. Sirve para repasar después si las respuestas te sirvieron
+y para afinar el prompt con casos reales en vez de con ejemplos inventados.
+
 ## Medir para poder mejorar
 
 La cadena tiene muchos tramos —audio, transcripción, filtro, modelo, pintado— y

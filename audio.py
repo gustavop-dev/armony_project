@@ -229,7 +229,27 @@ class AudioEngine:
             return
 
         self.on_status(f"Escuchando {name}: {device['name'][:40]} ({rate} Hz)")
+        ultimo_chequeo = time.monotonic()
         while self._running:
+            # Si cambias de altavoces a auriculares a media reunion, Windows
+            # cambia la salida por defecto y este dispositivo se queda mudo. Sin
+            # avisar: transcripcion vacia y a saber por que. Se vigila cada par
+            # de segundos y se reengancha al nuevo.
+            if is_loopback and time.monotonic() - ultimo_chequeo > 2.0:
+                ultimo_chequeo = time.monotonic()
+                try:
+                    ahora = _pick_loopback_device(self._p)
+                    if ahora["index"] != device["index"]:
+                        self.on_status(f"Salida de audio cambiada a "
+                                       f"{ahora['name'][:40]}: reenganchando.")
+                        try:
+                            stream.stop_stream()
+                            stream.close()
+                        except Exception:
+                            pass
+                        return self._capture(ahora, True)
+                except Exception:
+                    pass
             try:
                 data = stream.read(CHUNK, exception_on_overflow=False)
             except Exception:
