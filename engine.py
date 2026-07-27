@@ -49,6 +49,12 @@ LIMITE_CHARS_CAPTURA = 8000   # tope por si alguien se explaya de verdad
 # para que no te repita lo mismo, no para reconstruirla.
 RESUMEN_SUGERENCIA = 240
 
+# Lo que se le pasa como "ultimo turno" cuando mandas capturas y no hay ninguna
+# pregunta hablada esperando. Se dice explicito para que no se ponga a rebuscar
+# en la transcripcion algo a lo que responder: lo que importa esta en pantalla.
+SIN_PREGUNTA_CAPTURA = ("(no han dicho nada nuevo desde la ultima respuesta: lo "
+                        "que hay que resolver esta en las capturas)")
+
 
 def _resumen(texto, limite=RESUMEN_SUGERENCIA):
     """Version corta de una sugerencia, para guardarla como contexto.
@@ -111,6 +117,7 @@ class CoachEngine(QtCore.QObject):
         self._language = "es"
         self._last_question = ""      # ultima a la que SI se respondio
         self._last_heard = ""         # ultimo turno oido, se respondiera o no
+        self._heard_respondido = False   # ...y si ese turno ya se contesto
         self._t_pregunta = 0.0        # cuando se cerro la pregunta (para el e2e)
         self._registro = []           # acta de la reunion, para repasarla luego
 
@@ -134,6 +141,7 @@ class CoachEngine(QtCore.QObject):
         self._history.clear()
         self._last_question = ""
         self._last_heard = ""
+        self._heard_respondido = False
         self._language = cfg.get("language", "es")
         self._running = True
         self._test_mode = test_mode
@@ -332,7 +340,7 @@ class CoachEngine(QtCore.QObject):
         self._history.append(("Ellos", texto))
         self._registro.append(("Ellos", texto))
         self.transcript.emit("system", texto)
-        self._last_heard = texto
+        self._anotar_oido(texto)
         metricas.contar("intervenciones")
         if intent.parece_pregunta(texto, self._language):
             metricas.contar("con_pregunta")
@@ -367,8 +375,13 @@ class CoachEngine(QtCore.QObject):
             # Estaban hablando ahora mismo: se cierra el turno aqui.
             self._history.append(("Ellos", texto))
             self.transcript.emit("system", texto)
-            self._last_heard = texto
+            self._anotar_oido(texto)
         self._queue.put({"type": "respond", "text": texto, "auto": False})
+
+    def _anotar_oido(self, texto):
+        """Guarda el ultimo turno oido y lo marca como pendiente de respuesta."""
+        self._last_heard = texto
+        self._heard_respondido = False
 
     def _cancel_turn_timer(self):
         with self._turn_lock:
@@ -452,7 +465,7 @@ class CoachEngine(QtCore.QObject):
                     # En operacion normal solo respondemos a lo que dicen los demas.
                     if source == "system":
                         self._history.append(("Ellos", text))
-                        self._last_heard = text
+                        self._anotar_oido(text)
                         if reason == "silence":
                             # Hubo pausa: te cedieron el turno. Aun asi, solo se
                             # responde si pidieron algo (misma puerta 1 que en la
@@ -476,19 +489,27 @@ class CoachEngine(QtCore.QObject):
                     self._respond(item["text"], images=None,
                                   permitir_silencio=item.get("auto", False))
                 elif item["type"] == "screenshot":
-                    self.status.emit("Analizando la pantalla...")
-                    # Lo ultimo OIDO, no la ultima pregunta respondida: cuando
-                    # comparten pantalla lo normal es decir "mira esto", que el
-                    # filtro no toma por pregunta. Con _last_question se le
-                    # emparejaba la captura a algo dicho hace rato, o a nada.
-                    self._respond(self._last_heard or self._last_question
-                                  or "(ver la pantalla)",
-                                  images=item["images"])
+                    self._responder_capturas(item["images"])
                 elif item["type"] == "regen":
                     self._respond(self._last_question, images=None,
                                   note=item.get("note", ""))
             except Exception as e:
                 self.error.emit(str(e))
+
+    def _responder_capturas(self, images):
+        """Responde a unas capturas, decidiendo que turno hablado las acompaña.
+
+        Se les empareja lo ultimo OIDO, no la ultima pregunta respondida: al
+        compartir pantalla lo normal es decir "mira esto", que el filtro no toma
+        por pregunta, y con _last_question se emparejaba con algo de hace rato.
+
+        Pero solo si ese turno sigue sin contestar. Si ya se respondio y despues
+        no ha hablado nadie, arrastrarlo hacia que el modelo volviera a contestar
+        la misma pregunta hablada en vez de mirar la pantalla.
+        """
+        self.status.emit("Analizando la pantalla...")
+        pendiente = "" if self._heard_respondido else self._last_heard
+        self._respond(pendiente or SIN_PREGUNTA_CAPTURA, images=images)
 
     def _calentar(self):
         coach = self._coach
@@ -528,6 +549,10 @@ class CoachEngine(QtCore.QObject):
         # Contexto etiquetado por hablante: Claude ve quien dijo cada cosa y sabe
         # que respondiste tu, evitando sugerirte que repitas.
         self._last_question = latest
+        # Ese turno queda saldado: si luego llegan capturas, no se le vuelven a
+        # emparejar (ver la rama de 'screenshot' en el bucle).
+        if latest and latest == self._last_heard:
+            self._heard_respondido = True
         context = self._contexto(bool(images), latest)
 
         # Puerta 2: la respuesta puede empezar por el centinela, asi que no se

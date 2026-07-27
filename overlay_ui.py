@@ -1136,14 +1136,29 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         return fila
 
     def _podar(self):
-        """Deja solo los ultimos mensajes vivos (ver MAX_FILAS_HILO)."""
-        while self.feed.count() - 1 > MAX_FILAS_HILO:
-            it = self.feed.takeAt(0)
-            w = it.widget()
+        """Deja solo los ultimos mensajes vivos (ver MAX_FILAS_HILO).
+
+        Se salta las dos burbujas que aun se estan escribiendo -- la del
+        participante mientras se transcribe y la de la sugerencia mientras
+        llega. Si no, basta con tomar unas cuantas capturas mientras alguien
+        habla para que la burbuja en curso caiga por antiguedad, y el siguiente
+        trozo de texto iria a parar a un objeto ya destruido.
+        """
+        vivas = [b for b in (self._burbuja_viva, self._burbuja_resp)
+                 if b is not None]
+        i = 0
+        while self.feed.count() - 1 > MAX_FILAS_HILO and i < self.feed.count() - 1:
+            w = self.feed.itemAt(i).widget()
             if w is None:
+                i += 1
                 continue
+            dentro = w.findChildren(Burbuja)
+            if any(b in dentro for b in vivas):
+                i += 1                      # esta viva: se quita la siguiente
+                continue
+            self.feed.takeAt(i)
             # Las burbujas que se van dejan de contar para los botones de copiar
-            for b in w.findChildren(Burbuja):
+            for b in dentro:
                 if b in self._burbujas:
                     self._burbujas.remove(b)
             w.hide()
