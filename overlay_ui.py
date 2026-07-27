@@ -20,6 +20,24 @@ from metrics import PINTADO, metricas
 # leer, pero mil veces menos trabajo que reconstruir el panel en cada trozo.
 INTERVALO_REPINTADO = 90    # ms
 
+# Barra de desplazamiento a juego con el overlay. La de Windows (canal gris y
+# pulgar negro) se veia pegada encima de la interfaz, no como parte de ella.
+_BARRA_QSS = f"""
+    QScrollArea {{ background: transparent; }}
+    QScrollBar:vertical {{
+        background: transparent; width: 10px; margin: 4px 2px 22px 0;
+    }}
+    QScrollBar::handle:vertical {{
+        background: rgba(242,201,76,0.28);
+        border-radius: 5px; min-height: 34px;
+    }}
+    QScrollBar::handle:vertical:hover {{ background: rgba(242,201,76,0.5); }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+        background: transparent;
+    }}
+"""
+
 
 # --------------------------------------------------------------- utilidades
 
@@ -311,9 +329,15 @@ class _AutoScroll:
             sb.setValue(min(self.objetivo, sb.maximum()))
 
     def rueda(self, muescas):
-        """muescas positivas = hacia arriba."""
+        """muescas positivas = hacia arriba.
+
+        El salto se mide contra el alto visible, no con el singleStep de Qt:
+        ese son ~20 px, y en un panel grande con conversacion larga mover 60 px
+        por muesca se siente como que la rueda no hace nada.
+        """
         sb = self.scroll.verticalScrollBar()
-        sb.setValue(sb.value() - muescas * 3 * sb.singleStep())
+        salto = max(80, int(self.scroll.viewport().height() * 0.28))
+        sb.setValue(sb.value() - muescas * salto)
         # Si te quedas al final se vuelve a seguir; si subes, se deja de seguir.
         self.seguir = sb.value() >= sb.maximum() - self.MARGEN
         self.objetivo = sb.value()
@@ -337,10 +361,12 @@ class CodeBlock(QtWidgets.QFrame):
     def __init__(self, lenguaje, codigo):
         super().__init__()
         self._codigo = codigo
+        # Fondo bastante mas opaco que el resto del panel: el codigo tiene que
+        # leerse como un editor, no como texto flotando sobre la reunion.
         self.setStyleSheet(f"""
             CodeBlock {{
-                background: {T.KBD_BG};
-                border: 1px solid {T.DIVIDER_FAINT};
+                background: rgba(6,7,10,0.92);
+                border: 1px solid rgba(242,201,76,0.18);
                 border-radius: 8px;
             }}
             QLabel {{ background: transparent; border: none; }}
@@ -383,12 +409,22 @@ class CodeBlock(QtWidgets.QFrame):
         sep.setStyleSheet(f"background: {T.DIVIDER_FAINT}; border: none;")
         lay.addWidget(sep)
 
-        cuerpo = QtWidgets.QLabel(codigo)
-        cuerpo.setTextFormat(QtCore.Qt.PlainText)      # respeta saltos y espacios
+        coloreado = richtext.resaltar(codigo, lenguaje)
+        cuerpo = QtWidgets.QLabel()
+        if coloreado:
+            # &nbsp; y <br> conservan sangria y saltos, que es lo unico que hace
+            # legible el codigo, y ademas cada token va con su color.
+            cuerpo.setTextFormat(QtCore.Qt.RichText)
+            cuerpo.setText(f'<div style="font-family:{T.MONO_STACK}; '
+                           f'font-size:12.5px; line-height:145%;">{coloreado}</div>')
+        else:
+            cuerpo.setTextFormat(QtCore.Qt.PlainText)   # respeta saltos y espacios
+            cuerpo.setText(codigo)
+            cuerpo.setStyleSheet(f"font-family: {T.MONO_STACK}; font-size: 12.5px; "
+                                 f"color: {T.TEXT_BRIGHT};")
         cuerpo.setWordWrap(True)
-        cuerpo.setStyleSheet(
-            f"font-family: {T.MONO_STACK}; font-size: 12.5px; "
-            f"color: {T.TEXT_BRIGHT}; background: transparent; padding: 9px 11px;")
+        cuerpo.setStyleSheet(cuerpo.styleSheet() +
+                             "background: transparent; padding: 9px 11px;")
         # Nada de texto seleccionable: Qt pondria el cursor de texto encima, y el
         # cursor si se ve al compartir pantalla aunque la ventana no. Ademas la
         # seleccion no funcionaria (esta zona deja pasar los clics): para eso esta
@@ -962,12 +998,14 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.scroll.setStyleSheet("background: transparent;")
+        self.scroll.setStyleSheet(_BARRA_QSS)
         self.scroll.viewport().setStyleSheet("background: transparent;")
         cont = QtWidgets.QWidget()
         cont.setStyleSheet("background: transparent;")
         self.feed = QtWidgets.QVBoxLayout(cont)
-        self.feed.setContentsMargins(18, 14, 18, 14)
+        # Margen abajo y a la derecha: si no, la ultima linea queda debajo del
+        # agarre de redimension y la barra se le monta encima.
+        self.feed.setContentsMargins(18, 14, 10, 26)
         self.feed.setSpacing(10)
         self.feed.addStretch()          # el hueco sobrante, siempre al final
         self.scroll.setWidget(cont)
@@ -991,19 +1029,24 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
 
     # -- piezas del hilo ----------------------------------------------------
     def _ancho_burbuja(self):
-        return max(260, int(self.width() * 0.78))
+        # Sin tope: todas las filas ocupan lo mismo. Con burbujas de ancho
+        # variable el ojo tiene que reencontrar el margen en cada mensaje, y
+        # ademas el codigo se quedaba estrecho justo cuando mas sitio necesita.
+        return 16777215
 
-    def _añadir(self, widget, lado):
-        """Mete algo en el hilo, alineado a un lado."""
+    def _añadir(self, widget, estirar=True):
+        """Mete algo en el hilo. Las filas ocupan el ancho completo.
+
+        Quien habla se distingue por el color y por la etiqueta, no por el
+        ancho ni por el lado: asi se lee en linea recta. Solo las miniaturas
+        conservan su tamaño (estirarlas seria absurdo).
+        """
         fila = QtWidgets.QWidget()
         fila.setStyleSheet("background: transparent;")
         fl = QtWidgets.QHBoxLayout(fila)
         fl.setContentsMargins(0, 0, 0, 0)
-        if lado == "der":
-            fl.addStretch()
-            fl.addWidget(widget)
-        else:
-            fl.addWidget(widget)
+        fl.addWidget(widget)
+        if not estirar:
             fl.addStretch()
         self.feed.insertWidget(self.feed.count() - 1, fila)   # antes del hueco
         return fila
@@ -1011,7 +1054,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
     def _nueva_burbuja(self, quien):
         b = Burbuja(quien, self._ancho_burbuja())
         self._burbujas.append(b)
-        self._añadir(b, "der" if quien == "tu" else "izq")
+        self._añadir(b)
         return b
 
     # ---------------- estado visual (borde + animacion)
@@ -1175,7 +1218,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
     def add_shot(self, pixmap):
         """La captura enviada entra en el hilo, como un mensaje tuyo."""
         self._auto["feed"].anotar()
-        self._añadir(ShotThumb(pixmap), "der")
+        self._añadir(ShotThumb(pixmap), estirar=False)
         QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
     def set_hint(self, texto):
@@ -1185,7 +1228,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         lab.setStyleSheet(
             f"color: {T.TEXT_FAINT}; font-size: 13px; background: transparent;")
         self._auto["feed"].anotar()
-        self._añadir(lab, "izq")
+        self._añadir(lab)
         QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
     def limpiar_hilo(self):

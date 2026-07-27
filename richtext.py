@@ -115,6 +115,73 @@ def solo_texto(secciones):
     return salida
 
 
+# --- coloreado del codigo ---------------------------------------------------
+# Paleta propia, a juego con el overlay (fondos calidos y dorados) en vez de los
+# azules de los temas habituales, que ahi dentro cantan.
+COLORES = {
+    "kw": "#f2c94c",        # palabras clave: def, for, return
+    "def": "#f7dd7f",       # nombres de funciones y clases
+    "str": "#a8d8a0",       # cadenas
+    "num": "#e79a6a",       # numeros
+    "com": "#7d7566",       # comentarios: apagados, no compiten con el codigo
+    "op": "#d9cfb8",        # operadores y signos
+    "bi": "#9ad2e0",        # incorporados: len, range, print
+    "txt": "#f0e8d6",       # todo lo demas
+}
+
+
+def _clase(tipo):
+    """Traduce el tipo de token de Pygments a uno de nuestros colores."""
+    t = str(tipo)
+    if "Comment" in t:
+        return "com"
+    if "String" in t:
+        return "str"
+    if "Number" in t:
+        return "num"
+    if "Keyword" in t:
+        return "kw"
+    if "Name.Function" in t or "Name.Class" in t:
+        return "def"
+    if "Name.Builtin" in t or "Name.Exception" in t:
+        return "bi"
+    if "Operator" in t or "Punctuation" in t:
+        return "op"
+    return "txt"
+
+
+def resaltar(codigo, lenguaje=""):
+    """Devuelve el codigo como HTML coloreado, o None si no se puede.
+
+    Sin colores el bloque se lee como un muro de texto, sobre todo cuando cada
+    linea lleva su comentario: distinguir de un vistazo comentario de codigo es
+    justo lo que hace que sirva.
+    """
+    try:
+        from pygments import lex
+        from pygments.lexers import get_lexer_by_name, guess_lexer
+    except ImportError:
+        return None
+    try:
+        lexer = get_lexer_by_name(lenguaje) if lenguaje else guess_lexer(codigo)
+    except Exception:
+        try:
+            lexer = guess_lexer(codigo)
+        except Exception:
+            return None
+    try:
+        partes = []
+        for tipo, valor in lex(codigo, lexer):
+            if not valor:
+                continue
+            escapado = html.escape(valor).replace("\n", "<br>").replace(" ", "&nbsp;")
+            partes.append(f'<span style="color:{COLORES[_clase(tipo)]};">'
+                          f'{escapado}</span>')
+        return "".join(partes)
+    except Exception:
+        return None
+
+
 def inline_html(texto, code_style=""):
     """Negritas, cursivas y `codigo` en linea, ya escapado para QLabel.
 

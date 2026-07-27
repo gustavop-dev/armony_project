@@ -78,6 +78,11 @@ def main():
         "--add-data", f"{os.path.join(HERE, 'assets')}{SEP}assets",
     ]
 
+    # Pygments carga cada lenguaje por nombre en tiempo de ejecucion, asi que
+    # PyInstaller no ve esos imports y el .exe se quedaria sin colorear codigo.
+    if instalado("pygments"):
+        cmd += ["--collect-all", "pygments"]
+
     for dll in dlls_de_openssl():
         print(f"OpenSSL: incluyendo {os.path.basename(dll)}")
         cmd += ["--add-binary", f"{dll}{SEP}."]
