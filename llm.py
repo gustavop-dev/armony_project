@@ -10,6 +10,8 @@ que el resto de la app no sabe cual esta configurado.
 
 import time
 
+from metrics import LLM_PRIMERA, LLM_TOTAL, metricas
+
 ANTHROPIC = "anthropic"
 OPENAI = "openai"
 
@@ -158,9 +160,12 @@ class Coach:
         # repetir la llamada duplicaria la respuesta en pantalla).
         for intento in range(2):
             escrito = {"algo": False}
+            t0 = time.monotonic()
 
             def delta(txt):
-                escrito["algo"] = True
+                if not escrito["algo"]:
+                    escrito["algo"] = True
+                    metricas.medir(LLM_PRIMERA, (time.monotonic() - t0) * 1000)
                 if on_delta:
                     on_delta(txt)
 
@@ -169,16 +174,55 @@ class Coach:
                     self._stream_openai(prompt, images, delta, modelo, tokens)
                 else:
                     self._stream_anthropic(prompt, images, delta, modelo, tokens)
+                metricas.medir(LLM_TOTAL, (time.monotonic() - t0) * 1000)
+                metricas.contar("respuestas")
                 if on_done:
                     on_done()
                 return
             except Exception as e:
                 if intento == 0 and not escrito["algo"] and _reintentable(e):
+                    metricas.contar("reintentos_llm")
                     time.sleep(0.6)
                     continue
+                metricas.contar("errores_llm")
                 if on_error:
                     on_error(str(e))
                 return
+
+    def calentar(self):
+        """Peticion minima al arrancar la reunion, para que la primera de verdad
+        no pague la novatada.
+
+        La primera llamada a la API siempre sale cara y no por el modelo: hay que
+        resolver el DNS, negociar TLS y abrir la conexion HTTP, y ademas el
+        proveedor procesa por primera vez todo el prompt del sistema (tus
+        contextos incluidos, que es justo lo que lo engorda). Haciendolo aqui,
+        mientras te acomodas en la reunion, la primera pregunta de verdad
+        aprovecha la conexion ya abierta.
+
+        Devuelve los milisegundos que tardo, o None si fallo (no importa: es
+        solo un adelanto, si falla la llamada real lo intentara igual).
+        """
+        t0 = time.monotonic()
+        try:
+            if self.provider == OPENAI:
+                kw = dict(model=self.model_voice, instructions=self.system_prompt,
+                          input="Responde solo: ok", max_output_tokens=16)
+                try:
+                    # Sin razonar: aqui no interesa la respuesta, solo abrir la
+                    # conexion y que el prompt pase una primera vez. Medido:
+                    # 4,5 s razonando por defecto contra 1,0 s asi.
+                    self.client.responses.create(reasoning={"effort": "none"}, **kw)
+                except Exception:
+                    self.client.responses.create(**kw)   # modelo sin ese ajuste
+            else:
+                self.client.messages.create(
+                    model=self.model_voice, max_tokens=8,
+                    system=self.system_prompt,
+                    messages=[{"role": "user", "content": "Responde solo: ok"}])
+            return (time.monotonic() - t0) * 1000
+        except Exception:
+            return None
 
     def elegir_modelo(self, images):
         """(modelo, tokens) segun haya captura de pantalla o no."""

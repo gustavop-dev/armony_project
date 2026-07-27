@@ -28,6 +28,8 @@ import urllib.parse
 
 import numpy as np
 
+from metrics import STT_CONEXION, metricas
+
 try:
     import websocket          # websocket-client
 except ImportError as e:      # pragma: no cover
@@ -189,17 +191,20 @@ class StreamingSTT:
             # Se llega aqui si la sesion cayo (corte de red o las 3 h de limite).
             espera = _RECONNECT_WAIT[min(intento, len(_RECONNECT_WAIT) - 1)]
             intento += 1
+            metricas.contar("reconexiones_stt")
             self._on_status(f"Reconectando la transcripcion en {espera:.0f} s...")
             fin = time.monotonic() + espera
             while self._running and time.monotonic() < fin:
                 time.sleep(0.1)
 
     def _conectar_y_escuchar(self):
+        t0 = time.monotonic()
         ws = websocket.create_connection(
             self._url(),
             header=[f"Authorization: {self._api_key}"],
             timeout=10,
         )
+        metricas.medir(STT_CONEXION, (time.monotonic() - t0) * 1000)
         self._ws = ws
         ws.settimeout(None)
         self._connected.set()
@@ -254,9 +259,11 @@ class StreamingSTT:
                     return
                 self._last_partial = ""
                 if texto:
+                    metricas.contar("frases_finales")
                     self._on_final(texto, self._latencia_ms(msg))
             elif texto and texto != self._last_partial:
                 self._last_partial = texto
+                metricas.contar("parciales")
                 self._on_partial(texto)
         elif tipo == "Termination":
             self._on_status("Sesion de transcripcion terminada.")

@@ -143,6 +143,7 @@ class OverlayApp(QtCore.QObject):
         e.sysLevel.connect(self.panel.set_level)
         e.micLevel.connect(self.panel.set_mic_level)
         e.sttLatency.connect(self.on_latency)
+        e.e2eLatency.connect(lambda ms: self._running and self.panel.set_e2e(ms))
         e.transcript.connect(self.on_transcript)
         e.partial.connect(self.on_partial)
         e.noAnswer.connect(self.on_no_answer)

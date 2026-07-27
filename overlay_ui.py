@@ -14,6 +14,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import icons
 import richtext
 import theme as T
+from metrics import PINTADO, metricas
 
 # Cada cuanto se repinta la respuesta mientras llega. Bastante mas rapido que
 # leer, pero mil veces menos trabajo que reconstruir el panel en cada trozo.
@@ -926,9 +927,16 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         # medidor de latencia de transcripcion (a la derecha del badge)
         self.lat = QtWidgets.QLabel("")
         lf = self.lat.font(); lf.setPixelSize(11); self.lat.setFont(lf)
-        self.lat.setToolTip("Tiempo que tardó la última transcripción")
+        self.lat.setToolTip("Transcripción: de la última palabra al texto")
         self.lat.setVisible(False)
         lay.addWidget(self.lat)
+        # El que de verdad se nota: de que terminan de preguntar a que tienes
+        # algo que decir. Lo otro es un tramo; esto es la carrera entera.
+        self.e2e = QtWidgets.QLabel("")
+        ef = self.e2e.font(); ef.setPixelSize(11); self.e2e.setFont(ef)
+        self.e2e.setToolTip("Total: de la pregunta a la primera palabra sugerida")
+        self.e2e.setVisible(False)
+        lay.addWidget(self.e2e)
         lay.addStretch()
 
         # Punticos de agarre: hijo flotante centrado en el ancho real de la barra.
@@ -1067,9 +1075,20 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
             f"rgba(243,234,212,0.05); border-radius: 8px; padding: 2px 7px;")
         self.lat.setVisible(True)
 
+    def set_e2e(self, ms):
+        """Total de la carrera: pregunta -> primera palabra en pantalla."""
+        col = "#3ddc84" if ms < 1500 else ("#e7b93a" if ms < 3000 else "#e0554b")
+        self.e2e.setText(f"⚡ {ms / 1000:.1f} s")
+        self.e2e.setStyleSheet(
+            f"color: {col}; font-family: {T.MONO_STACK}; background: "
+            f"rgba(243,234,212,0.05); border-radius: 8px; padding: 2px 7px;")
+        self.e2e.setVisible(True)
+
     def clear_latency(self):
         self.lat.setVisible(False)
         self.lat.setText("")
+        self.e2e.setVisible(False)
+        self.e2e.setText("")
 
     def set_status(self, texto, kind=None):
         """Actualiza el badge. Si no se da 'kind', se deduce del texto."""
@@ -1141,8 +1160,9 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._repintado_pendiente = False
         if self._burbuja_resp is None:
             self._burbuja_resp = self._nueva_burbuja("tu")
-        self._auto["feed"].anotar()
-        self._burbuja_resp.set_markdown(self._raw, self._parrafo, self._vinetas)
+        with metricas.cronometro(PINTADO):
+            self._auto["feed"].anotar()
+            self._burbuja_resp.set_markdown(self._raw, self._parrafo, self._vinetas)
         QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
     def cerrar_respuesta(self):

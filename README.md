@@ -291,6 +291,45 @@ Ojo con los modelos GPT-5: razonan antes de responder y ese razonamiento gasta d
 mismo presupuesto de tokens, así que `llm.py` reserva margen aparte para que el
 ajuste de longitud siga refiriéndose a la respuesta y no llegue vacía.
 
+## Medir para poder mejorar
+
+La cadena tiene muchos tramos —audio, transcripción, filtro, modelo, pintado— y
+cuando algo va lento hace falta saber *dónde*. Cada tramo se cronometra y, al
+detener la reunión, se guarda un informe en `%APPDATA%\Armony\metricas\`
+(un `.json` y un `.txt` legible):
+
+```
+Reunion de 812.0 s
+  proveedor: openai
+  transcripcion: universal-3-5-pro
+  voz: gpt-5.6-terra · capturas: gpt-5.6-sol
+
+  medida                       n   mediana     p90     min     max
+  extremo_a_extremo_ms        14     1389 ms   2010     980    2400
+  llm_primera_palabra_ms      14      822 ms   1180     640    1400
+  stt_latencia_ms             63      210 ms    340     120     520
+  pintado_ms                 210        4 ms      7       2      14
+```
+
+El número que importa es **extremo a extremo**: de que terminan de preguntar a que
+tienes la primera palabra en pantalla. Los demás sirven para saber a qué tramo
+echarle la culpa cuando ese sube. En la cabecera del panel se ven en vivo los dos
+principales: la transcripción y el total (⚡).
+
+### El primer arranque
+
+La primera petición al modelo siempre salía cara —resolver DNS, negociar TLS y
+procesar por primera vez el prompt con tus contextos— y esa factura la pagaba tu
+primera pregunta de la reunión. Ahora, al pulsar **Iniciar**, se manda una petición
+mínima en segundo plano para calentar.
+
+Medido con proceso nuevo cada vez, tiempo hasta la primera palabra:
+
+| | 1ª pregunta de la reunión |
+|---|---|
+| Sin calentar | ~3,4 s |
+| Calentando al iniciar | **~1,1 s** |
+
 ## Notas técnicas
 
 - `audio.py` — captura WASAPI (loopback + micrófono), niveles, flujo continuo para el
@@ -298,6 +337,7 @@ ajuste de longitud siga refiriéndose a la respuesta y no llegue vacía.
 - `stt_stream.py` — transcripción en vivo con AssemblyAI (WebSocket, reconexión automática).
 - `intent.py` — decide si una intervención pide respuesta o solo está dando contexto.
 - `richtext.py` — convierte el markdown del modelo en bloques (texto, código, listas).
+- `metrics.py` — cronometra cada tramo y guarda el informe de la sesión.
 - `secretstore.py` — cifra las API keys con DPAPI (atado a tu cuenta de Windows).
 - `make_icon.py` — genera el icono «Ar.» en todos los tamaños que pide Windows.
 - `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).

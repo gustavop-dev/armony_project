@@ -22,6 +22,7 @@ import numpy as np
 from PySide6 import QtCore
 
 import intent
+from metrics import E2E, LLM_CALENTAMIENTO, STT_LATENCIA, metricas
 
 # Palabra con la que el modelo avisa de que no le han preguntado nada. Nunca
 # llega a pintarse: se usa solo para decidir que no hay nada que sugerir.
@@ -79,6 +80,7 @@ class CoachEngine(QtCore.QObject):
     sysLevel = QtCore.Signal(int)
     micLevel = QtCore.Signal(int)
     sttLatency = QtCore.Signal(int)       # ms que tardo la ultima transcripcion
+    e2eLatency = QtCore.Signal(int)       # ms de la pregunta a la primera palabra
     transcript = QtCore.Signal(str, str)  # (fuente, texto): fuente = 'system' | 'mic'
     partial = QtCore.Signal(str)          # texto provisional, se repinta en vivo
     noAnswer = QtCore.Signal(str)         # no habra sugerencia, y por que
@@ -108,6 +110,7 @@ class CoachEngine(QtCore.QObject):
         self._language = "es"
         self._last_question = ""      # ultima a la que SI se respondio
         self._last_heard = ""         # ultimo turno oido, se respondiera o no
+        self._t_pregunta = 0.0        # cuando se cerro la pregunta (para el e2e)
 
         # Agrupacion de turnos (solo en la nube). AssemblyAI cierra un turno por
         # cada frase, asi que un "¿Como vais? ¿Llegamos el viernes?" llega en dos
@@ -137,6 +140,18 @@ class CoachEngine(QtCore.QObject):
         self._transcribe_mic = bool(cfg.get("transcribe_mic", True))
         self._turn_gap = float(cfg.get("silence_hang", 0.7))
         self._turn_parts = []
+        self._t_pregunta = 0.0
+
+        metricas.iniciar()
+        p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"
+        metricas.nota(f"proveedor: {p}")
+        if not self._offline:
+            metricas.nota(f"transcripcion: {cfg.get('assemblyai_model')}")
+            metricas.nota(f"voz: {cfg.get(f'{p}_model_voice')} · "
+                          f"capturas: {cfg.get(f'{p}_model_vision')}")
+        else:
+            metricas.nota(f"transcripcion: whisper {cfg.get('whisper_size')} "
+                          f"({cfg.get('whisper_device')})")
         # La inicializacion (cargar modelo) puede tardar: hazla en un hilo.
         threading.Thread(target=self._init_and_run, args=(cfg,), daemon=True).start()
 
@@ -211,6 +226,11 @@ class CoachEngine(QtCore.QObject):
                 self._running = False
                 return
 
+            # Calentar la conexion mientras te acomodas: la primera peticion
+            # paga DNS, TLS y el procesado inicial del prompt con tus contextos.
+            # Va en su hilo para no retrasar el arranque de la reunion.
+            threading.Thread(target=self._calentar, daemon=True).start()
+
         # El worker recibe SU cola y SU senal de parada. Asi un worker rezagado de una
         # sesion anterior no puede consumir eventos de la sesion nueva.
         self._worker = threading.Thread(
@@ -267,6 +287,9 @@ class CoachEngine(QtCore.QObject):
     def _on_stt_final(self, texto, latencia_ms):
         if not self._running:
             return
+        # Aqui y no en el cliente de streaming: asi tambien cuenta el modo
+        # offline, que mide la latencia por su cuenta.
+        metricas.medir(STT_LATENCIA, latencia_ms)
         self.sttLatency.emit(latencia_ms)
         if self._test_mode:
             self.transcript.emit("system", texto)
@@ -306,9 +329,15 @@ class CoachEngine(QtCore.QObject):
         self._history.append(("Ellos", texto))
         self.transcript.emit("system", texto)
         self._last_heard = texto
+        metricas.contar("intervenciones")
         if intent.parece_pregunta(texto, self._language):
+            metricas.contar("con_pregunta")
+            # Marca de tiempo para medir lo unico que notas de verdad: cuanto
+            # tardas en tener algo que decir desde que te preguntan.
+            self._t_pregunta = time.monotonic()
             self._queue.put({"type": "respond", "text": texto, "auto": True})
         else:
+            metricas.contar("solo_contexto")
             self.status.emit("Sin pregunta todavia: guardado como contexto.")
             self.noAnswer.emit("no_question")
 
@@ -457,6 +486,16 @@ class CoachEngine(QtCore.QObject):
             except Exception as e:
                 self.error.emit(str(e))
 
+    def _calentar(self):
+        coach = self._coach
+        if coach is None:
+            return
+        ms = coach.calentar()
+        if ms is not None:
+            metricas.medir(LLM_CALENTAMIENTO, ms)
+            if self._running:
+                self.status.emit(f"Modelo listo ({ms / 1000:.1f} s de calentamiento).")
+
     def _contexto(self, con_captura, latest=None):
         """Transcripcion reciente, etiquetada por hablante.
 
@@ -495,6 +534,11 @@ class CoachEngine(QtCore.QObject):
 
         def abrir():
             estado["abierto"] = True
+            if self._t_pregunta:
+                ms = (time.monotonic() - self._t_pregunta) * 1000
+                metricas.medir(E2E, ms)
+                self._t_pregunta = 0.0
+                self.e2eLatency.emit(int(ms))
             self.respStart.emit()
             self.respDelta.emit(estado["buffer"])
 
@@ -582,3 +626,12 @@ class CoachEngine(QtCore.QObject):
                 q.get_nowait()
             except queue.Empty:
                 break
+
+        # Informe de la sesion: sirve para saber que tramo hay que mejorar.
+        try:
+            import config as cfg_mod
+            ruta = metricas.guardar(cfg_mod.data_dir())
+            if ruta:
+                self.status.emit(f"Métricas de la sesión guardadas en {ruta}")
+        except Exception:
+            pass
