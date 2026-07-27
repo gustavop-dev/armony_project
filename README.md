@@ -178,11 +178,16 @@ abre las KeyTips de la cinta ni se te escribe el número en la celda.
 Todos tienen su botón en la barra superior con el atajo escrito al lado, así que
 no hay que recordarlos.
 
-**La rueda del ratón desplaza con solo poner el cursor encima**, tanto la
-transcripción como la respuesta, y sin perder el click-through: mientras apuntas al
-panel la rueda es suya y lo que hay debajo no se mueve; en cuanto sales, todo vuelve
-a la normalidad. Las dos columnas van siguiendo el final según entra texto nuevo,
-pero si subes a releer algo se quedan quietas hasta que vuelvas a bajar.
+**Para desplazar el hilo basta con poner el cursor encima**, con la rueda del ratón
+o con dos dedos en el panel táctil. Sigue el final según entra conversación, pero si
+subes a releer algo se queda quieto hasta que vuelvas a bajar.
+
+Con un ratón normal la rueda la intercepta un hook y el click-through se conserva
+intacto. El gesto del **panel táctil** no viaja como rueda: Windows se lo entrega a
+la ventana que hay bajo el cursor, y una ventana de cristal no cuenta — se lo pasa a
+la de abajo. Por eso, **mientras haya conversación que desplazar**, el hilo pasa a
+ser zona activa y los clics sobre él dejan de atravesar. Si no hay nada que
+desplazar, todo sigue siendo de cristal como siempre.
 
 **El cursor nunca cambia de forma sobre el overlay.** No es un descuido: la ventana
 es invisible al compartir pantalla, pero el cursor no lo es. Si se convirtiera en

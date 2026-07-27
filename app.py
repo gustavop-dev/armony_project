@@ -111,9 +111,7 @@ class OverlayApp(QtCore.QObject):
         # cortar el movimiento a medio camino.
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
             return
-        # Aprovechamos este tick para publicarle al hook donde puede actuar.
-        self.wheel.set_zones(self.panel.wheel_zones() if self.settings is None
-                             else [])
+        zonas_rueda = self.panel.wheel_zones() if self.settings is None else []
         objetivos = [
             (self.top, self.top.interactive_widgets()),
             (self.panel, self.panel.interactive_widgets()),
@@ -123,11 +121,16 @@ class OverlayApp(QtCore.QObject):
             if not win.isVisible():
                 continue
             interactivo = self._cursor_over(zonas)
+            if win is self.panel and interactivo:
+                # Con el panel activo, Qt ya recibe la rueda por su cuenta: si
+                # ademas la desviara el hook, cada muesca contaria dos veces.
+                zonas_rueda = []
             # click_through activo = NO interactivo (deja pasar el clic)
             deseado = not interactivo
             if self._ct_state.get(win) != deseado:
                 set_click_through(win.winId(), deseado)
                 self._ct_state[win] = deseado
+        self.wheel.set_zones(zonas_rueda)
 
     # ------------------------------------------------ conexiones
     def _wire(self):

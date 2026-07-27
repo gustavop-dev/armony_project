@@ -312,8 +312,20 @@ class _AutoScroll:
         self.scroll = scroll
         self.seguir = True
         self.objetivo = None
-        scroll.verticalScrollBar().rangeChanged.connect(
-            lambda *_: self.restaurar())
+        self._ajustando = False
+        sb = scroll.verticalScrollBar()
+        sb.rangeChanged.connect(lambda *_: self.restaurar())
+        # Tambien cuenta lo que mueva Qt por su cuenta: el gesto del panel
+        # tactil o arrastrar la barra. Si no, se seguiria el final igualmente y
+        # el texto nuevo te devolveria abajo justo cuando subiste a releer.
+        sb.valueChanged.connect(self._movido_a_mano)
+
+    def _movido_a_mano(self, valor):
+        if self._ajustando:
+            return
+        sb = self.scroll.verticalScrollBar()
+        self.seguir = valor >= sb.maximum() - self.MARGEN
+        self.objetivo = valor
 
     def anotar(self):
         """Antes de repintar: recuerda donde estabas y si venias siguiendo."""
@@ -323,10 +335,14 @@ class _AutoScroll:
 
     def restaurar(self):
         sb = self.scroll.verticalScrollBar()
-        if self.seguir:
-            sb.setValue(sb.maximum())
-        elif self.objetivo is not None:
-            sb.setValue(min(self.objetivo, sb.maximum()))
+        self._ajustando = True       # lo que movamos aqui no es "a mano"
+        try:
+            if self.seguir:
+                sb.setValue(sb.maximum())
+            elif self.objetivo is not None:
+                sb.setValue(min(self.objetivo, sb.maximum()))
+        finally:
+            self._ajustando = False
 
     def rueda(self, muescas):
         """muescas positivas = hacia arriba.
@@ -933,9 +949,19 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
 
         Se consulta cada 30 ms desde app.py, asi que los botones de copiar que se
         crean en cada render entran solos.
+
+        Cuando hay conversacion de sobra, el hilo entero entra en la lista. Es la
+        unica forma de que funcione el gesto de dos dedos del panel tactil: ese
+        no viaja como rueda de raton, Windows se lo entrega directamente a la
+        ventana que hay bajo el cursor, y una ventana de cristal no cuenta -- se
+        lo pasa a la de abajo. Mientras no haya nada que desplazar se deja pasar
+        el clic como siempre, que es lo normal en una reunion.
         """
-        return ([self._drag_header, self.scroll.verticalScrollBar(),
-                 self.resize_grip] + self._copy_buttons)
+        zonas = ([self._drag_header, self.scroll.verticalScrollBar(),
+                  self.resize_grip] + self._copy_buttons)
+        if self.scroll.verticalScrollBar().maximum() > 0:
+            zonas.append(self.scroll.viewport())
+        return zonas
 
     # ---------------- encabezado
     def _header(self):
