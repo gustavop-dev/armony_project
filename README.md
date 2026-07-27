@@ -128,6 +128,16 @@ cubierto de punta a punta:
   mitad de lo que necesita justo cuando la reunión cambia de idioma, que es cuando
   más falta hace.
 
+### El panel es un hilo, no un marcador
+
+La conversación se acumula como en un chat: lo que dicen ellos a la izquierda, lo
+que se te sugiere a la derecha, y las capturas que envías también a la derecha. Lo
+viejo se queda arriba y lo nuevo entra por abajo, así que puedes releer lo de hace
+tres turnos sin perder lo que está llegando.
+
+El hilo sigue el final por sí solo mientras entra conversación, pero si subes a
+releer algo se queda quieto hasta que vuelvas a bajar.
+
 ### Cómo se pinta la respuesta
 
 El modelo contesta en markdown y el panel lo renderiza: secciones, **negritas**,

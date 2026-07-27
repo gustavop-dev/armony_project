@@ -80,7 +80,11 @@ class StreamingSTT:
         self._running = False
         self._connected = threading.Event()
         self._threads = []
-        self._session_t0 = 0.0        # reloj local del inicio de sesion
+        # Para medir el retardo hace falta saber CUANTO audio se ha mandado y
+        # cuando: los tiempos de las palabras que devuelve AssemblyAI van sobre
+        # el audio recibido, no sobre el reloj.
+        self._audio_ms = 0.0
+        self._t_ultimo_envio = 0.0
         self._last_partial = ""
 
     # -- URL -----------------------------------------------------------------
@@ -199,7 +203,9 @@ class StreamingSTT:
         self._ws = ws
         ws.settimeout(None)
         self._connected.set()
-        self._session_t0 = time.monotonic()
+        # Sesion nueva: el reloj de audio del servidor vuelve a cero.
+        self._audio_ms = 0.0
+        self._t_ultimo_envio = time.monotonic()
 
         emisor = threading.Thread(target=self._enviar_audio, args=(ws,),
                                   name="stt-send", daemon=True)
@@ -229,6 +235,8 @@ class StreamingSTT:
             try:
                 with self._send_lock:
                     ws.send_binary(datos)
+                self._audio_ms += CHUNK_MS
+                self._t_ultimo_envio = time.monotonic()
             except Exception:
                 break            # la conexion cayo: el hilo lector lo gestiona
 
@@ -268,17 +276,24 @@ class StreamingSTT:
                 self._on_error(f"Transcripcion en vivo: {detalle}")
 
     def _latencia_ms(self, msg):
-        """Retardo real: cuanto tardo el texto desde que se dijo la ultima palabra.
+        """Cuanto tardo el texto desde que se dijo la ultima palabra.
 
-        Los tiempos de las palabras son relativos al inicio de la sesion, y ese
-        instante lo tenemos en el reloj local, asi que la resta da el retardo
-        extremo a extremo sin depender del reloj del servidor.
+        Ojo con el reloj: los tiempos de las palabras van sobre el AUDIO
+        recibido, no sobre la hora. Restarlos del reloj desde que se conecto
+        contaba como retardo todo el rato en que nadie hablaba -- en una reunion
+        de verdad eso son segundos, y por eso salian cifras absurdas.
+
+        Se calcula sobre el audio: del ultimo trozo enviado se sabe la hora, y
+        cuanto audio se habia mandado ya; de ahi sale la hora en que se mando el
+        audio donde acaba la ultima palabra.
         """
         palabras = msg.get("words") or []
         if not palabras:
             return 0
         fin_ultima = palabras[-1].get("end")
-        if fin_ultima is None:
+        if fin_ultima is None or not self._t_ultimo_envio:
             return 0
-        transcurrido = (time.monotonic() - self._session_t0) * 1000.0
-        return max(0, int(transcurrido - fin_ultima))
+        # audio mandado despues de esa palabra (lo que se dijo tras callarse)
+        cola = self._audio_ms - fin_ultima
+        desde_el_ultimo_envio = (time.monotonic() - self._t_ultimo_envio) * 1000.0
+        return max(0, int(desde_el_ultimo_envio + cola))

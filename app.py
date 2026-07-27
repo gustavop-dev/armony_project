@@ -185,9 +185,8 @@ class OverlayApp(QtCore.QObject):
         self._timer.start(1000)
         self.panel.set_listening(True)
         self.panel.set_status("Loading…", "loading")   # feedback inmediato
-        self.panel.set_question("")
+        self.panel.limpiar_hilo()       # reunion nueva, conversacion nueva
         self.panel.hide_skip()
-        self.panel.clear_shots()
         self._answer_lleva_capturas = False
         import contexts as ctx_mod
         # Todos los activos, sin filtrar por idioma: es lo que se le manda.
@@ -362,9 +361,9 @@ class OverlayApp(QtCore.QObject):
     def on_transcript(self, fuente, texto):
         if not self._running:
             return
-        # El panel izquierdo es del participante: solo mostramos lo que dicen ellos.
+        # Intervencion cerrada: se queda fija en el hilo y entra la siguiente.
         if fuente == "system":
-            self.panel.set_question(texto)
+            self.panel.cerrar_intervencion(texto)
             self.panel.set_status("Transcribing…")
 
     def on_resp_start(self):
@@ -372,17 +371,14 @@ class OverlayApp(QtCore.QObject):
             return
         self._responding = True
         self.panel.hide_skip()           # ya hay respuesta en camino
-        # Si esta respuesta no viene de las capturas, estas ya no la ilustran.
-        if self._answer_lleva_capturas:
-            self._answer_lleva_capturas = False
-        else:
-            self.panel.clear_shots()
-        self.panel.clear_answer()
+        self._answer_lleva_capturas = False
+        self.panel.clear_answer()        # abre una burbuja nueva en el hilo
         self.panel.set_state("generating")   # borde dorado vivo mientras genera
         self.panel.set_status("Drafting…")
 
     def on_resp_done(self):
         self._responding = False
+        self.panel.cerrar_respuesta()         # pinta el ultimo trozo y cierra
         if not self._running:
             return
         self.panel.set_state("listening")     # vuelve al pulso de escucha

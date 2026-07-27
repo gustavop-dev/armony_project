@@ -424,6 +424,91 @@ class ShotThumb(QtWidgets.QFrame):
         lay.addWidget(pie)
 
 
+class Burbuja(QtWidgets.QFrame):
+    """Un mensaje del hilo: lo que dijeron ellos, o lo que se te sugiere decir.
+
+    Las de ellos van a la izquierda y en gris; las tuyas a la derecha y en
+    dorado, como en cualquier chat. Asi de un vistazo sabes quien dijo que sin
+    tener que leer, que es lo unico que puedes permitirte en mitad de una
+    reunion.
+    """
+
+    def __init__(self, quien, ancho_maximo=700):
+        super().__init__()
+        self.quien = quien                       # 'ellos' | 'tu'
+        self._raw = ""
+        self.copy_buttons = []
+        mio = quien == "tu"
+        self.setStyleSheet(f"""
+            Burbuja {{
+                background: {'rgba(242,201,76,0.07)' if mio else 'rgba(243,234,212,0.04)'};
+                border: 1px solid {'rgba(242,201,76,0.28)' if mio else T.DIVIDER_FAINT};
+                border-radius: 12px;
+            }}
+            QLabel {{ background: transparent; border: none; }}
+        """)
+        self.setMaximumWidth(ancho_maximo)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(13, 9, 13, 10)
+        lay.setSpacing(5)
+
+        cab = QtWidgets.QHBoxLayout()
+        cab.setSpacing(6)
+        if mio:
+            cab.addStretch()
+            cab.addWidget(icons.label("sparkles", T.GOLD, 12))
+            cab.addWidget(_tracked("You", 10, QtGui.QFont.Bold, T.GOLD, 0.6, upper=True))
+        else:
+            cab.addWidget(_tracked("Participant", 10, QtGui.QFont.DemiBold,
+                                   T.TEXT_FAINT, 0.6, upper=True))
+            cab.addStretch()
+        lay.addLayout(cab)
+
+        self.cuerpo = QtWidgets.QVBoxLayout()
+        self.cuerpo.setContentsMargins(0, 0, 0, 0)
+        self.cuerpo.setSpacing(7)
+        lay.addLayout(self.cuerpo)
+
+    # -- contenido ----------------------------------------------------------
+    def _vaciar(self):
+        self.copy_buttons = []
+        while self.cuerpo.count():
+            it = self.cuerpo.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+
+    def set_texto(self, texto, caret=False):
+        """Texto llano (lo que dicen ellos), con caret mientras siguen hablando."""
+        self._raw = texto
+        self._vaciar()
+        cursor = f'<span style="color:{T.GOLD};">&#9611;</span>' if caret else ""
+        lab = QtWidgets.QLabel(
+            f'<div style="line-height:150%; color:{T.TEXT_BODY}; font-size:15px;">'
+            f'{html.escape(texto)}{cursor}</div>')
+        lab.setWordWrap(True)
+        lab.setTextFormat(QtCore.Qt.RichText)
+        self.cuerpo.addWidget(lab)
+
+    def set_markdown(self, raw, parrafo, vinetas):
+        """Respuesta del modelo: secciones, codigo, listas."""
+        self._raw = raw
+        self._vaciar()
+        for etiqueta, bloques in richtext.parse_answer(raw):
+            self.cuerpo.addWidget(_tracked(etiqueta, 10, QtGui.QFont.Bold,
+                                           T.GOLD_LABEL, 0.9, upper=True))
+            for bloque in bloques:
+                if bloque[0] == richtext.CODE:
+                    cb = CodeBlock(bloque[1], bloque[2])
+                    self.copy_buttons.append(cb.btn_copy)
+                    self.cuerpo.addWidget(cb)
+                elif bloque[0] == richtext.BULLETS:
+                    self.cuerpo.addWidget(vinetas(bloque[1]))
+                else:
+                    self.cuerpo.addWidget(parrafo(bloque[1]))
+
+
 class SkipPill(QtWidgets.QLabel):
     """Aviso de que NO va a haber respuesta.
 
@@ -719,14 +804,12 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._caret_on = True
         self._anim_phase = 0
         self._part_last = None
-        self._shots = []            # miniaturas de las capturas enviadas
-        self._copy_buttons = []     # se recrean en cada render
+        self._burbujas = []         # todas las del hilo, para los botones copiar
+        self._burbuja_viva = None   # la intervencion que se esta transcribiendo
+        self._burbuja_resp = None   # la sugerencia que se esta generando
         self._repintado_pendiente = False
+        self._auto = {}             # se llena en _body, al crear el hilo
         self._build()
-        # Cada area sigue el final por su cuenta: la respuesta segun se genera y
-        # la transcripcion segun se habla.
-        self._auto = {"answer": _AutoScroll(self.scroll),
-                      "question": _AutoScroll(self.q_scroll)}
         # Animacion: pulso del borde (listening) + caret parpadeante.
         self._anim = QtCore.QTimer(self)
         self._anim.timeout.connect(self._animate)
@@ -794,6 +877,13 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         titulo = _tracked("Live Transcription", 13, QtGui.QFont.DemiBold, T.TEXT_BRIGHT, 0)
         lay.addWidget(titulo)
 
+        # Punto que se ilumina cuando llega audio de la reunion. Antes vivia
+        # sobre la columna del participante, que ya no existe.
+        self.part_dot = QtWidgets.QLabel()
+        self.part_dot.setFixedSize(8, 8)
+        lay.addWidget(self.part_dot)
+        self._paint_part(0)
+
         self.badge = StatusBadge()
         lay.addWidget(self.badge)
         # medidor de latencia de transcripcion (a la derecha del badge)
@@ -813,71 +903,17 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         w.setStyleSheet(f"border-bottom: 1px solid {T.DIVIDER_SOFT};")
         return w
 
-    # ---------------- cuerpo
+    # ---------------- cuerpo: el hilo de la conversacion
     def _body(self):
         w = QtWidgets.QWidget()
-        lay = QtWidgets.QHBoxLayout(w)
+        lay = QtWidgets.QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         w.setMinimumHeight(240)
 
-        # --- izquierda: entrevistador ---
-        izq = QtWidgets.QWidget()
-        il = QtWidgets.QVBoxLayout(izq)
-        il.setContentsMargins(18, 16, 18, 16)
-        il.setSpacing(12)
-        cab = QtWidgets.QHBoxLayout()
-        cab.setSpacing(8)
-        # Punto que se ilumina cuando llega audio de la reunion (el participante habla).
-        self.part_dot = QtWidgets.QLabel()
-        self.part_dot.setFixedSize(8, 8)
-        cab.addWidget(self.part_dot)
-        self._paint_part(0)
-        cab.addWidget(_tracked("Participant", 12, QtGui.QFont.DemiBold, T.TEXT_MUTED, 0))
-        cab.addStretch()
-        il.addLayout(cab)
-
-        self.lbl_question = QtWidgets.QLabel("")
-        self.lbl_question.setWordWrap(True)
-        self.lbl_question.setTextFormat(QtCore.Qt.RichText)
-        self.lbl_question.setAlignment(QtCore.Qt.AlignTop)
-        self.lbl_question.setStyleSheet("background: transparent;")
-
-        # La intervencion tambien puede ser larga (alguien que se explaya), asi
-        # que va en su propia area con scroll y sigue al final segun se transcribe.
-        self.q_scroll = QtWidgets.QScrollArea()
-        self.q_scroll.setWidgetResizable(True)
-        self.q_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.q_scroll.setStyleSheet("background: transparent;")
-        self.q_scroll.viewport().setStyleSheet("background: transparent;")
-        qcont = QtWidgets.QWidget()
-        qcont.setStyleSheet("background: transparent;")
-        qlay = QtWidgets.QVBoxLayout(qcont)
-        qlay.setContentsMargins(0, 0, 0, 0)
-        qlay.setSpacing(0)
-        qlay.addWidget(self.lbl_question)
-        qlay.addStretch()
-        self.q_scroll.setWidget(qcont)
-        il.addWidget(self.q_scroll, 1)
-        # Pegada al texto, no al fondo de la columna: se lee como una nota de lo
-        # que se acaba de transcribir.
-        self.skip_pill = SkipPill()
-        il.addWidget(self.skip_pill, 0, QtCore.Qt.AlignLeft)
-        izq.setStyleSheet(f"border-right: 1px solid {T.DIVIDER_FAINT};")
-        lay.addWidget(izq, 35)          # participante: columna mas estrecha
-
-        # --- derecha: respuesta sugerida ---
-        der = QtWidgets.QWidget()
-        dl = QtWidgets.QVBoxLayout(der)
-        dl.setContentsMargins(18, 16, 18, 16)
-        dl.setSpacing(12)
-        cab2 = QtWidgets.QHBoxLayout()
-        cab2.setSpacing(8)
-        cab2.addWidget(icons.label("sparkles", T.GOLD, 15))
-        cab2.addWidget(_tracked("Suggested answer", 12, QtGui.QFont.Bold, T.GOLD, 0.3))
-        cab2.addStretch()
-        dl.addLayout(cab2)
-
+        # Un unico hilo cronologico, como un chat: lo viejo se queda arriba y lo
+        # nuevo entra por abajo. Antes cada pregunta borraba la anterior, asi que
+        # en cuanto pasabas de turno ya no podias releer nada.
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -885,17 +921,53 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.scroll.viewport().setStyleSheet("background: transparent;")
         cont = QtWidgets.QWidget()
         cont.setStyleSheet("background: transparent;")
-        self.answer_lay = QtWidgets.QVBoxLayout(cont)
-        self.answer_lay.setContentsMargins(0, 0, 0, 0)
-        self.answer_lay.setSpacing(11)
-        self.answer_lay.addStretch()
+        self.feed = QtWidgets.QVBoxLayout(cont)
+        self.feed.setContentsMargins(18, 14, 18, 14)
+        self.feed.setSpacing(10)
+        self.feed.addStretch()          # el hueco sobrante, siempre al final
         self.scroll.setWidget(cont)
-        dl.addWidget(self.scroll, 1)
-        lay.addWidget(der, 65)          # respuesta: columna mas ancha (mas sitio para capturas)
+        # El seguimiento del final se crea aqui: set_hint ya lo usa.
+        self._auto["feed"] = _AutoScroll(self.scroll)
+        lay.addWidget(self.scroll, 1)
+
+        # Aviso de "no voy a responder": va pegado al hilo, no dentro de el, para
+        # que no se pierda hacia arriba cuando siga entrando conversacion.
+        self.skip_pill = SkipPill()
+        pie = QtWidgets.QWidget()
+        pl = QtWidgets.QHBoxLayout(pie)
+        pl.setContentsMargins(18, 0, 18, 10)
+        pl.addWidget(self.skip_pill)
+        pl.addStretch()
+        lay.addWidget(pie)
 
         self.set_hint("Start the meeting to capture the participant "
                       "and draft a suggested answer.")
         return w
+
+    # -- piezas del hilo ----------------------------------------------------
+    def _ancho_burbuja(self):
+        return max(260, int(self.width() * 0.78))
+
+    def _añadir(self, widget, lado):
+        """Mete algo en el hilo, alineado a un lado."""
+        fila = QtWidgets.QWidget()
+        fila.setStyleSheet("background: transparent;")
+        fl = QtWidgets.QHBoxLayout(fila)
+        fl.setContentsMargins(0, 0, 0, 0)
+        if lado == "der":
+            fl.addStretch()
+            fl.addWidget(widget)
+        else:
+            fl.addWidget(widget)
+            fl.addStretch()
+        self.feed.insertWidget(self.feed.count() - 1, fila)   # antes del hueco
+        return fila
+
+    def _nueva_burbuja(self, quien):
+        b = Burbuja(quien, self._ancho_burbuja())
+        self._burbujas.append(b)
+        self._añadir(b, "der" if quien == "tu" else "izq")
+        return b
 
     # ---------------- estado visual (borde + animacion)
     def _apply_border(self):
@@ -985,39 +1057,45 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.badge.set(texto, kind)
 
     def _render_question(self):
-        caret = (self._caret_on and self._state == "listening"
-                 and bool(self._question_text))
-        cursor = f'<span style="color:{T.GOLD};">&#9611;</span>' if caret else ""
-        self.lbl_question.setText(
-            f'<div style="line-height:155%; color:{T.TEXT_BODY}; font-size:17px;">'
-            f'{html.escape(self._question_text)}{cursor}</div>')
+        """Repinta el caret de la intervencion en curso (parpadeo)."""
+        if self._burbuja_viva is not None:
+            caret = self._caret_on and self._state == "listening"
+            self._burbuja_viva.set_texto(self._burbuja_viva._raw, caret=caret)
 
+    # ---------------- el hilo: participante
     def set_question(self, texto, caret=False):
-        # Igual que la respuesta: si estabas al final, sigue bajando segun se
-        # transcribe; si subiste a releer, se queda donde lo dejaste.
-        self._auto["question"].anotar()
-        self._question_text = texto
-        self._render_question()
-        QtCore.QTimer.singleShot(0, self._auto["question"].restaurar)
+        """Lo que se esta transcribiendo ahora mismo: actualiza la burbuja viva."""
+        if not texto:
+            return
+        self._auto["feed"].anotar()
+        if self._burbuja_viva is None:
+            self._burbuja_viva = self._nueva_burbuja("ellos")
+        self._burbuja_viva.set_texto(texto, caret=self._state == "listening")
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
-    def show_skip(self, texto="No question — Alt+5 to answer"):
-        """Deja claro que no se esta esperando ninguna respuesta."""
-        self.skip_pill.show_text(texto)
+    def cerrar_intervencion(self, texto):
+        """La intervencion termino: deja de ser 'en curso' y se queda en el hilo."""
+        self._auto["feed"].anotar()
+        if self._burbuja_viva is None:
+            self._burbuja_viva = self._nueva_burbuja("ellos")
+        self._burbuja_viva.set_texto(texto)
+        self._burbuja_viva = None
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
-    def hide_skip(self):
-        self.skip_pill.hide_pill()
-
+    # ---------------- el hilo: sugerencias
     def clear_answer(self):
+        """Empieza una sugerencia nueva: se abre otra burbuja, no se borra nada."""
         self._raw = ""
-        self._render([])
+        self._auto["feed"].anotar()
+        self._burbuja_resp = self._nueva_burbuja("tu")
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
     def append_answer(self, delta):
-        """Añade un trozo de la respuesta y programa el repintado.
+        """Añade un trozo a la sugerencia en curso y programa el repintado.
 
-        Repintar en cada trozo era insostenible: el panel se reconstruye entero
-        (secciones, bloques de codigo, botones) y llegan decenas de trozos por
-        segundo, asi que se atascaba justo mientras escribes la respuesta. Se
-        agrupan y se repinta a ritmo fijo, que ademas es mas legible.
+        Repintar en cada trozo era insostenible, asi que se agrupan. Y solo se
+        repinta la burbuja de la respuesta: lo anterior del hilo ya esta pintado
+        y no se toca.
         """
         self._raw += delta
         if not self._repintado_pendiente:
@@ -1026,9 +1104,56 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
 
     def _repintar(self):
         self._repintado_pendiente = False
-        self._render(richtext.parse_answer(self._raw))
+        if self._burbuja_resp is None:
+            self._burbuja_resp = self._nueva_burbuja("tu")
+        self._auto["feed"].anotar()
+        self._burbuja_resp.set_markdown(self._raw, self._parrafo, self._vinetas)
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
-    # ---------------- scroll (respuesta y transcripcion)
+    def cerrar_respuesta(self):
+        """Se acabo de generar: el ultimo trozo se pinta y la burbuja se cierra."""
+        if self._repintado_pendiente or self._burbuja_resp is None:
+            self._repintar()
+        self._burbuja_resp = None
+
+    # ---------------- el hilo: capturas y notas
+    def add_shot(self, pixmap):
+        """La captura enviada entra en el hilo, como un mensaje tuyo."""
+        self._auto["feed"].anotar()
+        self._añadir(ShotThumb(pixmap), "der")
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
+
+    def set_hint(self, texto):
+        """Nota discreta en el hilo (arranque, avisos)."""
+        lab = QtWidgets.QLabel(texto)
+        lab.setWordWrap(True)
+        lab.setStyleSheet(
+            f"color: {T.TEXT_FAINT}; font-size: 13px; background: transparent;")
+        self._auto["feed"].anotar()
+        self._añadir(lab, "izq")
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
+
+    def limpiar_hilo(self):
+        """Vacia la conversacion (al empezar una reunion nueva)."""
+        self._burbuja_viva = None
+        self._burbuja_resp = None
+        self._burbujas = []
+        self._raw = ""
+        while self.feed.count() > 1:
+            it = self.feed.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+
+    def show_skip(self, texto="No question — Alt+5 to answer"):
+        """Deja claro que no se esta esperando ninguna respuesta."""
+        self.skip_pill.show_text(texto)
+
+    def hide_skip(self):
+        self.skip_pill.hide_pill()
+
+    # ---------------- scroll
     def wheel_zones(self):
         """Zonas que capturan la rueda: [(rectangulo, nombre)].
 
@@ -1045,38 +1170,6 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         auto = self._auto.get(nombre)
         if auto is not None:
             auto.rueda(muescas)
-
-    # ---------------- capturas enviadas
-    def add_shot(self, pixmap):
-        """Muestra la captura recien tomada encima de la respuesta."""
-        self._shots.append(pixmap)
-        self._render(richtext.parse_answer(self._raw))
-
-    def clear_shots(self):
-        if self._shots:
-            self._shots = []
-            self._render(richtext.parse_answer(self._raw))
-
-    def set_hint(self, texto):
-        self._raw = ""
-        self._clear_layout()
-        lab = QtWidgets.QLabel(texto)
-        lab.setWordWrap(True)
-        lab.setStyleSheet(
-            f"color: {T.TEXT_FAINT}; font-size: 14px; background: transparent;")
-        self.answer_lay.insertWidget(0, lab)
-
-    def _clear_layout(self):
-        while self.answer_lay.count() > 1:
-            it = self.answer_lay.takeAt(0)
-            w = it.widget()
-            if w is not None:
-                # hide() y a la cola de borrado. NADA de setParent(None): eso
-                # convierte el widget en una ventana de nivel superior, y
-                # repintando en cada trozo del streaming salian decenas de
-                # ventanas sueltas parpadeando encima de todo.
-                w.hide()
-                w.deleteLater()
 
     # Estilo del `codigo en linea` dentro de un parrafo.
     _CODE_INLINE = (f"font-family: {T.MONO_STACK}; background: rgba(0,0,0,0.35); "
@@ -1104,49 +1197,16 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         lab.setStyleSheet("background: transparent;")
         return lab
 
-    def _render(self, secciones):
-        # Solo se sigue al final si YA estabas al final. Si has subido a releer
-        # algo, el siguiente trozo del streaming no te arrastra de vuelta.
-        self._auto["answer"].anotar()
-        self._clear_layout()
-        self._copy_buttons = []
-        fila = 0
-
-        # Las capturas enviadas van arriba y alineadas a la derecha, como el
-        # mensaje que acabas de mandar en un chat; la respuesta viene debajo.
-        for pm in self._shots:
-            caja = QtWidgets.QWidget()
-            cl = QtWidgets.QHBoxLayout(caja)
-            cl.setContentsMargins(0, 0, 0, 0)
-            cl.addStretch()
-            cl.addWidget(ShotThumb(pm))
-            caja.setStyleSheet("background: transparent;")
-            self.answer_lay.insertWidget(fila, caja)
-            fila += 1
-
-        for etiqueta, bloques in secciones:
-            caja = QtWidgets.QWidget()
-            bl = QtWidgets.QVBoxLayout(caja)
-            bl.setContentsMargins(0, 0, 0, 0)
-            bl.setSpacing(6)
-            caja.setStyleSheet("background: transparent;")
-            bl.addWidget(_tracked(etiqueta, 11, QtGui.QFont.Bold, T.GOLD_LABEL,
-                                  1.0, upper=True))
-            for bloque in bloques:
-                if bloque[0] == richtext.CODE:
-                    cb = CodeBlock(bloque[1], bloque[2])
-                    self._copy_buttons.append(cb.btn_copy)
-                    bl.addWidget(cb)
-                elif bloque[0] == richtext.BULLETS:
-                    bl.addWidget(self._vinetas(bloque[1]))
-                else:
-                    bl.addWidget(self._parrafo(bloque[1]))
-            self.answer_lay.insertWidget(fila, caja)
-            fila += 1
-
-        # Red de seguridad para cuando el rango no cambia (mismo alto, otro
-        # texto): rangeChanged no se emitiria y no habria a que enganchar.
-        QtCore.QTimer.singleShot(0, self._auto["answer"].restaurar)
+    @property
+    def _copy_buttons(self):
+        """Los botones de copiar de todo el hilo (para el click-through)."""
+        vivos = []
+        for b in self._burbujas:
+            try:
+                vivos.extend(b.copy_buttons)
+            except RuntimeError:
+                pass        # burbuja ya destruida
+        return vivos
 
 
 def parse_sections(raw):
