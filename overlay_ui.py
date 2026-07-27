@@ -424,6 +424,40 @@ class ShotThumb(QtWidgets.QFrame):
         lay.addWidget(pie)
 
 
+class PanelCard(QtWidgets.QFrame):
+    """Fondo y borde del panel, pintados a mano.
+
+    El borde late mientras escucha, once veces por segundo. Hacerlo con
+    setStyleSheet obliga a Qt a repasar el estilo de TODOS los hijos, y el hilo
+    de conversacion son cientos de widgets: medido, 377 ms por fotograma con
+    quince turnos, o sea que ni terminaba antes del siguiente. La app se atascaba
+    mas cuanto mas larga era la reunion.
+
+    Pintarlo aqui es un repintado de este widget y nada mas.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._color = QtGui.QColor(210, 220, 223, 36)
+        self._grosor = 1
+
+    def set_borde(self, color, grosor):
+        if color == self._color and grosor == self._grosor:
+            return
+        self._color, self._grosor = color, grosor
+        self.update()
+
+    def paintEvent(self, _e):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        m = self._grosor / 2
+        r = QtCore.QRectF(self.rect()).adjusted(m, m, -m, -m)
+        p.setBrush(QtGui.QColor(T.PANEL_BODY))
+        p.setPen(QtGui.QPen(self._color, self._grosor))
+        p.drawRoundedRect(r, T.R_PANEL, T.R_PANEL)
+        p.end()
+
+
 class Burbuja(QtWidgets.QFrame):
     """Un mensaje del hilo: lo que dijeron ellos, o lo que se te sugiere decir.
 
@@ -437,6 +471,7 @@ class Burbuja(QtWidgets.QFrame):
         super().__init__()
         self.quien = quien                       # 'ellos' | 'tu'
         self._raw = ""
+        self._label = None                       # etiqueta reutilizada del texto
         self.copy_buttons = []
         mio = quien == "tu"
         self.setStyleSheet(f"""
@@ -472,6 +507,7 @@ class Burbuja(QtWidgets.QFrame):
     # -- contenido ----------------------------------------------------------
     def _vaciar(self):
         self.copy_buttons = []
+        self._label = None
         while self.cuerpo.count():
             it = self.cuerpo.takeAt(0)
             w = it.widget()
@@ -480,16 +516,22 @@ class Burbuja(QtWidgets.QFrame):
                 w.deleteLater()
 
     def set_texto(self, texto, caret=False):
-        """Texto llano (lo que dicen ellos), con caret mientras siguen hablando."""
+        """Texto llano (lo que dicen ellos), con caret mientras siguen hablando.
+
+        La etiqueta se reutiliza en vez de rehacerla: el caret parpadea once
+        veces por segundo y crear y destruir widgets a ese ritmo se nota.
+        """
         self._raw = texto
-        self._vaciar()
         cursor = f'<span style="color:{T.GOLD};">&#9611;</span>' if caret else ""
-        lab = QtWidgets.QLabel(
-            f'<div style="line-height:150%; color:{T.TEXT_BODY}; font-size:15px;">'
-            f'{html.escape(texto)}{cursor}</div>')
-        lab.setWordWrap(True)
-        lab.setTextFormat(QtCore.Qt.RichText)
-        self.cuerpo.addWidget(lab)
+        html_ = (f'<div style="line-height:150%; color:{T.TEXT_BODY}; '
+                 f'font-size:15px;">{html.escape(texto)}{cursor}</div>')
+        if self._label is None:
+            self._vaciar()
+            self._label = QtWidgets.QLabel()
+            self._label.setWordWrap(True)
+            self._label.setTextFormat(QtCore.Qt.RichText)
+            self.cuerpo.addWidget(self._label)
+        self._label.setText(html_)
 
     def set_markdown(self, raw, parrafo, vinetas):
         """Respuesta del modelo: secciones, codigo, listas."""
@@ -821,15 +863,10 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         outer.setContentsMargins(0, 0, 0, 0)
 
         self.setStyleSheet(f"background: {T.PANEL_BODY};")
-        self.card = QtWidgets.QFrame()
+        # Se pinta sola (ver PanelCard): el borde late y con hoja de estilo eso
+        # repasaba el estilo de todo el hilo en cada fotograma.
+        self.card = PanelCard()
         self.card.setObjectName("panel")
-        self.card.setStyleSheet(f"""
-            QFrame#panel {{
-                background: {T.PANEL_BODY};
-                border: 1px solid {T.PANEL_BORDER2};
-                border-radius: {T.R_PANEL}px;
-            }}
-        """)
         outer.addWidget(self.card)
 
         root = QtWidgets.QVBoxLayout(self.card)
@@ -972,15 +1009,13 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
     # ---------------- estado visual (borde + animacion)
     def _apply_border(self):
         if self._state == "generating":
-            color, width = T.GOLD, 2
+            color, width = QtGui.QColor(242, 201, 76), 2
         elif self._state == "listening":
             a = 0.30 + 0.35 * (0.5 + 0.5 * math.sin(self._anim_phase * 0.22))
-            color, width = f"rgba(242,201,76,{a:.2f})", 1
+            color, width = QtGui.QColor(242, 201, 76, int(a * 255)), 1
         else:  # idle
-            color, width = "rgba(210,220,223,0.14)", 1
-        self.card.setStyleSheet(
-            f"QFrame#panel {{ background: {T.PANEL_BODY}; "
-            f"border: {width}px solid {color}; border-radius: {T.R_PANEL}px; }}")
+            color, width = QtGui.QColor(210, 220, 223, 36), 1
+        self.card.set_borde(color, width)
 
     def _animate(self):
         self._anim_phase += 1
