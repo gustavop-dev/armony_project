@@ -51,6 +51,20 @@ _BARRA_QSS = f"""
     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
         background: transparent;
     }}
+    /* La horizontal solo aparece cuando una linea de codigo no cabe. Se deja
+       hueco a la derecha por el agarre de redimension, igual que la vertical. */
+    QScrollBar:horizontal {{
+        background: transparent; height: 10px; margin: 0 22px 3px 16px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: rgba(242,201,76,0.28);
+        border-radius: 5px; min-width: 34px;
+    }}
+    QScrollBar::handle:horizontal:hover {{ background: rgba(242,201,76,0.5); }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+        background: transparent;
+    }}
 """
 
 
@@ -381,6 +395,21 @@ class _AutoScroll:
         return (tl.x(), tl.y(), self.scroll.width(), self.scroll.height())
 
 
+# Color de la pestaña de cada lenguaje, el que se le asocia de siempre. Sirve
+# para reconocer de un vistazo que trae el bloque sin leer la etiqueta.
+_COLOR_LENGUAJE = {
+    "python": "#7ee0c6", "py": "#7ee0c6",
+    "javascript": "#f2c94c", "js": "#f2c94c",
+    "typescript": "#89ddf0", "ts": "#89ddf0", "tsx": "#89ddf0",
+    "java": "#f2a06a", "kotlin": "#c58af9",
+    "sql": "#b3e08a", "bash": "#b3e08a", "sh": "#b3e08a", "shell": "#b3e08a",
+    "html": "#ffa96b", "css": "#89ddf0",
+    "json": "#ffd479", "yaml": "#ffd479", "yml": "#ffd479",
+    "go": "#89ddf0", "rust": "#ffa96b", "c": "#9ad2e0", "cpp": "#9ad2e0",
+    "csharp": "#c58af9", "cs": "#c58af9", "php": "#c58af9", "ruby": "#f08fb0",
+}
+
+
 class CodeBlock(QtWidgets.QFrame):
     """Bloque de codigo: cabecera con el lenguaje, boton de copiar y el cuerpo.
 
@@ -392,12 +421,16 @@ class CodeBlock(QtWidgets.QFrame):
     def __init__(self, lenguaje, codigo):
         super().__init__()
         self._codigo = codigo
+        color_leng = _COLOR_LENGUAJE.get((lenguaje or "").lower(), T.GOLD_LABEL)
         # Fondo bastante mas opaco que el resto del panel: el codigo tiene que
-        # leerse como un editor, no como texto flotando sobre la reunion.
+        # leerse como un editor, no como texto flotando sobre la reunion. Y un
+        # filo del color del lenguaje, que es lo que lo marca como bloque de
+        # codigo desde el otro lado de la pantalla.
         self.setStyleSheet(f"""
             CodeBlock {{
                 background: rgba(6,7,10,0.92);
                 border: 1px solid rgba(242,201,76,0.18);
+                border-left: 2px solid {color_leng};
                 border-radius: 8px;
             }}
             QLabel {{ background: transparent; border: none; }}
@@ -407,14 +440,26 @@ class CodeBlock(QtWidgets.QFrame):
         lay.setSpacing(0)
 
         cab = QtWidgets.QWidget()
+        # Barra de titulo, un punto mas clara que el cuerpo: separa el bloque del
+        # resto de la respuesta sin necesidad de otra linea.
+        cab.setStyleSheet("background: rgba(255,255,255,0.035); "
+                          "border-top-left-radius: 8px; "
+                          "border-top-right-radius: 8px;")
         cl = QtWidgets.QHBoxLayout(cab)
         cl.setContentsMargins(10, 5, 6, 5)
-        cl.setSpacing(8)
+        cl.setSpacing(7)
+
+        # Punto de color del lenguaje, como la pestaña de un editor.
+        punto = QtWidgets.QLabel()
+        punto.setFixedSize(7, 7)
+        punto.setStyleSheet(f"background: {color_leng}; border-radius: 3px;")
+        cl.addWidget(punto)
+
         etq = QtWidgets.QLabel((lenguaje or "code").upper())
         ef = etq.font(); ef.setPixelSize(10); ef.setWeight(QtGui.QFont.DemiBold)
         ef.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 0.8)
         etq.setFont(ef)
-        etq.setStyleSheet(f"color: {T.GOLD_LABEL}; background: transparent;")
+        etq.setStyleSheet(f"color: {color_leng}; background: transparent;")
         cl.addWidget(etq)
         cl.addStretch()
 
@@ -440,7 +485,7 @@ class CodeBlock(QtWidgets.QFrame):
         sep.setStyleSheet(f"background: {T.DIVIDER_FAINT}; border: none;")
         lay.addWidget(sep)
 
-        coloreado = richtext.resaltar(codigo, lenguaje)
+        coloreado = richtext.resaltar(codigo, lenguaje, numerar=True)
         cuerpo = QtWidgets.QLabel()
         if coloreado:
             # &nbsp; y <br> conservan sangria y saltos, que es lo unico que hace
@@ -984,6 +1029,8 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
             return
         if not self._descongelar.isActive():        # aun no estaba congelado
             cont.setFixedWidth(cont.width())
+            self.scroll.setHorizontalScrollBarPolicy(
+                QtCore.Qt.ScrollBarAlwaysOff)      # no asomar por el sobrante
         self._descongelar.start(140)
 
     def _descongelar_ancho(self):
@@ -993,6 +1040,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         cont.setMinimumWidth(0)
         cont.setMaximumWidth(16777215)
         cont.resize(self.scroll.viewport().width(), cont.height())
+        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
 
     def interactive_widgets(self):
         """Zonas que responden al mouse: cabecera (mover), scroll, agarre y copiar.
@@ -1009,6 +1057,10 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         """
         zonas = ([self._drag_header, self.scroll.verticalScrollBar(),
                   self.resize_grip] + self._copy_buttons)
+        # La horizontal solo esta cuando el codigo no cabe de ancho; si no se
+        # puede arrastrar, el trozo que sobresale seguiria sin poder leerse.
+        if self.scroll.horizontalScrollBar().isVisible():
+            zonas.append(self.scroll.horizontalScrollBar())
         if self.scroll.verticalScrollBar().maximum() > 0:
             zonas.append(self.scroll.viewport())
         return zonas
@@ -1076,9 +1128,11 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.scroll.setStyleSheet(_BARRA_QSS)
         self.scroll.viewport().setStyleSheet("background: transparent;")
-        # Mientras el hilo esta congelado (ver _congelar_ancho) sobra ancho: que
-        # se recorte en silencio en vez de asomar una barra horizontal.
-        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        # Barra horizontal solo cuando hace falta de verdad: una linea de codigo
+        # con su comentario al final no cabe en un panel estrecho, y sin barra
+        # ese trozo no habria forma de leerlo. Se apaga durante el arrastre (ver
+        # _congelar_ancho), que ahi el ancho sobrante es un efecto pasajero.
+        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         cont = QtWidgets.QWidget()
         cont.setStyleSheet("background: transparent;")
         self._cont = cont

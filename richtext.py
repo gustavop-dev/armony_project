@@ -119,38 +119,69 @@ def solo_texto(secciones):
 # Paleta propia, a juego con el overlay (fondos calidos y dorados) en vez de los
 # azules de los temas habituales, que ahi dentro cantan.
 COLORES = {
-    "kw": "#f2c94c",        # palabras clave: def, for, return
-    "def": "#f7dd7f",       # nombres de funciones y clases
-    "str": "#a8d8a0",       # cadenas
-    "num": "#e79a6a",       # numeros
-    "com": "#7d7566",       # comentarios: apagados, no compiten con el codigo
-    "op": "#d9cfb8",        # operadores y signos
-    "bi": "#9ad2e0",        # incorporados: len, range, print
-    "txt": "#f0e8d6",       # todo lo demas
+    "kw":   "#ffc857",      # palabras clave: def, class, for, return
+    "kwc":  "#c58af9",      # True, False, None, and, or, not, in
+    "def":  "#f7dd7f",      # nombres de funciones que se definen
+    "cls":  "#7ee0c6",      # clases, excepciones y modulos importados
+    "bi":   "#89ddf0",      # incorporados: len, sum, int, print
+    "self": "#f08fb0",      # self y cls, que aparecen en casi todas las lineas
+    "dec":  "#ffa96b",      # decoradores: @property
+    "str":  "#b3e08a",      # cadenas
+    "doc":  "#84a877",      # docstrings: son documentacion, no dato
+    "esc":  "#ffd479",      # lo interpolado dentro de una cadena: f"{x}"
+    "num":  "#f2a06a",      # numeros
+    "com":  "#7f7a6c",      # comentarios: apagados, no compiten con el codigo
+    "op":   "#e2d9c2",      # operadores: = + < ->
+    "pun":  "#9b9384",      # signos: parentesis, comas, dos puntos
+    "txt":  "#efe7d5",      # variables y todo lo demas
 }
+
+# En cursiva, como en cualquier editor: lo que no es codigo ejecutable.
+CURSIVAS = {"com", "doc", "self"}
+
+# Los numeros de linea: se tienen que ver sin robarle atencion al codigo.
+COLOR_NUMERO = "#5c564a"
 
 
 def _clase(tipo):
-    """Traduce el tipo de token de Pygments a uno de nuestros colores."""
+    """Traduce el tipo de token de Pygments a uno de nuestros colores.
+
+    El orden importa: se mira de lo mas concreto a lo mas general, porque
+    'Literal.String.Doc' tambien contiene 'String'.
+    """
     t = str(tipo)
     if "Comment" in t:
         return "com"
+    if "String.Doc" in t:
+        return "doc"
+    if "String.Interpol" in t or "String.Escape" in t or "String.Affix" in t:
+        return "esc"
     if "String" in t:
         return "str"
     if "Number" in t:
         return "num"
+    if "Name.Decorator" in t:
+        return "dec"
+    if "Keyword.Constant" in t or "Operator.Word" in t:
+        return "kwc"
     if "Keyword" in t:
         return "kw"
-    if "Name.Function" in t or "Name.Class" in t:
+    if "Name.Builtin.Pseudo" in t:      # self, cls
+        return "self"
+    if "Name.Function" in t:
         return "def"
-    if "Name.Builtin" in t or "Name.Exception" in t:
+    if "Name.Class" in t or "Name.Exception" in t or "Name.Namespace" in t:
+        return "cls"
+    if "Name.Builtin" in t:
         return "bi"
-    if "Operator" in t or "Punctuation" in t:
+    if "Punctuation" in t:
+        return "pun"
+    if "Operator" in t:
         return "op"
     return "txt"
 
 
-def resaltar(codigo, lenguaje=""):
+def resaltar(codigo, lenguaje="", numerar=False):
     """Devuelve el codigo como HTML coloreado, o None si no se puede.
 
     Sin colores el bloque se lee como un muro de texto, sobre todo cuando cada
@@ -170,16 +201,48 @@ def resaltar(codigo, lenguaje=""):
         except Exception:
             return None
     try:
-        partes = []
+        # Se colorea linea a linea. Un token puede abarcar varias (una cadena de
+        # tres comillas, por ejemplo), asi que se parte por los saltos.
+        lineas = [[]]
         for tipo, valor in lex(codigo, lexer):
             if not valor:
                 continue
-            escapado = html.escape(valor).replace("\n", "<br>").replace(" ", "&nbsp;")
-            partes.append(f'<span style="color:{COLORES[_clase(tipo)]};">'
-                          f'{escapado}</span>')
-        return "".join(partes)
+            clase = _clase(tipo)
+            estilo = f"color:{COLORES[clase]};"
+            if clase in CURSIVAS:
+                estilo += "font-style:italic;"
+            for i, trozo in enumerate(valor.split("\n")):
+                if i:
+                    lineas.append([])
+                if trozo:
+                    escapado = html.escape(trozo).replace(" ", "&nbsp;")
+                    lineas[-1].append(f'<span style="{estilo}">{escapado}</span>')
+        while lineas and not lineas[-1]:      # el salto final sobra
+            lineas.pop()
+        if not lineas:
+            return None
+        if not numerar:
+            return "<br>".join("".join(l) for l in lineas)
+        return _con_numeros(lineas)
     except Exception:
         return None
+
+
+def _con_numeros(lineas):
+    """Antepone el numero de linea a cada linea, alineado a la derecha.
+
+    Va como prefijo y no como tabla aunque una tabla alinearia mejor cuando una
+    linea se parte por el ancho: medido, la tabla duplica lo que cuesta
+    redimensionar el panel (38 -> 81 ms por paso de arrastre), y eso se nota
+    todo el rato, mientras que una linea partida se ve de vez en cuando.
+    """
+    ancho = len(str(len(lineas)))
+    salida = []
+    for n, partes in enumerate(lineas, 1):
+        numero = str(n).rjust(ancho).replace(" ", "&nbsp;")
+        salida.append(f'<span style="color:{COLOR_NUMERO};">{numero}'
+                      f'&nbsp;&nbsp;&nbsp;</span>{"".join(partes)}')
+    return "<br>".join(salida)
 
 
 def inline_html(texto, code_style=""):
