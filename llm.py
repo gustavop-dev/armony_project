@@ -26,6 +26,28 @@ def _reintentable(error):
     texto = f"{type(error).__name__} {error}".lower()
     return any(p in texto for p in _REINTENTABLES)
 
+
+# Cuando hay codigo de por medio manda otra estructura. Un ejercicio no se
+# explica en dos frases: hace falta decir primero como se interpreta, luego el
+# codigo comentado linea a linea (que es lo que se lee en voz alta mientras se
+# escribe en la pizarra) y al final por que funciona y cuanto cuesta.
+#
+# Ojo: esto ANULA a proposito el "cada seccion, una o dos frases" de arriba. Con
+# ese limite la explicacion de un ejercicio serio salia recortada y sin valor.
+_FORMATO_CODIGO = (
+    "SI TU RESPUESTA LLEVA CODIGO, olvida CUALQUIER limite de brevedad (el de "
+    "una o dos frases por seccion y el de ser conciso de las instrucciones "
+    "generales: no aplican aqui) y usa exactamente esta estructura:\n"
+    "## Enfoque — como entiendes el problema y que estrategia vas a seguir, "
+    "antes de escribir nada. Que se note el razonamiento, no solo el resultado.\n"
+    "## Solución — el codigo COMPLETO y ejecutable en un bloque cercado con su "
+    "lenguaje. CADA LINEA lleva su comentario explicando que hace o para que "
+    "sirve; ni una linea suelta. Nada de '...' ni de recortes.\n"
+    "## Cómo funciona — explicacion seguida, de tu a tu, de como consigue el "
+    "resultado: por que ese orden, que invariante se mantiene, que casos borde "
+    "cubre. Extiendete lo que haga falta; aqui quedarse corto es el error.\n"
+    "## Coste — tiempo y espacio en notacion O(), y POR QUE sale eso.\n\n")
+
 # Los modelos gpt-5 razonan antes de responder y ese razonamiento, aunque no se
 # vea, gasta del mismo presupuesto de tokens. Sin esta reserva un limite bajo se
 # lo comeria el razonamiento y la respuesta llegaria vacia. El ajuste del usuario
@@ -66,20 +88,13 @@ class Coach:
         n_img = len(images or [])
         extra = f"\n\nIndicacion mia para orientar la respuesta: \"{note}\"" if note else ""
         if n_img:
-            # Con capturas la pregunta suele ser tecnica: hace falta la solucion
-            # entera, no un resumen hablado. El codigo va en su propio bloque para
-            # que el panel lo pinte como codigo y se pueda copiar.
             extra += (
                 f"\n\nAdjunto {n_img} captura(s) de mi pantalla. Si contienen el "
                 "enunciado o el codigo del que se habla, respondele a eso.\n"
-                "Si hay que escribir o corregir codigo:\n"
-                "- Da la solucion COMPLETA, lista para usar, dentro de un bloque "
-                "cercado con ``` y el lenguaje (por ejemplo ```python).\n"
-                "- No cortes el codigo ni pongas '...': tiene que poder copiarse "
-                "y ejecutarse.\n"
-                "- Despues explicamela hablada, como si yo se la estuviera "
-                "explicando a la otra persona de tu a tu: que hace, por que "
-                "funciona y su coste si viene al caso. Sin dar clase.")
+                "Y si lo que hay es un ejercicio, un problema o codigo que "
+                "resolver, tu respuesta TIENE que traer la solucion escrita en "
+                "codigo, completa y ejecutable. Describir el enfoque sin "
+                "escribirla no vale: lo que necesito es poder leerla y pegarla.")
         prompt = (
             "Contexto reciente de la reunion. 'Ellos' son los demas "
             "participantes; 'Yo' es lo que ya he dicho; y 'Yo (sugerido)' es lo "
@@ -108,10 +123,10 @@ class Coach:
             "encabezado en su propia linea que empiece por '## '. Usa de una a cuatro "
             "secciones con encabezados cortos y propios, elegidos segun la pregunta "
             "(por ejemplo '## Answer', '## Context', '## Example', '## Next step'). "
-            "Cada seccion, una o dos frases; los bloques de codigo pueden ser tan "
-            "largos como haga falta. Dentro de las secciones puedes usar "
+            "Cada seccion, una o dos frases. Dentro de las secciones puedes usar "
             "**negritas**, `codigo en linea`, listas con '- ' y bloques cercados "
             "con ```lenguaje. Sin texto fuera de las secciones.\n\n"
+            + _FORMATO_CODIGO +
             "CUANDO HAYAS TENIDO QUE SUPONER ALGO IMPORTANTE para responder "
             "(no sabes su stack, su volumen, que lenguaje quieren, que parte les "
             "preocupa...): responde IGUALMENTE con tu propuesta, di en una linea "

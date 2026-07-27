@@ -145,9 +145,21 @@ El modelo contesta en markdown y el panel lo renderiza: secciones, **negritas**,
 copiar. El código se muestra tal cual, con sus saltos de línea e indentación.
 
 Cuando la pregunta llega por voz, la respuesta es una explicación breve para decir
-en voz alta. Cuando llega por captura de pantalla, el prompt pide además la
-**solución completa** en un bloque de código copiable y la explicación de tú a tú.
+en voz alta. **Cuando hay código de por medio, cambia la estructura entera** y se
+levanta el límite de brevedad:
+
+| Sección | Qué trae |
+|---|---|
+| **Enfoque** | Cómo interpreta el problema y qué estrategia va a seguir, antes de escribir nada |
+| **Solución** | El código completo y ejecutable, con **un comentario en cada línea** |
+| **Cómo funciona** | Por qué funciona: el invariante, el orden, los casos borde |
+| **Coste** | Tiempo y espacio en O(), y por qué sale eso |
+
 En los dos casos, siempre en primera persona: lo que se lee es lo que tú dirías.
+
+Ojo con los tokens: una solución comentada línea a línea ocupa mucho más que una
+respuesta hablada. Por eso las capturas tienen su propio límite (2500 por defecto,
+hasta 4000); con 1200 la respuesta se quedaba a medias.
 
 ### Atajos
 

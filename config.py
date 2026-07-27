@@ -74,7 +74,9 @@ DEFAULTS = {
     "anthropic_model_voice": "claude-haiku-4-5",     # el mas rapido
     "anthropic_tokens_voice": 400,
     "anthropic_model_vision": "claude-sonnet-5",     # mas capaz para codigo
-    "anthropic_tokens_vision": 1200,                 # el codigo ocupa
+    # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
+    # 1200 se quedaba a medias.
+    "anthropic_tokens_vision": 2500,
 
     "openai_api_key": "",
     # gpt-5.4-nano queda fuera a proposito: es el mas rapido, pero 1 de cada 5
@@ -83,7 +85,7 @@ DEFAULTS = {
     "openai_model_voice": "gpt-5.6-terra",           # 0,8 s a la primera palabra
     "openai_tokens_voice": 400,
     "openai_model_vision": "gpt-5.6-sol",
-    "openai_tokens_vision": 1200,
+    "openai_tokens_vision": 2500,
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
     # texto llega palabra a palabra mientras se habla, no al terminar la frase.
