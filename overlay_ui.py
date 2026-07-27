@@ -20,6 +20,21 @@ from metrics import PINTADO, metricas
 # leer, pero mil veces menos trabajo que reconstruir el panel en cada trozo.
 INTERVALO_REPINTADO = 90    # ms
 
+# Cuantos mensajes se mantienen vivos en el hilo.
+#
+# Redimensionar el panel cuesta en proporcion a lo que haya dentro, y sin tope
+# eso crecia toda la reunion: medido, 19 ms por paso de arrastre con 2 turnos,
+# 114 con 12 y 178 con 20. Por eso se trababa mas cuanto mas avanzada iba.
+#
+# Con tope el coste deja de crecer, y en 10 se queda en unos 40 ms por paso aun
+# con 40 turnos hablados. Subirlo se paga enseguida (14 ya son ~50) y bajarlo a
+# 8 apenas gana, asi que 10 es el punto donde deja de doler.
+#
+# Lo que sale no se pierde: la conversacion entera queda en el acta de la sesion.
+# Y el caso de uso tampoco pide subir mucho -- el scroll se usa para leer una
+# respuesta larga, no para repasar la reunion de hace media hora.
+MAX_FILAS_HILO = 10
+
 # Barra de desplazamiento a juego con el overlay. La de Windows (canal gris y
 # pulgar negro) se veia pegada encima de la interfaz, no como parte de ella.
 _BARRA_QSS = f"""
@@ -769,13 +784,15 @@ class TopBar(QtWidgets.QWidget, _Draggable):
         gl = QtWidgets.QHBoxLayout(self.btn_gen)
         gl.setContentsMargins(12, 8, 12, 8)
         gl.setSpacing(7)
-        self.ico_gen = icons.label("sparkles", T.GOLD_BTN_INK, 16)
+        self.ico_gen = icons.label("sparkles", T.TEXT, 16)
         gl.addWidget(self.ico_gen)
         self.lbl_gen = QtWidgets.QLabel("Generate")
-        gf = self.lbl_gen.font(); gf.setPixelSize(13); gf.setWeight(QtGui.QFont.Bold)
+        # Mismo peso que el resto de la barra: antes iba en negrita para
+        # sostener el fondo amarillo, que ya no esta.
+        gf = self.lbl_gen.font(); gf.setPixelSize(13); gf.setWeight(QtGui.QFont.Medium)
         self.lbl_gen.setFont(gf)
         gl.addWidget(self.lbl_gen)
-        self.keys_gen = _keys("Alt", "3", light=True)
+        self.keys_gen = _keys("Alt", "3")
         gl.addWidget(self.keys_gen)
         self.btn_gen.clicked.connect(self.generateClicked)
         lay.addWidget(self.btn_gen)
@@ -812,14 +829,18 @@ class TopBar(QtWidgets.QWidget, _Draggable):
         """Encendido = hay capturas listas. Se maneja por Alt+3; aqui solo se ve."""
         on = bool(on)
         if on:
+            # Encendido = el mismo tono que Screenshot o Answer now. Antes se
+            # ponia de un amarillo macizo que gritaba en una barra que es toda
+            # oscura: llamaba mas la atencion el boton que la propia respuesta.
+            # Que este disponible ya se ve en que el texto deja de estar apagado.
             self.btn_gen.setStyleSheet(f"""
-                QFrame {{ border: none; border-radius: {T.R_BTN}px;
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                stop:0 {T.GOLD_BTN_TOP}, stop:1 {T.GOLD_BTN_BOT}); }}
+                QFrame {{ border: 1px solid {T.BTN_BORDER}; border-radius: {T.R_BTN}px;
+                          background: {T.BTN_BG}; }}
+                QFrame:hover {{ background: {T.BTN_BG_HOVER}; }}
                 QLabel {{ border: none; background: transparent; }}
             """)
-            self.lbl_gen.setStyleSheet(f"color: {T.GOLD_BTN_INK}; background: transparent;")
-            self.ico_gen.setPixmap(icons.pixmap("sparkles", T.GOLD_BTN_INK, 16))
+            self.lbl_gen.setStyleSheet(f"color: {T.TEXT}; background: transparent;")
+            self.ico_gen.setPixmap(icons.pixmap("sparkles", T.TEXT, 16))
         else:
             self.btn_gen.setStyleSheet(f"""
                 QFrame {{ border: 1px solid {T.BTN_BORDER}; border-radius: {T.R_BTN}px;
@@ -942,7 +963,36 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
             g.move(self.card.width() - g.width() - 7,
                    self.card.height() - g.height() - 7)
             g.raise_()
+        if e.oldSize().width() != e.size().width():
+            self._congelar_ancho()
         super().resizeEvent(e)
+
+    # -- redimension fluida --------------------------------------------------
+    #
+    # Cambiar el ancho es lo caro: como el texto se ajusta al ancho, Qt tiene que
+    # recalcular de cero el alto de cada mensaje, y arrastrar la esquina genera
+    # decenas de anchos por segundo. Con la reunion avanzada eso pasaba de 80 ms
+    # por paso y el arrastre iba a tirones.
+    #
+    # Asi que durante el arrastre el hilo se queda con el ancho que ya tenia: se
+    # recorta o sobra un poco de fondo, y nadie recalcula nada. Al parar el raton
+    # 140 ms se suelta y se reajusta una sola vez, que es cuando de verdad se
+    # mira. El unico coste es ese margen breve, y a cambio arrastrar es fluido.
+    def _congelar_ancho(self):
+        cont = getattr(self, "_cont", None)
+        if cont is None:
+            return
+        if not self._descongelar.isActive():        # aun no estaba congelado
+            cont.setFixedWidth(cont.width())
+        self._descongelar.start(140)
+
+    def _descongelar_ancho(self):
+        cont = getattr(self, "_cont", None)
+        if cont is None:
+            return
+        cont.setMinimumWidth(0)
+        cont.setMaximumWidth(16777215)
+        cont.resize(self.scroll.viewport().width(), cont.height())
 
     def interactive_widgets(self):
         """Zonas que responden al mouse: cabecera (mover), scroll, agarre y copiar.
@@ -1026,8 +1076,15 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.scroll.setStyleSheet(_BARRA_QSS)
         self.scroll.viewport().setStyleSheet("background: transparent;")
+        # Mientras el hilo esta congelado (ver _congelar_ancho) sobra ancho: que
+        # se recorte en silencio en vez de asomar una barra horizontal.
+        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         cont = QtWidgets.QWidget()
         cont.setStyleSheet("background: transparent;")
+        self._cont = cont
+        self._descongelar = QtCore.QTimer(self)
+        self._descongelar.setSingleShot(True)
+        self._descongelar.timeout.connect(self._descongelar_ancho)
         self.feed = QtWidgets.QVBoxLayout(cont)
         # Margen abajo y a la derecha: si no, la ultima linea queda debajo del
         # agarre de redimension y la barra se le monta encima.
@@ -1075,7 +1132,22 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         if not estirar:
             fl.addStretch()
         self.feed.insertWidget(self.feed.count() - 1, fila)   # antes del hueco
+        self._podar()
         return fila
+
+    def _podar(self):
+        """Deja solo los ultimos mensajes vivos (ver MAX_FILAS_HILO)."""
+        while self.feed.count() - 1 > MAX_FILAS_HILO:
+            it = self.feed.takeAt(0)
+            w = it.widget()
+            if w is None:
+                continue
+            # Las burbujas que se van dejan de contar para los botones de copiar
+            for b in w.findChildren(Burbuja):
+                if b in self._burbujas:
+                    self._burbujas.remove(b)
+            w.hide()
+            w.deleteLater()
 
     def _nueva_burbuja(self, quien):
         b = Burbuja(quien, self._ancho_burbuja())
