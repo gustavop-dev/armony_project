@@ -58,6 +58,17 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Repro:** `preroll=0.05` (800 samples), 3 speech blocks of 1600 + 5 silent → 4000 speech samples kept (expected 4800). Not reachable with the engine's ~341-sample blocks and default `preroll=0.3`.
 - **Test:** `tests/test_audio.py`
 
+### [KNOWN-401] Digit held across an Alt+other-key combo stays in `_eaten`
+- **Where:** `hotkeys.py:322` with `:332` / `:344` (`AltInterceptor._handle`)
+- **Behavior:** in passthrough mode the handler returns before the `_eaten` key-up check, so the digit's key-up leaks to the focused app and the digit stays in `_eaten`; the next Alt+digit is swallowed without dispatching.
+- **Repro:** Alt↓, 1↓ (action), Tab↓ (passthrough), 1↑, Tab↑, Alt↑, Alt↓, 1↓ → action called once (expected twice).
+- **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
+
+### [KNOWN-402] Negative partial wheel deltas round away from zero
+- **Where:** `wheelscroll.py:144` (`delta // RUEDA_POR_MUESCA`)
+- **Behavior:** floor division: `+60 → 0` notches but `-60 → -1`; `+180 → 1` but `-180 → -2`. High-resolution wheels/touchpads scroll down on every small step and never scroll up on small steps.
+- **Test:** `tests/test_wheelscroll.py::test_wheel_partial_notch_down_mirrors_up`
+
 ## Suspected issues — from code review, not yet covered by tests
 
 ### [KNOWN-001] Unsynchronized iteration over session history
