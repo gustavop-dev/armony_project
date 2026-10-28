@@ -85,32 +85,49 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 ### [KNOWN-301] `preroll=0` keeps the whole silence history
 - **Where:** `audio.py:74` (`_Segmenter.process`, slice `[-self.preroll_samples:]`)
 - **Behavior:** with `preroll_samples == 0` the slice is `[-0:]`, which returns the full buffer; pre-roll grows during silence and is prepended to the utterance.
-- **Repro:** `_Segmenter(preroll=0.0)` fed 3 silent + 3 speech + 5 silent blocks of 1600 samples (test params) → first speech sample at index 4800 and utterance cut as `maxlen` (expected index 0). Not reachable with the default `preroll=0.3`.
-- **Test:** `tests/test_audio.py`
-
+- **Repro:** `_Segmenter(preroll=0.0)` fed 3 silent + 3 speech + 5 silent blocks of 1600 samples → first speech sample at index 4800 and utterance cut as `maxlen` (expected index 0).
+- **Reachability (2026-10-28):** not reachable. `preroll` is not a config key; `AudioEngine` constructs `_Segmenter` with the default `0.3` (`audio.py:150-155`). Offline mode only.
+- **Impact:** none in the current app; latent if `preroll` is ever exposed.
+- **Proposed fix:** `self._preroll = buf[-n:] if n else buf[:0]`. Drop if offline mode is removed (`refactor/28102026-remove-offline-whisper`).
+- **Test:** `tests/test_audio.py::test_segmenter_without_preroll_starts_at_speech_onset`
 ### [KNOWN-302] Speech-onset block longer than the pre-roll window loses its start
 - **Where:** `audio.py:74-77`
 - **Behavior:** the block that triggers speech enters the buffer only through the pre-roll slice; if it is longer than the window its beginning is dropped, while `_speech_samples` counts the full block.
-- **Repro:** `preroll=0.05` (800 samples), 3 speech blocks of 1600 + 5 silent → 4000 speech samples kept (expected 4800). Not reachable with the engine's ~341-sample blocks and default `preroll=0.3`.
-- **Test:** `tests/test_audio.py`
-
+- **Repro:** `preroll=0.05` (800 samples), 3 speech blocks of 1600 + 5 silent → 4000 speech samples kept (expected 4800).
+- **Reachability (2026-10-28):** not reachable. Blocks reaching the segmenter are `CHUNK=1024` device frames resampled to 16 kHz: 341 samples at 48 kHz, 372 at 44.1 kHz, 1024 at 16 kHz — always below the 4800-sample window of the fixed `preroll=0.3`.
+- **Impact:** none in the current app.
+- **Proposed fix:** append the trigger block to `_buf` separately from the pre-roll (`self._buf = [preroll_before_block, block]`). Drop if offline mode is removed.
+- **Test:** `tests/test_audio.py::test_segmenter_keeps_whole_trigger_block_longer_than_preroll`
 ### [KNOWN-401] Digit held across an Alt+other-key combo stays in `_eaten`
-- **Where:** `hotkeys.py:322` with `:332` / `:344` (`AltInterceptor._handle`)
-- **Behavior:** in passthrough mode the handler returns before the `_eaten` key-up check, so the digit's key-up leaks to the focused app and the digit stays in `_eaten`; the next Alt+digit is swallowed without dispatching.
-- **Repro:** Alt↓, 1↓ (action), Tab↓ (passthrough), 1↑, Tab↑, Alt↑, Alt↓, 1↓ → action called once (expected twice).
+- **Where:** `hotkeys.py:322` with `:332` / `:344` (`AltInterceptor._handle`): in passthrough mode (`self._passthrough`) the handler returns before the `_eaten` key-up check.
+- **Trigger:** Alt held, a bound digit pressed (action fires), another key pressed while the digit is still down (e.g. Tab), then the digit released.
+- **Reproduced (2026-10-28)** (`user32` faked): hook results for `Alt↓ 1↓ Tab↓ 1↑ Tab↑ Alt↑` = swallowed, swallowed, swallowed, passed, passed, passed; `_eaten = {VK_1}` afterwards. Next Alt+1: no action, `_eaten` cleared; following Alt+1 presses work.
+- **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
+- **Proposed fix:** run the `_eaten` key-up check before the `if self._passthrough: return False` branch.
 - **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
-
 ### [KNOWN-402] Negative partial wheel deltas round away from zero
-- **Where:** `wheelscroll.py:144` (`delta // RUEDA_POR_MUESCA`)
-- **Behavior:** floor division: `+60 → 0` notches but `-60 → -1`; `+180 → 1` but `-180 → -2`. High-resolution wheels/touchpads scroll down on every small step and never scroll up on small steps.
+- **Where:** `wheelscroll.py:144` (`muescas = delta // RUEDA_POR_MUESCA`, `RUEDA_POR_MUESCA = 120`)
+- **Trigger:** wheel events with `|delta| < 120` or not a multiple of 120 — high-resolution wheels and precision touchpads. Standard notched wheels (±120) are unaffected.
+- **Reproduced (2026-10-28):** 8 events of `|delta|` 30 or 60 → scrolling down = 8 notches, scrolling up = 0 notches; with `|delta| = 120` both directions = 8 notches.
+- **Root cause:** Python floor division (`-60 // 120 == -1`, `60 // 120 == 0`).
+- **Impact:** over the overlay answer, touchpad scrolling down jumps one notch per event (too fast) and scrolling up does nothing.
+- **Proposed fix:** accumulate the remainder per direction (`self._acum += delta; n = int(self._acum / 120); self._acum -= n * 120`), which also fixes the "sub-notch movement is swallowed" behavior.
 - **Test:** `tests/test_wheelscroll.py::test_wheel_partial_notch_down_mirrors_up`
-
 ### [KNOWN-601] `speech_threshold` slider cannot represent its default value
-- **Where:** `settings_window.py:630-633` (`_number_control`), field schema at `settings_window.py:272` (min 0.001, step 0.002, max 0.1)
-- **Behavior:** slider positions are `0.001 + k*0.002`; `0.012` maps to `round(5.5) = 6` → displays and, after any slider move, saves `0.013`. The top position yields `0.101` (`round(49.5) = 50`), above the declared max.
-- **Repro:** config `speech_threshold=0.012` (default) → label `0.013` (expected `0.012`).
-- **Test:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`
+- **Where:** `settings_window.py:630-633` (`_number_control`: `steps = round((max-min)/step)`, `value = round((val-min)/step)`), field schema at `settings_window.py:272` (min 0.001, step 0.002, max 0.1).
+- **Reproduced (2026-10-28) in `SettingsWindow`**, config `speech_threshold=0.012` (default):
 
+  | Action | Label | Saved to `config.json` |
+  |---|---|---|
+  | open | `0.013` (slider 6/50) | — |
+  | Save without touching | `0.013` | `0.012` |
+  | slider +1 then -1, Save | `0.013` | `0.013` |
+  | slider at max, Save | — | `0.101` (above declared max 0.1) |
+- **Scope:** checked all 11 numeric fields in `_schema()`: only `speech_threshold` has an off-grid default or an off-grid max.
+- **Root cause:** `(0.012 - 0.001) / 0.002 = 5.5` is not an integer; `(0.1 - 0.001) / 0.002 = 49.5` rounds up to 50.
+- **Impact:** low. The displayed value differs from the stored one until the slider is touched; then the threshold becomes 0.013 (≈8% less sensitive voice detection / echo gate, `audio.py:271`).
+- **Proposed fix:** `min=0.002` (grid 0.002…0.100 contains 0.012 and 0.1) or `step=0.001`.
+- **Test:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`
 ### [KNOWN-501] Final answer is painted twice after `cerrar_respuesta`
 - **Where:** `overlay_ui.py:1357-1382` (`append_answer` arms a 90 ms `QTimer.singleShot(_repintar)`; `cerrar_respuesta` repaints when `_repintado_pendiente` and sets `_burbuja_resp = None`, but cannot cancel the pending single-shot).
 - **Trigger:** `respDone` delivered less than `INTERVALO_REPINTADO` (90 ms) after the last `respDelta`. The engine emits `respDone` from `on_done` immediately after the stream ends (`engine.py:590-609`), so this is the normal path; short answers (`< len(SENTINEL)`) emit `respStart`, one `respDelta` and `respDone` back to back (`engine.py:595-598`).
