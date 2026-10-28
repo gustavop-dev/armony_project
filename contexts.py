@@ -88,13 +88,15 @@ def write_all(contexts):
     vivos = set()
     for c in contexts:
         cid = c["id"]
-        vivos.add(cid + ".md")
+        # normcase: on Windows "ctx-1.md" and an existing "ctx-1.MD" are the same
+        # file, and the directory keeps the original spelling.
+        vivos.add(os.path.normcase(cid + ".md"))
         with open(os.path.join(CONTEXTS_DIR, cid + ".md"), "w", encoding="utf-8") as f:
             f.write(_serialize(c.get("name", cid), c.get("active", False),
                                c.get("lang", "both"), c.get("body", "")))
     # borrar los que se eliminaron
     for fn in os.listdir(CONTEXTS_DIR):
-        if fn.lower().endswith(".md") and fn not in vivos:
+        if fn.lower().endswith(".md") and os.path.normcase(fn) not in vivos:
             try:
                 os.remove(os.path.join(CONTEXTS_DIR, fn))
             except OSError:

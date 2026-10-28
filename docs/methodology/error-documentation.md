@@ -9,7 +9,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 
 | Priority | IDs | Summary | Suggested fix branch |
 |---|---|---|---|
-| P1 | KNOWN-204 | Settings → Save deletes contexts with an upper-case `.MD` extension | `fix/…-contexts-case-insensitive` |
+| P1 | ~~KNOWN-204~~ ERR-204 | Settings → Save deletes contexts with an upper-case `.MD` extension | `fix/…-contexts-case-insensitive` |
 | P1 | KNOWN-205, KNOWN-206 | Unreadable/BOM `config.json` → keys blanked and persisted; non-atomic save truncates the file | `fix/…-safe-config-io` |
 | P1 | KNOWN-201, KNOWN-202 | Corrupt `config.json` aborts startup (`--noconsole`: no message) | `fix/…-safe-config-io` |
 | P2 | KNOWN-501 | Every streamed suggestion is painted twice | `fix/…-answer-repaint-timer` |
@@ -85,21 +85,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
   - In the engine thread, `active_text` (`engine.py:220`) raises inside the `try` and is reported as "No se pudo iniciar Claude".
 - **Proposed fix:** catch `(OSError, UnicodeDecodeError)` per file and skip it (or read with `errors="replace"`); surface skipped files in the settings UI.
 - **Test:** `tests/test_contexts.py` (KNOWN-203 xfail)
-### [KNOWN-204] `write_all` deletes a context whose extension is upper-case (data loss)
-- **Where:** `contexts.py:60` (listing filter uses `fn.lower().endswith(".md")`) vs `contexts.py:87-97` (writes `<id>.md`, deletes every `.md` whose exact name is not in `vivos`).
-- **Trigger:** a context file with a non-lower-case extension (`.MD`, `.Md`) placed in `contexts/` outside the app; the app itself always writes `.md`.
-- **Reproduced (2026-10-28), user path:** open Settings, press Save without editing (`settings_window.py:941-947`):
-
-  | Files before | Files after | UI status |
-  |---|---|---|
-  | `ctx-1.md` | `ctx-1.md` | "Todo guardado" |
-  | `ctx-1.MD` | *(none)* | "Todo guardado" |
-  | `ctx-1.Md`, `ctx-2.md` | `ctx-2.md` | "Todo guardado" |
-  | `Notas.MD` | *(none)* | "Todo guardado" |
-- **Root cause:** NTFS is case-insensitive: writing `ctx-1.md` overwrites `ctx-1.MD` in place and the directory entry keeps the original spelling `ctx-1.MD`; the delete pass compares names case-sensitively, so the just-written file is not in `vivos` and is removed.
-- **Impact:** silent, permanent loss of the context content; no error is shown. On a case-sensitive file system the effect is a rename instead (no loss).
-- **Proposed fix:** build `vivos` and compare with `os.path.normcase` (or `.lower()`), or remember each context's original filename and write back to it.
-- **Test:** `tests/test_contexts.py` (KNOWN-204 xfail)
 ### [KNOWN-205] UTF-8 BOM `config.json` is discarded and keys are lost on next save
 - **Where:** `config.py:167` (`encoding="utf-8"` does not strip a BOM → `JSONDecodeError` → silently returns defaults)
 - **Trigger:** `config.json` saved by an editor that writes a UTF-8 BOM.
@@ -257,4 +242,19 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Conclusion:** `list(deque)` copies in C without releasing the GIL, so the code as written cannot raise. It would become a real race on a free-threaded (no-GIL) build or if the copy were rewritten as a Python loop. Keep `list(...)` (or add a lock) if this code changes.
 
 ## Resolved issues
-None yet.
+
+### [ERR-204] `write_all` deletes a context whose extension is upper-case (data loss)
+- **Where:** `contexts.py:60` (listing filter uses `fn.lower().endswith(".md")`) vs `contexts.py:87-97` (writes `<id>.md`, deletes every `.md` whose exact name is not in `vivos`).
+- **Trigger:** a context file with a non-lower-case extension (`.MD`, `.Md`) placed in `contexts/` outside the app; the app itself always writes `.md`.
+- **Reproduced (2026-10-28), user path:** open Settings, press Save without editing (`settings_window.py:941-947`):
+
+  | Files before | Files after | UI status |
+  |---|---|---|
+  | `ctx-1.md` | `ctx-1.md` | "Todo guardado" |
+  | `ctx-1.MD` | *(none)* | "Todo guardado" |
+  | `ctx-1.Md`, `ctx-2.md` | `ctx-2.md` | "Todo guardado" |
+  | `Notas.MD` | *(none)* | "Todo guardado" |
+- **Root cause:** NTFS is case-insensitive: writing `ctx-1.md` overwrites `ctx-1.MD` in place and the directory entry keeps the original spelling `ctx-1.MD`; the delete pass compares names case-sensitively, so the just-written file is not in `vivos` and is removed.
+- **Impact:** silent, permanent loss of the context content; no error is shown. On a case-sensitive file system the effect is a rename instead (no loss).
+- **Resolution (2026-10-28):** `write_all` compares file names with `os.path.normcase` (`contexts.py:91-99`); a context listed from `ctx-1.MD` is rewritten in place and kept. Verified end-to-end through Settings → Save for `ctx-1.MD`, `ctx-1.Md`+`ctx-2.md`, `Notas.MD`.
+- **Regression tests:** `tests/test_contexts.py::test_write_all_preserves_listed_uppercase_extension_context`, `::test_write_all_keeps_content_of_mixed_case_extension`, `::test_write_all_still_deletes_removed_mixed_case_context`

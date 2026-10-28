@@ -275,10 +275,6 @@ def test_write_all_ignores_entry_that_cannot_be_deleted(ctx_dir):
     assert sorted(os.listdir(ctx_dir)) == ["ctx-1.md", "ctx-9.md"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="[KNOWN-204] write_all deletes a context "
-                   "stored with an uppercase .MD extension that list_contexts "
-                   "itself returned")
 def test_write_all_preserves_listed_uppercase_extension_context(ctx_dir):
     _write(ctx_dir, "ctx-1.MD", "upper")
     listed = contexts.list_contexts()
@@ -347,3 +343,21 @@ def test_estimate_tokens(text, expected):
     result = contexts.estimate_tokens(text)
 
     assert result == expected
+
+
+@pytest.mark.parametrize("filename", ["ctx-1.MD", "ctx-1.Md", "Notas.MD"])
+def test_write_all_keeps_content_of_mixed_case_extension(ctx_dir, filename):
+    _write(ctx_dir, filename, "keep me")
+
+    contexts.write_all(contexts.list_contexts())
+
+    assert [c["body"] for c in contexts.list_contexts()] == ["keep me"]
+
+
+def test_write_all_still_deletes_removed_mixed_case_context(ctx_dir):
+    _write(ctx_dir, "ctx-1.MD", "drop me")
+    _write(ctx_dir, "ctx-2.md", "keep me")
+
+    contexts.write_all([c for c in contexts.list_contexts() if c["id"] == "ctx-2"])
+
+    assert os.listdir(ctx_dir) == ["ctx-2.md"]
