@@ -189,16 +189,27 @@ def test_list_contexts_skips_unreadable_entry(ctx_dir):
     assert _ids(result) == ["ctx-2"]
 
 
-@pytest.mark.xfail(strict=True, raises=UnicodeDecodeError,
-                   reason="[KNOWN-203] one non-UTF-8 .md file makes list_contexts "
-                   "raise instead of skipping it like other unreadable files")
-def test_list_contexts_skips_non_utf8_file(ctx_dir):
+def test_list_contexts_reads_cp1252_file(ctx_dir):
     (ctx_dir / "ctx-1.md").write_bytes(b"espa\xf1ol")
     _write(ctx_dir, "ctx-2.md", "readable")
 
     result = contexts.list_contexts()
 
-    assert _ids(result) == ["ctx-2"]
+    assert [c["body"] for c in result] == ["español", "readable"]
+
+
+def test_write_all_rewrites_cp1252_context_as_utf8(ctx_dir):
+    (ctx_dir / "ctx-1.md").write_bytes(b"---\nname: Dise\xf1o\n---\nespa\xf1ol")
+
+    contexts.write_all(contexts.list_contexts())
+
+    assert "name: Diseño" in (ctx_dir / "ctx-1.md").read_text(encoding="utf-8")
+
+
+def test_list_contexts_reads_utf8_bom_file(ctx_dir):
+    (ctx_dir / "ctx-1.md").write_bytes(b"\xef\xbb\xbf---\nname: A\nactive: true\n---\nbody")
+
+    assert contexts.list_contexts()[0]["name"] == "A"
 
 
 # --- next_id -----------------------------------------------------------------------

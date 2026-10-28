@@ -10,6 +10,7 @@ config.json esta en .gitignore: las claves nunca salen del equipo.
 import json
 import os
 import sys
+import time
 
 import secretstore
 
@@ -159,14 +160,43 @@ DEFAULTS = {
 }
 
 
+def read_user_text(path):
+    """Read a file the user may have edited by hand.
+
+    Tries UTF-8 (with or without BOM), then cp1252 (Windows "ANSI"), then
+    latin-1, which decodes any byte sequence. Raises OSError if unreadable.
+    """
+    with open(path, "rb") as f:
+        raw = f.read()
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+    return raw.decode("latin-1")
+
+
+def _quarantine(path):
+    """Rename an unparseable file so the next save cannot overwrite it."""
+    try:
+        os.replace(path, f"{path}.bad-{time.strftime('%Y%m%d-%H%M%S')}")
+    except OSError:
+        pass
+
+
 def load_config():
     cfg = dict(DEFAULTS)
     if os.path.exists(CONFIG_PATH):
         try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg.update(json.load(f))
-        except (json.JSONDecodeError, OSError):
-            pass
+            data = json.loads(read_user_text(CONFIG_PATH))
+        except OSError:
+            data = {}          # unreadable now (e.g. locked): keep the file as is
+        except ValueError:
+            data = None        # not JSON
+        if isinstance(data, dict):
+            cfg.update(data)
+        else:
+            _quarantine(CONFIG_PATH)
     # Las claves se guardan cifradas; el resto de la app las usa en claro.
     for k in CLAVES_SECRETAS:
         if cfg.get(k):
@@ -197,9 +227,22 @@ def save_config(cfg):
         if a_disco.get(k):
             a_disco[k] = secretstore.proteger(a_disco[k])
     try:
+        texto = json.dumps(a_disco, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        return False
+    # Write to a temp file and swap it in: config.json is never left truncated.
+    tmp = CONFIG_PATH + ".tmp"
+    try:
         os.makedirs(os.path.dirname(CONFIG_PATH) or ".", exist_ok=True)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(a_disco, f, ensure_ascii=False, indent=2)
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(texto)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CONFIG_PATH)
         return True
     except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
         return False

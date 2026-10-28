@@ -10,10 +10,10 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | Priority | IDs | Summary | Suggested fix branch |
 |---|---|---|---|
 | P1 | ~~KNOWN-204~~ ERR-204 | Settings → Save deletes contexts with an upper-case `.MD` extension | `fix/…-contexts-case-insensitive` |
-| P1 | KNOWN-205, KNOWN-206 | Unreadable/BOM `config.json` → keys blanked and persisted; non-atomic save truncates the file | `fix/…-safe-config-io` |
-| P1 | KNOWN-201, KNOWN-202 | Corrupt `config.json` aborts startup (`--noconsole`: no message) | `fix/…-safe-config-io` |
+| P1 | ~~KNOWN-205~~ ERR-205, ~~KNOWN-206~~ ERR-206 | Unreadable/BOM `config.json` → keys blanked and persisted; non-atomic save truncates the file | `fix/…-safe-config-io` |
+| P1 | ~~KNOWN-201~~ ERR-201, ~~KNOWN-202~~ ERR-202 | Corrupt `config.json` aborts startup (`--noconsole`: no message) | `fix/…-safe-config-io` |
 | P2 | KNOWN-501 | Every streamed suggestion is painted twice | `fix/…-answer-repaint-timer` |
-| P2 | KNOWN-203 | One non-UTF-8 context blocks Settings and leaves the meeting UI running without engine | `fix/…-safe-config-io` |
+| P2 | ~~KNOWN-203~~ ERR-203 | One non-UTF-8 context blocks Settings and leaves the meeting UI running without engine | `fix/…-safe-config-io` |
 | P2 | KNOWN-003 | Engine init failure leaves the UI in running state | `fix/…-start-failure-state` |
 | P2 | KNOWN-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
 | P2 | KNOWN-005 | No logging; background-thread failures discarded | `feat/…-file-logging` |
@@ -58,50 +58,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** code identifiers in suggestions are displayed incorrectly (dunder methods, `**kwargs`, `*args`, arithmetic) — the case the vision model is prompted to produce.
 - **Proposed fix:** tokenize code spans first (replace with placeholders), apply emphasis to the remaining text, then restore escaped code spans.
 - **Test:** `tests/test_richtext.py` (KNOWN-103 xfail)
-### [KNOWN-201] Non-UTF-8 `config.json` raises in `load_config`
-- **Where:** `config.py:167-169` (`open(..., encoding="utf-8")` + `except (json.JSONDecodeError, OSError)`)
-- **Trigger:** `config.json` saved in a legacy code page (e.g. edited and saved as "ANSI"/cp1252) containing any non-ASCII character (`é`, `ñ` in prompts).
-- **Reproduced (2026-10-28):** cp1252 file with `"Sé breve y en español"` → `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9`.
-- **Root cause:** `UnicodeDecodeError` is a `ValueError`, not a `JSONDecodeError`/`OSError`, so it escapes the handler.
-- **Impact:** `load_config` runs in `OverlayApp.__init__` (`app.py:28`) before any window exists; the exception aborts `main()`. Built with `--noconsole`, the exe exits with no visible error. Also raised from `start_meeting` (`app.py:169`), `open_settings` (`app.py:306`) and `_on_settings_saved` (`app.py:329`).
-- **Proposed fix:** catch `(ValueError, OSError)` (covers `JSONDecodeError` and `UnicodeDecodeError`); combine with KNOWN-205/206 handling of unreadable files (keep a backup instead of overwriting).
-- **Test:** `tests/test_config.py::test_load_config_with_non_utf8_file_falls_back_to_defaults`
-### [KNOWN-202] Non-object JSON in `config.json` raises in `load_config`
-- **Where:** `config.py:168` (`cfg.update(json.load(f))`)
-- **Trigger:** syntactically valid JSON whose top level is not an object (`null`, a number, a string, a list).
-- **Reproduced (2026-10-28):** `null` → `TypeError: 'NoneType' object is not iterable`; `[1, 2]` → `TypeError: cannot convert dictionary update sequence element #0`.
-- **Root cause:** the result of `json.load` is passed to `dict.update` without a type check; the `TypeError`/`ValueError` is outside the caught set.
-- **Impact:** same crash path as KNOWN-201 (startup abort). Lower likelihood: requires an external edit or tool writing the file.
-- **Proposed fix:** `data = json.load(f)`; ignore (and back up) when `not isinstance(data, dict)`.
-- **Test:** `tests/test_config.py::test_load_config_with_non_object_json_falls_back_to_defaults`
-### [KNOWN-203] One non-UTF-8 context file breaks `list_contexts`
-- **Where:** `contexts.py:64-67` (`open(..., encoding="utf-8")` + `except OSError`)
-- **Trigger:** any `contexts/*.md` written outside the app in a legacy code page with non-ASCII text.
-- **Reproduced (2026-10-28):** cp1252 `ctx-2.md` next to a valid `ctx-1.md` → `UnicodeDecodeError` from `list_contexts`, `active_count`, `active_text` and `SettingsWindow(...)` construction (`settings_window.py:354`).
-- **Root cause:** `UnicodeDecodeError` is not an `OSError`; one bad file aborts the whole listing instead of being skipped.
-- **Impact:**
-  - Settings window cannot open (exception in the `settingsClicked` slot).
-  - `start_meeting` sets `_running = True`, starts the top bar and timer (`app.py:185-190`) and then raises at `active_count` (`app.py:197`) before `engine.start` (`app.py:203`): the UI shows a running meeting with no engine (same end state as KNOWN-003).
-  - In the engine thread, `active_text` (`engine.py:220`) raises inside the `try` and is reported as "No se pudo iniciar Claude".
-- **Proposed fix:** catch `(OSError, UnicodeDecodeError)` per file and skip it (or read with `errors="replace"`); surface skipped files in the settings UI.
-- **Test:** `tests/test_contexts.py` (KNOWN-203 xfail)
-### [KNOWN-205] UTF-8 BOM `config.json` is discarded and keys are lost on next save
-- **Where:** `config.py:167` (`encoding="utf-8"` does not strip a BOM → `JSONDecodeError` → silently returns defaults)
-- **Trigger:** `config.json` saved by an editor that writes a UTF-8 BOM.
-- **Reproduced (2026-10-28):** BOM file with an encrypted `anthropic_api_key` and `language: en` → `load_config` returns `language: es` and an empty key; Settings → Save writes the empty key to disk.
-- **Root cause:** decode/parse failures are swallowed and replaced by defaults with no backup and no user-visible warning; the next `save_config` overwrites the original file with those defaults.
-- **Impact:** permanent loss of all stored API keys and settings. The same overwrite path applies to any unreadable file (empty file left by KNOWN-206, KNOWN-201/202 once they stop crashing).
-- **Proposed fix:** read with `encoding="utf-8-sig"`; when a file exists but cannot be parsed, rename it to `config.json.bad-<timestamp>` before continuing with defaults and report it in the UI.
-- **Test:** `tests/test_config.py::test_load_config_reads_utf8_file_with_bom`
-
-### [KNOWN-206] `save_config` is not atomic
-- **Where:** `config.py:199-203` (`open(CONFIG_PATH, "w")` truncates, then `json.dump` streams into it; only `OSError` is caught)
-- **Trigger:** any exception during serialisation (non-JSON value) or process termination/power loss during the write.
-- **Reproduced (2026-10-28):** existing `{"language": "en"}`; `save_config({"bad": object()})` → `TypeError` propagates and `config.json` is left truncated.
-- **Impact:** an empty/partial `config.json`; on the next start KNOWN-205's path blanks every key. `SettingsWindow._save` catches the exception and shows "Error al guardar", but the file is already damaged.
-- **Proposed fix:** serialise to a string first, write to `config.json.tmp`, `flush` + `os.fsync`, then `os.replace` onto `config.json`.
-- **Test:** `tests/test_config.py::test_failed_save_keeps_previous_config_file`
-
 ### [KNOWN-301] `preroll=0` keeps the whole silence history
 - **Where:** `audio.py:74` (`_Segmenter.process`, slice `[-self.preroll_samples:]`)
 - **Behavior:** with `preroll_samples == 0` the slice is `[-0:]`, which returns the full buffer; pre-roll grows during silence and is prepended to the utterance.
@@ -258,3 +214,50 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** silent, permanent loss of the context content; no error is shown. On a case-sensitive file system the effect is a rename instead (no loss).
 - **Resolution (2026-10-28):** `write_all` compares file names with `os.path.normcase` (`contexts.py:91-99`); a context listed from `ctx-1.MD` is rewritten in place and kept. Verified end-to-end through Settings → Save for `ctx-1.MD`, `ctx-1.Md`+`ctx-2.md`, `Notas.MD`.
 - **Regression tests:** `tests/test_contexts.py::test_write_all_preserves_listed_uppercase_extension_context`, `::test_write_all_keeps_content_of_mixed_case_extension`, `::test_write_all_still_deletes_removed_mixed_case_context`
+
+### [ERR-201] Non-UTF-8 `config.json` raises in `load_config`
+- **Where:** `config.py:167-169` (`open(..., encoding="utf-8")` + `except (json.JSONDecodeError, OSError)`)
+- **Trigger:** `config.json` saved in a legacy code page (e.g. edited and saved as "ANSI"/cp1252) containing any non-ASCII character (`é`, `ñ` in prompts).
+- **Reproduced (2026-10-28):** cp1252 file with `"Sé breve y en español"` → `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9`.
+- **Root cause:** `UnicodeDecodeError` is a `ValueError`, not a `JSONDecodeError`/`OSError`, so it escapes the handler.
+- **Impact:** `load_config` runs in `OverlayApp.__init__` (`app.py:28`) before any window exists; the exception aborts `main()`. Built with `--noconsole`, the exe exits with no visible error. Also raised from `start_meeting` (`app.py:169`), `open_settings` (`app.py:306`) and `_on_settings_saved` (`app.py:329`).
+- **Resolution (2026-10-28):** `config.read_user_text` decodes UTF-8 (BOM allowed), then cp1252, then latin-1, so legacy-encoded files load with their content; `load_config` catches `ValueError`/`OSError`. Verified: cp1252 config keeps the API key and `language`.
+- **Regression tests:** `tests/test_config.py::test_load_config_reads_cp1252_file`, `::test_read_user_text_decoding_fallbacks`
+
+### [ERR-202] Non-object JSON in `config.json` raises in `load_config`
+- **Where:** `config.py:168` (`cfg.update(json.load(f))`)
+- **Trigger:** syntactically valid JSON whose top level is not an object (`null`, a number, a string, a list).
+- **Reproduced (2026-10-28):** `null` → `TypeError: 'NoneType' object is not iterable`; `[1, 2]` → `TypeError: cannot convert dictionary update sequence element #0`.
+- **Root cause:** the result of `json.load` is passed to `dict.update` without a type check; the `TypeError`/`ValueError` is outside the caught set.
+- **Impact:** same crash path as KNOWN-201 (startup abort). Lower likelihood: requires an external edit or tool writing the file.
+- **Resolution (2026-10-28):** `load_config` applies the file only if the parsed value is a `dict`; otherwise the file is quarantined (see ERR-205) and defaults are used.
+- **Regression tests:** `tests/test_config.py::test_load_config_with_non_object_json_falls_back_to_defaults`, `::test_unparseable_config_is_quarantined`
+
+### [ERR-203] One non-UTF-8 context file breaks `list_contexts`
+- **Where:** `contexts.py:64-67` (`open(..., encoding="utf-8")` + `except OSError`)
+- **Trigger:** any `contexts/*.md` written outside the app in a legacy code page with non-ASCII text.
+- **Reproduced (2026-10-28):** cp1252 `ctx-2.md` next to a valid `ctx-1.md` → `UnicodeDecodeError` from `list_contexts`, `active_count`, `active_text` and `SettingsWindow(...)` construction (`settings_window.py:354`).
+- **Root cause:** `UnicodeDecodeError` is not an `OSError`; one bad file aborts the whole listing instead of being skipped.
+- **Impact:**
+  - Settings window cannot open (exception in the `settingsClicked` slot).
+  - `start_meeting` sets `_running = True`, starts the top bar and timer (`app.py:185-190`) and then raises at `active_count` (`app.py:197`) before `engine.start` (`app.py:203`): the UI shows a running meeting with no engine (same end state as KNOWN-003).
+  - In the engine thread, `active_text` (`engine.py:220`) raises inside the `try` and is reported as "No se pudo iniciar Claude".
+- **Resolution (2026-10-28):** `list_contexts` reads through `config.read_user_text` (never raises on decoding), so legacy-encoded contexts are listed with their content and rewritten as UTF-8 on the next save. Skipping was rejected: a skipped file would be deleted by `write_all`. Verified: Settings opens, `active_count` = 2, both contexts survive Save.
+- **Regression tests:** `tests/test_contexts.py::test_list_contexts_reads_cp1252_file`, `::test_write_all_rewrites_cp1252_context_as_utf8`, `::test_list_contexts_reads_utf8_bom_file`
+
+### [ERR-205] UTF-8 BOM `config.json` is discarded and keys are lost on next save
+- **Where:** `config.py:167` (`encoding="utf-8"` does not strip a BOM → `JSONDecodeError` → silently returns defaults)
+- **Trigger:** `config.json` saved by an editor that writes a UTF-8 BOM.
+- **Reproduced (2026-10-28):** BOM file with an encrypted `anthropic_api_key` and `language: en` → `load_config` returns `language: es` and an empty key; Settings → Save writes the empty key to disk.
+- **Root cause:** decode/parse failures are swallowed and replaced by defaults with no backup and no user-visible warning; the next `save_config` overwrites the original file with those defaults.
+- **Impact:** permanent loss of all stored API keys and settings. The same overwrite path applies to any unreadable file (empty file left by KNOWN-206, KNOWN-201/202 once they stop crashing).
+- **Resolution (2026-10-28):** BOM is accepted (`utf-8-sig`). A file that still cannot be parsed is renamed to `config.json.bad-<YYYYmmdd-HHMMSS>` before defaults are used, so the next save cannot overwrite it. Follow-up (not done): the UI does not yet tell the user that a file was quarantined.
+- **Regression tests:** `tests/test_config.py::test_load_config_reads_utf8_file_with_bom`, `::test_quarantined_config_keeps_original_bytes`, `::test_save_after_quarantine_does_not_touch_backup`, `::test_valid_config_is_not_quarantined`
+
+### [ERR-206] `save_config` is not atomic
+- **Where:** `config.py:199-203` (`open(CONFIG_PATH, "w")` truncates, then `json.dump` streams into it; only `OSError` is caught)
+- **Trigger:** any exception during serialisation (non-JSON value) or process termination/power loss during the write.
+- **Reproduced (2026-10-28):** existing `{"language": "en"}`; `save_config({"bad": object()})` → `TypeError` propagates and `config.json` is left truncated.
+- **Impact:** an empty/partial `config.json`; on the next start KNOWN-205's path blanks every key. `SettingsWindow._save` catches the exception and shows "Error al guardar", but the file is already damaged.
+- **Resolution (2026-10-28):** `save_config` serialises to a string first (returns `False` on `TypeError`/`ValueError`), writes `config.json.tmp`, `flush` + `os.fsync`, then `os.replace`; the temp file is removed on failure.
+- **Regression tests:** `tests/test_config.py::test_failed_save_keeps_previous_config_file`, `::test_failed_save_returns_false`, `::test_save_leaves_no_temp_file`

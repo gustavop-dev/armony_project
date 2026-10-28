@@ -87,21 +87,14 @@ def test_load_config_with_corrupted_json_falls_back_to_defaults(content):
     assert cfg["language"] == "es"
 
 
-@pytest.mark.xfail(strict=True, raises=UnicodeDecodeError,
-                   reason="[KNOWN-201] non-UTF-8 config.json raises "
-                   "UnicodeDecodeError instead of falling back to defaults")
-def test_load_config_with_non_utf8_file_falls_back_to_defaults():
+def test_load_config_reads_cp1252_file():
     Path(config.CONFIG_PATH).write_bytes(b'{"language": "espa\xf1ol"}')
 
     cfg = config.load_config()
 
-    assert cfg["language"] == "es"
+    assert cfg["language"] == "español"
 
 
-@pytest.mark.xfail(strict=True, raises=(TypeError, ValueError),
-                   reason="[KNOWN-202] config.json holding valid JSON "
-                   "that is not an object crashes load_config instead of "
-                   "falling back to defaults")
 @pytest.mark.parametrize("content", ["null", "42", '"text"', "[1, 2]"])
 def test_load_config_with_non_object_json_falls_back_to_defaults(content):
     Path(config.CONFIG_PATH).write_text(content, encoding="utf-8")
@@ -357,9 +350,6 @@ def test_data_dir_frozen_without_appdata_uses_program_folder(monkeypatch, tmp_pa
 
 # --- data-loss paths found during bug analysis ------------------------------------
 
-@pytest.mark.xfail(strict=True,
-                   reason="[KNOWN-205] UTF-8 BOM config.json is discarded: keys are "
-                          "blanked and the next save persists the blank values")
 def test_load_config_reads_utf8_file_with_bom():
     payload = json.dumps({"language": "en",
                           "anthropic_api_key": secretstore.proteger("sk-ant-test")})
@@ -370,9 +360,6 @@ def test_load_config_reads_utf8_file_with_bom():
     assert (cfg["language"], cfg["anthropic_api_key"]) == ("en", "sk-ant-test")
 
 
-@pytest.mark.xfail(strict=True, raises=TypeError,
-                   reason="[KNOWN-206] save_config truncates config.json before "
-                          "serialising; a failed dump leaves an empty file")
 def test_failed_save_keeps_previous_config_file():
     _write_config({"language": "en"})
     before = _read_raw_config()
@@ -380,3 +367,61 @@ def test_failed_save_keeps_previous_config_file():
     config.save_config({"language": "es", "bad": object()})
 
     assert _read_raw_config() == before
+
+
+def test_failed_save_returns_false():
+    assert config.save_config({"bad": object()}) is False
+
+
+def test_save_leaves_no_temp_file(isolated_data_dir):
+    config.save_config({"language": "en"})
+
+    assert sorted(p.name for p in isolated_data_dir.iterdir()) == ["config.json"]
+
+
+@pytest.mark.parametrize("content", ["not json at all", "", "null", "[1, 2]"])
+def test_unparseable_config_is_quarantined(isolated_data_dir, content):
+    Path(config.CONFIG_PATH).write_text(content, encoding="utf-8")
+
+    config.load_config()
+
+    assert [p.name.startswith("config.json.bad-") for p in isolated_data_dir.iterdir()] == [True]
+
+
+def test_quarantined_config_keeps_original_bytes(isolated_data_dir):
+    Path(config.CONFIG_PATH).write_bytes(b'{"anthropic_api_key": "dpapi:AAA", ')
+
+    config.load_config()
+
+    backup = next(isolated_data_dir.glob("config.json.bad-*"))
+    assert backup.read_bytes() == b'{"anthropic_api_key": "dpapi:AAA", '
+
+
+def test_save_after_quarantine_does_not_touch_backup(isolated_data_dir):
+    Path(config.CONFIG_PATH).write_text("broken", encoding="utf-8")
+    cfg = config.load_config()
+
+    config.save_config(cfg)
+
+    backup = next(isolated_data_dir.glob("config.json.bad-*"))
+    assert backup.read_text(encoding="utf-8") == "broken"
+
+
+def test_valid_config_is_not_quarantined(isolated_data_dir):
+    _write_config({"language": "en"})
+
+    config.load_config()
+
+    assert sorted(p.name for p in isolated_data_dir.iterdir()) == ["config.json"]
+
+
+@pytest.mark.parametrize("raw, expected", [
+    (b"\xef\xbb\xbfprefix", "prefix"),
+    ("añadir".encode("cp1252"), "añadir"),
+    (b"\x81\x8d", "\x81\x8d"),
+])
+def test_read_user_text_decoding_fallbacks(tmp_path, raw, expected):
+    path = tmp_path / "f.txt"
+    path.write_bytes(raw)
+
+    assert config.read_user_text(str(path)) == expected

@@ -61,10 +61,11 @@ def list_contexts():
             continue
         cid = os.path.splitext(fn)[0]
         try:
-            with open(os.path.join(CONTEXTS_DIR, fn), "r", encoding="utf-8") as f:
-                name, active, lang, body = _parse(f.read())
+            # Decoding never fails: a skipped file would be deleted by write_all.
+            texto = cfg_mod.read_user_text(os.path.join(CONTEXTS_DIR, fn))
         except OSError:
             continue
+        name, active, lang, body = _parse(texto)
         out.append({"id": cid, "name": name or cid, "active": active,
                     "lang": lang, "body": body})
     out.sort(key=lambda c: _num(c["id"]))
