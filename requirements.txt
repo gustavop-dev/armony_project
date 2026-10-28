@@ -8,3 +8,4 @@ anthropic>=0.40             # proveedor de respuestas: Claude
 openai>=1.60                # proveedor de respuestas: GPT (alternativa)
 numpy>=1.24
 soxr>=0.3.7
+typesafe-sdk>=0.7                # follow-up arbiter (followup.py): Jev judgments

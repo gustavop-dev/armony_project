@@ -136,6 +136,26 @@ Design: question thread + arbiter.
   strongest language. Then replay through the engine with a fake STT, and
   finally with audio.
 
+Arbiter validation (2026-10-28, `jev-1.14.0`, `python -m stt_eval.followup_eval --repeat 3`):
+- Set: 36 hand-written Spanish snippets (`stt_eval/followup_cases.json`).
+  Categories: filler or ack, unrelated, extends (revise or keep), relaxes
+  (revise or keep), new question (including reactions to the tester's answer),
+  withdraw.
+- Relation accuracy: 94% / 100% / 97% across three runs. Action accuracy: 97%
+  in all three.
+- **Revised on noise: 0 in all runs.**
+- Missed revision: only `ext-06` ("y si además quisieras ofrecer login sin
+  contraseña…"), which is ambiguous between an extension and a new question.
+  Jev returns confidence 0.41–0.44 and P(change) ≈ 0.42 there, so the
+  ambiguity shows in the scores.
+- `changes_answer` separates the two groups: every revise-labelled case is
+  ≥ 0.73 and every keep-labelled case is ≤ 0.26. The policy threshold of 0.6
+  sits in that gap.
+- Relation mix-ups were only extends ↔ relaxes, which lead to the same action.
+- Latency: p50 ≈ 157 ms, p95 ≈ 190–410 ms. Cost ≈ 430 input tokens per call.
+- Caveat: the cases were written alongside the prompts. The next check must use
+  real follow-ups from tester sessions.
+
 Also tune AssemblyAI turn parameters (`end_of_turn_confidence_threshold`,
 `min_end_of_turn_silence_when_confident`, `max_turn_silence`) so that a single
 question is not split in the first place.

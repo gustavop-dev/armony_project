@@ -15,33 +15,11 @@ import sys
 import time
 
 from stt_eval import fleurs
+from stt_eval.keys import read_key
 from stt_eval.replay import run_session
 
 # README: AssemblyAI streaming bills ~0.45 USD per connected hour.
 USD_PER_HOUR = 0.45
-
-
-def _api_key():
-    """Env var first, then the config of a source checkout, then the one the
-    installed .exe keeps in %APPDATA%\\Armony (see config.data_dir)."""
-    key = os.environ.get("ASSEMBLYAI_API_KEY")
-    if key:
-        return key
-    import config
-    import secretstore
-    candidates = [config.CONFIG_PATH]
-    if os.environ.get("APPDATA"):
-        candidates.append(os.path.join(os.environ["APPDATA"], "Armony", "config.json"))
-    for path in candidates:
-        try:
-            with open(path, encoding="utf-8") as f:
-                stored = json.load(f).get("assemblyai_api_key") or ""
-        except (OSError, ValueError):
-            continue
-        key = secretstore.revelar(stored)
-        if key:
-            return key
-    return ""
 
 
 def _git_rev():
@@ -85,7 +63,7 @@ def main(argv=None):
     if not args.yes and input("Connect to AssemblyAI? [y/N] ").strip().lower() != "y":
         return 1
 
-    key = _api_key()
+    key = read_key("assemblyai_api_key", "ASSEMBLYAI_API_KEY")
     if not key:
         print("No AssemblyAI API key (env ASSEMBLYAI_API_KEY or config.json).",
               file=sys.stderr)
