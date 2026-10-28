@@ -1,0 +1,17 @@
+Tipografias del diseno
+======================
+
+El diseno usa dos familias que NO vienen con Windows:
+
+  - Instrument Sans   (pesos 400, 500, 600, 700)
+  - JetBrains Mono    (pesos 400, 500, 600)
+
+Deja aqui los archivos .ttf u .otf y la aplicacion los carga sola al arrancar.
+Ambas son gratuitas y de codigo abierto (SIL Open Font License):
+
+  Instrument Sans -> https://fonts.google.com/specimen/Instrument+Sans
+  JetBrains Mono  -> https://www.jetbrains.com/lp/mono/
+
+Si no estan, se usan las alternativas mas parecidas del sistema
+(Segoe UI Variable Display y Cascadia Mono). El diseno funciona igual,
+pero no queda exactamente como el original.

@@ -1,0 +1,523 @@
+<title>Meeting Coach — Especificación de UI</title>
+<style>
+  :root {
+    --ground:#EDF1F2; --surface:#FFFFFF; --surface-2:#F5F8F9;
+    --ink:#101A1D; --ink-2:#47575C; --ink-3:#7C8C92;
+    --line:#D2DCDF; --line-2:#E4EBED;
+    --accent:#0E6E7D; --accent-soft:#DFEFF1;
+    --signal:#B4650C; --signal-soft:#FAEFE0;
+    --ok:#2E7D4F; --err:#B23A32;
+    --font-sans:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+    --font-mono:"Cascadia Code","Cascadia Mono",ui-monospace,Consolas,"SF Mono",monospace;
+    --r:6px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0B1113; --surface:#121B1E; --surface-2:#172226;
+      --ink:#E6EDEF; --ink-2:#A3B4B9; --ink-3:#74868C;
+      --line:#24343A; --line-2:#1B282C;
+      --accent:#4FB6C6; --accent-soft:#12313A;
+      --signal:#DFA14A; --signal-soft:#2E2410;
+      --ok:#5DBE86; --err:#E4776E;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0B1113; --surface:#121B1E; --surface-2:#172226;
+    --ink:#E6EDEF; --ink-2:#A3B4B9; --ink-3:#74868C;
+    --line:#24343A; --line-2:#1B282C;
+    --accent:#4FB6C6; --accent-soft:#12313A;
+    --signal:#DFA14A; --signal-soft:#2E2410;
+    --ok:#5DBE86; --err:#E4776E;
+  }
+  :root[data-theme="light"]{
+    --ground:#EDF1F2; --surface:#FFFFFF; --surface-2:#F5F8F9;
+    --ink:#101A1D; --ink-2:#47575C; --ink-3:#7C8C92;
+    --line:#D2DCDF; --line-2:#E4EBED;
+    --accent:#0E6E7D; --accent-soft:#DFEFF1;
+    --signal:#B4650C; --signal-soft:#FAEFE0;
+    --ok:#2E7D4F; --err:#B23A32;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--font-sans); font-size:16px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1060px; margin:0 auto; padding:clamp(28px,5vw,64px) clamp(18px,4vw,40px) 80px;}
+  .prose{max-width:72ch;}
+
+  .eyebrow{
+    font-family:var(--font-mono); font-size:.72rem; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 10px;
+  }
+  h1{
+    font-size:clamp(1.9rem,4.2vw,2.7rem); line-height:1.12; letter-spacing:-.022em;
+    margin:0 0 14px; text-wrap:balance; font-weight:650;
+  }
+  h2{
+    font-size:1.35rem; letter-spacing:-.012em; margin:0 0 6px;
+    text-wrap:balance; font-weight:640;
+  }
+  h3{font-size:1rem; margin:0 0 6px; font-weight:640; letter-spacing:-.005em;}
+  p{margin:0 0 14px;}
+  .lead{font-size:1.06rem; color:var(--ink-2);}
+
+  section{margin-top:56px;}
+  .sec-head{
+    display:flex; align-items:baseline; gap:14px;
+    border-top:2px solid var(--ink); padding-top:12px; margin-bottom:22px;
+  }
+  .sec-num{
+    font-family:var(--font-mono); font-size:.8rem; color:var(--ink-3);
+    letter-spacing:.08em; padding-top:3px;
+  }
+  .sec-head p{margin:4px 0 0; color:var(--ink-2); font-size:.94rem;}
+
+  code,kbd{font-family:var(--font-mono); font-size:.86em;}
+  code{background:var(--surface-2); border:1px solid var(--line-2); border-radius:4px; padding:1px 5px;}
+
+  /* ---- wireframe ---- */
+  .frame{
+    background:var(--surface); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.05); margin-bottom:10px;
+  }
+  .titlebar{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--surface-2); border-bottom:1px solid var(--line);
+    padding:7px 12px; font-size:.8rem; color:var(--ink-2);
+    font-family:var(--font-mono);
+  }
+  .wf-row{padding:12px 14px; border-bottom:1px solid var(--line-2); display:flex; flex-wrap:wrap; align-items:center; gap:10px;}
+  .wf-row:last-child{border-bottom:0;}
+  .btn{
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+    border-radius:var(--r); padding:5px 12px; font-size:.84rem; font-family:inherit;
+  }
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .btn.off{color:var(--ink-3); border-style:dashed;}
+  .chk{font-size:.82rem; color:var(--ink-2); display:inline-flex; align-items:center; gap:6px;}
+  .chk::before{content:""; width:12px; height:12px; border:1.5px solid var(--ink-3); border-radius:3px; display:inline-block;}
+  .chk.on::before{background:var(--accent); border-color:var(--accent);}
+  .spacer{flex:1;}
+
+  .meter-label{font-size:.78rem; color:var(--ink-2); white-space:nowrap;}
+  .meter{flex:1; min-width:90px; height:9px; border-radius:99px; background:var(--surface-2); border:1px solid var(--line-2); overflow:hidden;}
+  .meter i{display:block; height:100%; background:var(--signal);}
+
+  .panes{display:grid; grid-template-columns:0.72fr 1fr; min-height:190px;}
+  .pane{padding:12px 14px;}
+  .pane + .pane{border-left:1px solid var(--line-2);}
+  .pane h4{
+    margin:0 0 9px; font-size:.7rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--ink-3); font-family:var(--font-mono); font-weight:600;
+  }
+  .line{font-family:var(--font-mono); font-size:.78rem; line-height:1.75; color:var(--ink-2);}
+  .line b{color:var(--accent); font-weight:600;}
+  .line .me{color:var(--signal); font-weight:600;}
+  .sugg{font-size:.95rem; color:var(--ink);}
+  .caret{display:inline-block; width:7px; height:1.05em; background:var(--accent); vertical-align:-2px; margin-left:2px;}
+  @media (prefers-reduced-motion:no-preference){
+    .caret{animation:blink 1.1s steps(1) infinite;}
+    @keyframes blink{50%{opacity:0;}}
+  }
+  .statusline{font-size:.78rem; color:var(--accent); font-family:var(--font-mono);}
+
+  .callout{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:19px; height:19px; border-radius:99px; background:var(--ink); color:var(--ground);
+    font-family:var(--font-mono); font-size:.68rem; font-weight:700; flex:none;
+  }
+  .keylist{list-style:none; padding:0; margin:18px 0 0; display:grid; gap:11px;}
+  .keylist li{display:flex; gap:11px; align-items:flex-start;}
+  .keylist p{margin:0; font-size:.92rem; color:var(--ink-2);}
+  .keylist strong{color:var(--ink);}
+
+  /* ---- tables ---- */
+  .tw{overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:var(--surface); margin-bottom:8px;}
+  table{border-collapse:collapse; width:100%; min-width:620px; font-size:.88rem;}
+  th,td{text-align:left; padding:9px 13px; border-bottom:1px solid var(--line-2); vertical-align:top;}
+  thead th{
+    background:var(--surface-2); font-family:var(--font-mono); font-weight:600;
+    font-size:.72rem; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-2);
+    border-bottom:1px solid var(--line);
+  }
+  tbody tr:last-child td{border-bottom:0;}
+  td.mono,th.mono{font-family:var(--font-mono); font-size:.82rem; white-space:nowrap;}
+  .num{font-variant-numeric:tabular-nums;}
+
+  .pill{
+    display:inline-block; font-family:var(--font-mono); font-size:.7rem; letter-spacing:.05em;
+    padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--ink-2);
+    background:var(--surface-2); white-space:nowrap;
+  }
+  .pill.live{background:var(--signal-soft); border-color:var(--signal); color:var(--signal);}
+  .pill.act{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
+  .pill.bad{background:transparent; border-color:var(--err); color:var(--err);}
+
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(235px,1fr)); gap:14px;}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:15px 17px;}
+  .card h3{margin-bottom:5px;}
+  .card p{margin:0; font-size:.9rem; color:var(--ink-2);}
+
+  .note{
+    border-left:3px solid var(--signal); background:var(--signal-soft);
+    padding:13px 17px; border-radius:0 var(--r) var(--r) 0; margin:20px 0;
+  }
+  .note p{margin:0; font-size:.92rem;}
+  .note strong{color:var(--ink);}
+
+  hr{border:0; border-top:1px solid var(--line); margin:26px 0;}
+  .foot{margin-top:60px; padding-top:18px; border-top:1px solid var(--line); color:var(--ink-3); font-size:.84rem;}
+  a{color:var(--accent);}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  @media (max-width:680px){
+    .panes{grid-template-columns:1fr;}
+    .pane + .pane{border-left:0; border-top:1px solid var(--line-2);}
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="prose">
+    <p class="eyebrow">Especificación de interfaz · v1</p>
+    <h1>Meeting Coach</h1>
+    <p class="lead">
+      Aplicación de escritorio para Windows que escucha una reunión en curso, transcribe lo
+      que dicen los demás y muestra en pantalla una respuesta sugerida, en menos de dos
+      segundos. La ventana es visible para su usuario pero <strong>invisible al compartir
+      pantalla</strong>.
+    </p>
+    <p>
+      Este documento describe la interfaz actual —construida con widgets nativos sin
+      trabajo de diseño— y todo lo que hace, para que sirva de base al rediseño. La
+      estructura funcional está validada; lo que falta es la capa visual.
+    </p>
+  </header>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <div>
+        <h2>El contexto de uso manda</h2>
+        <p>Tres condiciones que deberían gobernar cualquier decisión visual.</p>
+      </div>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <h3>Se lee de reojo</h3>
+        <p>La persona está en una videollamada mirando a cámara. No puede detenerse a leer:
+        tiene que captar la sugerencia con visión periférica y un vistazo de menos de un
+        segundo. La legibilidad a distancia importa más que la densidad.</p>
+      </div>
+      <div class="card">
+        <h3>Un solo protagonista</h3>
+        <p>La respuesta sugerida es el elemento principal. Todo lo demás —medidores,
+        transcripción, botones— es soporte y no debería competir por la atención mientras
+        hay una sugerencia en pantalla.</p>
+      </div>
+      <div class="card">
+        <h3>Discreción</h3>
+        <p>Convive sobre la ventana de la videollamada, siempre encima. Debe ocupar poco,
+        no emitir destellos ni sonidos, y no gritar visualmente lo que es.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <div>
+        <h2>La ventana</h2>
+        <p>Estructura actual: cuatro bandas horizontales. Medidas de referencia 760 × 560 px.</p>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="titlebar">
+        <span>Meeting Coach</span>
+        <span>siempre encima · sin barra de tareas</span>
+      </div>
+
+      <div class="wf-row">
+        <span class="callout">1</span>
+        <button class="btn primary" type="button">Iniciar</button>
+        <button class="btn off" type="button">Detener</button>
+        <button class="btn" type="button">Configuración</button>
+        <span class="spacer"></span>
+        <span class="callout">2</span>
+        <span class="chk">Modo prueba</span>
+        <span class="chk on">Invisible al compartir pantalla</span>
+      </div>
+
+      <div class="wf-row">
+        <span class="callout">3</span>
+        <span class="meter-label">Reunión (sistema)</span>
+        <span class="meter"><i style="width:62%"></i></span>
+        <span class="meter-label">Micro</span>
+        <span class="meter"><i style="width:24%"></i></span>
+      </div>
+
+      <div class="panes">
+        <div class="pane">
+          <h4><span class="callout">4</span> Transcripción</h4>
+          <div class="line">
+            <b>ELLOS:</b> Cuéntame sobre tu experiencia con Python<br>
+            <span class="me">YO:</span> Llevo unos cinco años en backend<br>
+            <b>ELLOS:</b> ¿Y qué frameworks has usado?
+          </div>
+        </div>
+        <div class="pane">
+          <h4><span class="callout">5</span> Respuesta sugerida</h4>
+          <div class="line sugg">
+            Sobre todo Django y FastAPI. Django para productos con mucho CRUD
+            y panel de administración, y FastAPI cuando necesito<span class="caret"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="wf-row">
+        <span class="callout">6</span>
+        <button class="btn" type="button">Captura pantalla + preguntar</button>
+        <span class="spacer"></span>
+        <span class="statusline">Escuchando la reunión…</span>
+      </div>
+    </div>
+
+    <ul class="keylist">
+      <li><span class="callout">1</span><p><strong>Control de sesión.</strong> Iniciar / Detener son mutuamente excluyentes: uno siempre está deshabilitado. Configuración abre un diálogo modal.</p></li>
+      <li><span class="callout">2</span><p><strong>Interruptores.</strong> «Modo prueba» se bloquea mientras la sesión corre. «Invisible» se puede alternar en caliente y persiste entre arranques.</p></li>
+      <li><span class="callout">3</span><p><strong>Medidores de nivel.</strong> Dos barras 0–100 que se refrescan unas 47 veces por segundo. Su función es verificar antes de la reunión que ambas entradas se oyen.</p></li>
+      <li><span class="callout">4</span><p><strong>Transcripción.</strong> Solo lectura, crece hacia abajo con autoscroll. Dos hablantes: <code>ELLOS</code> (los demás) y <code>YO</code> (el usuario).</p></li>
+      <li><span class="callout">5</span><p><strong>Respuesta sugerida.</strong> Solo lectura. Se borra y se reescribe entera en cada sugerencia nueva, palabra por palabra según llega. Tipografía dos puntos mayor que el resto.</p></li>
+      <li><span class="callout">6</span><p><strong>Acción secundaria y estado.</strong> El botón de captura envía una imagen de la pantalla al modelo. La línea de estado es el único canal de feedback del sistema.</p></li>
+    </ul>
+
+    <div class="note">
+      <p><strong>Proporción actual del área central:</strong> transcripción 320 px / respuesta 440 px, ajustable arrastrando el divisor. La respuesta pesa más porque es lo que se consulta de reojo; conviene mantener esa jerarquía o acentuarla.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <div>
+        <h2>Inventario de componentes</h2>
+        <p>Todo lo que existe hoy en la ventana principal, con sus estados.</p>
+      </div>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Componente</th><th>Tipo</th><th>Estados</th><th>Comportamiento</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">Iniciar</td><td>Botón</td>
+            <td><span class="pill">activo</span> <span class="pill">deshabilitado</span></td>
+            <td>Acción principal. Se deshabilita durante la sesión. Sin API key y sin modo prueba, muestra un aviso modal.</td>
+          </tr>
+          <tr>
+            <td class="mono">Detener</td><td>Botón</td>
+            <td><span class="pill">activo</span> <span class="pill">deshabilitado</span></td>
+            <td>Tarda entre 1 y 3 s en completarse: necesita indicación de proceso en curso.</td>
+          </tr>
+          <tr>
+            <td class="mono">Configuración</td><td>Botón</td>
+            <td><span class="pill">activo</span></td>
+            <td>Abre diálogo modal. Disponible siempre, también con la sesión activa.</td>
+          </tr>
+          <tr>
+            <td class="mono">Modo prueba</td><td>Casilla</td>
+            <td><span class="pill">on</span> <span class="pill">off</span> <span class="pill">bloqueada</span></td>
+            <td>Permite arrancar sin API key: solo audio y transcripción, sin coste. Bloqueada mientras corre la sesión.</td>
+          </tr>
+          <tr>
+            <td class="mono">Invisible al compartir</td><td>Casilla</td>
+            <td><span class="pill">on</span> <span class="pill">off</span></td>
+            <td>Función distintiva del producto. Merece más presencia visual que una casilla suelta.</td>
+          </tr>
+          <tr>
+            <td class="mono">Medidor reunión</td><td>Barra 0–100</td>
+            <td><span class="pill">quieto</span> <span class="pill live">con señal</span></td>
+            <td>Se queda a cero si no suena nada: no es un fallo. Conviene distinguir «sin señal» de «no conectado».</td>
+          </tr>
+          <tr>
+            <td class="mono">Medidor micro</td><td>Barra 0–100</td>
+            <td><span class="pill">quieto</span> <span class="pill live">con señal</span></td>
+            <td>Igual que el anterior. Sirve para detectar micrófono muteado antes de empezar.</td>
+          </tr>
+          <tr>
+            <td class="mono">Transcripción</td><td>Texto solo lectura</td>
+            <td><span class="pill">vacía</span> <span class="pill">con contenido</span></td>
+            <td>Dos hablantes diferenciados, más un separador <code>nueva sesión</code> al reiniciar.</td>
+          </tr>
+          <tr>
+            <td class="mono">Respuesta sugerida</td><td>Texto solo lectura</td>
+            <td><span class="pill">vacía</span> <span class="pill act">escribiéndose</span> <span class="pill">completa</span></td>
+            <td>Llega en streaming. El estado «escribiéndose» necesita tratamiento propio.</td>
+          </tr>
+          <tr>
+            <td class="mono">Captura + preguntar</td><td>Botón</td>
+            <td><span class="pill">activo</span> <span class="pill">deshabilitado</span></td>
+            <td>Solo con sesión activa y fuera de modo prueba. Envía una imagen de pantalla al modelo.</td>
+          </tr>
+          <tr>
+            <td class="mono">Línea de estado</td><td>Texto</td>
+            <td><span class="pill act">informativo</span> <span class="pill bad">error</span></td>
+            <td>Único canal de feedback. Hoy es una línea de texto pequeña, fácil de pasar por alto.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <div>
+        <h2>Estados del sistema</h2>
+        <p>Secuencia completa de una sesión. Cada estado necesita una lectura visual distinta.</p>
+      </div>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Estado</th><th>Cuándo</th><th>Mensaje actual</th><th>Qué debe comunicar</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">Reposo</td><td>Al abrir</td><td>«Listo. Pon tu API key e inicia.»</td><td>Nada está escuchando. Punto de partida.</td></tr>
+          <tr><td class="mono">Cargando</td><td>Tras Iniciar, 3 s aprox.</td><td>«Cargando modelo de transcripción…»</td><td>Espera necesaria. La primera vez puede tardar minutos por descarga.</td></tr>
+          <tr><td class="mono">Listo</td><td>Modelo cargado</td><td>«Whisper listo en CUDA.»</td><td>Confirma aceleración por GPU frente a CPU.</td></tr>
+          <tr><td class="mono">Escuchando</td><td>Estado normal</td><td>«Escuchando la reunión…»</td><td>El estado dominante. Debería percibirse sin leer.</td></tr>
+          <tr><td class="mono">Transcribiendo</td><td>Fin de frase detectado</td><td>—</td><td>Aparece una línea nueva en la transcripción.</td></tr>
+          <tr><td class="mono">Respondiendo</td><td>Llega la sugerencia</td><td>—</td><td>Texto apareciendo progresivamente. El momento clave del producto.</td></tr>
+          <tr><td class="mono">Sugerencia lista</td><td>Fin del streaming</td><td>«Sugerencia lista.»</td><td>Ya se puede leer entera.</td></tr>
+          <tr><td class="mono">Monólogo</td><td>Alguien lleva 8 s sin pausa</td><td>«Sigue hablando… (guardado como contexto)»</td><td>Se transcribe pero no se sugiere nada todavía. Evita que parezca colgado.</td></tr>
+          <tr><td class="mono">Error</td><td>Fallo de API o audio</td><td>Texto en rojo</td><td>Qué pasó y cómo arreglarlo.</td></tr>
+          <tr><td class="mono">Detenido</td><td>Tras Detener</td><td>«Detenido.»</td><td>Vuelta a reposo, conservando lo transcrito.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <p><strong>El estado más importante no tiene diseño hoy:</strong> «escuchando» y «respondiendo» solo se distinguen por una línea de texto de 12 px en una esquina. Es la señal que la persona necesita percibir sin apartar la vista de la cámara.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">05</span>
+      <div>
+        <h2>Diálogo de configuración</h2>
+        <p>Modal con 15 campos en cuatro grupos. Hoy es una lista plana sin jerarquía.</p>
+      </div>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>Grupo</th><th>Campo</th><th>Control</th><th>Rango o valores</th></tr>
+        </thead>
+        <tbody>
+          <tr><td rowspan="5">Conexión</td><td>API key de Anthropic</td><td>Texto oculto</td><td class="mono">—</td></tr>
+          <tr><td>Modelo</td><td>Desplegable</td><td class="mono">haiku-4-5 · opus-4-8 · sonnet-5</td></tr>
+          <tr><td>Tamaño Whisper</td><td>Desplegable</td><td class="mono">tiny · base · small · medium</td></tr>
+          <tr><td>Dispositivo</td><td>Desplegable</td><td class="mono">auto · cpu · cuda</td></tr>
+          <tr><td>Idioma</td><td>Desplegable</td><td class="mono">es · en · auto</td></tr>
+
+          <tr><td rowspan="6">Sensibilidad de audio</td><td>Ganancia reunión</td><td>Numérico</td><td class="mono num">0,5 – 10,0 (paso 0,5)</td></tr>
+          <tr><td>Ganancia micrófono</td><td>Numérico</td><td class="mono num">0,5 – 10,0 (paso 0,5)</td></tr>
+          <tr><td>Umbral de voz</td><td>Numérico</td><td class="mono num">0,001 – 0,100 (paso 0,002)</td></tr>
+          <tr><td>Transcribir también mi voz</td><td>Casilla</td><td class="mono">activado</td></tr>
+          <tr><td>Anti-eco del micrófono</td><td>Casilla</td><td class="mono">activado</td></tr>
+          <tr><td>Normalizar cada frase</td><td>Casilla</td><td class="mono">activado</td></tr>
+
+          <tr><td rowspan="2">Detección de frases</td><td>Pausa de fin de turno</td><td>Numérico</td><td class="mono num">0,3 – 2,0 s (paso 0,1)</td></tr>
+          <tr><td>Corte de monólogo largo</td><td>Numérico</td><td class="mono num">3 – 20 s (paso 1)</td></tr>
+
+          <tr><td>Coach</td><td>Prompt del sistema</td><td>Texto multilínea</td><td class="mono">~500 caracteres</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="prose" style="margin-top:16px;">
+      Los campos numéricos son ajustes finos que se tocan una vez y rara vez se revisan.
+      Merecen tratamiento de <em>ajuste avanzado</em>: plegados o en una pestaña aparte,
+      con la API key y el modelo como lo primero que se ve. Cambiar el modelo o el
+      dispositivo exige reiniciar la sesión, y eso debe advertirse en el propio campo.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">06</span>
+      <div>
+        <h2>Restricciones técnicas</h2>
+        <p>Condicionan lo que es implementable. Conviene leerlas antes de proponer.</p>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <h3>Qt / PySide6</h3>
+        <p>El estilado usa QSS, un subconjunto de CSS: hay colores, bordes, radios, tipografías
+        y estados <code>:hover</code>, <code>:disabled</code>. No hay flexbox, grid, transiciones
+        ni sombras arbitrarias. Las animaciones se programan aparte.</p>
+      </div>
+      <div class="card">
+        <h3>Tipografía empaquetada</h3>
+        <p>Se pueden incluir fuentes propias en formato TTF u OTF con la aplicación. No hay
+        dependencia de servicios externos. Indicar pesos concretos: se cargan uno a uno.</p>
+      </div>
+      <div class="card">
+        <h3>Iconografía</h3>
+        <p>Admite SVG y PNG empaquetados. Conviene entregar en varios tamaños o en SVG, por
+        pantallas a 125 % y 150 % de escalado, habituales en Windows.</p>
+      </div>
+      <div class="card">
+        <h3>Ventana</h3>
+        <p>Siempre encima, redimensionable, 760 × 560 px de referencia. Debe seguir siendo
+        usable en tamaño reducido: convivirá con la ventana de la videollamada.</p>
+      </div>
+      <div class="card">
+        <h3>Invisible a la captura</h3>
+        <p>La ventana se excluye de toda grabación y compartición de pantalla. Efecto
+        colateral: no se la puede capturar para documentar el diseño; hay que fotografiarla
+        o desactivar la opción.</p>
+      </div>
+      <div class="card">
+        <h3>Tema claro y oscuro</h3>
+        <p>No hay implementado ninguno todavía. Se agradecen ambos: se usa tanto de día como
+        en llamadas nocturnas, y sobre fondos de aplicaciones muy variados.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">07</span>
+      <div>
+        <h2>Preguntas abiertas para el diseño</h2>
+        <p>Decisiones sin resolver donde una propuesta aportaría más valor.</p>
+      </div>
+    </div>
+    <div class="prose">
+      <ul>
+        <li><strong>¿Modo compacto?</strong> Una vista mínima —solo la sugerencia— para tenerla junto a la videollamada sin robar espacio.</li>
+        <li><strong>¿Cómo se señala «escuchando»?</strong> Debe percibirse de reojo sin distraer durante la conversación.</li>
+        <li><strong>¿Cómo entra una sugerencia nueva?</strong> Hoy borra la anterior de golpe. ¿Transición, historial, apilado?</li>
+        <li><strong>Jerarquía de los medidores.</strong> Son críticos antes de la reunión e irrelevantes durante. ¿Se repliegan al empezar?</li>
+        <li><strong>Longitud variable.</strong> Las sugerencias van de una línea a un párrafo. El bloque no debería saltar de tamaño mientras se escribe.</li>
+        <li><strong>Primer arranque.</strong> Sin API key no funciona nada. ¿Merece una pantalla de bienvenida propia?</li>
+      </ul>
+    </div>
+  </section>
+
+  <p class="foot">
+    Meeting Coach · Especificación de interfaz para rediseño · Basada en la implementación
+    funcional en PySide6. Estructura y comportamiento validados; falta la capa visual.
+  </p>
+</div>

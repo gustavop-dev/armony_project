@@ -1,0 +1,10 @@
+# Meeting Coach - dependencias
+PySide6>=6.6
+PyAudioWPatch>=0.2.12.7
+websocket-client>=1.7        # transcripcion en vivo (AssemblyAI streaming v3)
+Pygments>=2.17               # colorea el codigo de las respuestas
+faster-whisper>=1.0.0        # solo para el modo offline
+anthropic>=0.40             # proveedor de respuestas: Claude
+openai>=1.60                # proveedor de respuestas: GPT (alternativa)
+numpy>=1.24
+soxr>=0.3.7
