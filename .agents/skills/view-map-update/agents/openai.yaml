@@ -1,0 +1,7 @@
+interface:
+  display_name: "View Map Update"
+  short_description: "Usar cuando se agregó, quitó, renombró o cambió de propósito..."
+  default_prompt: "Use $view-map-update to handle this task with its documented workflow."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,17 @@
+{
+  "model": "opus",
+  "effortLevel": "high",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "timeout 20 bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-git-status.sh\" 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}

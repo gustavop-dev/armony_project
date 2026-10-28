@@ -1,0 +1,7 @@
+# skills-help — lista de exclusión
+# Skills que NO querés ver en /skills-help. Una por línea.
+# '#' inicia comentario. Líneas vacías se ignoran.
+# (_output-protocol ya se oculta siempre; no hace falta listarlo.)
+#
+# Ejemplo (descomentá para ocultar):
+# proposal-create

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Repo Cleanup"
+  short_description: "Auditoría del repo: archivos obsoletos, huérfanos o..."
+  default_prompt: "Use $repo-cleanup to handle this task with its documented workflow."
+
+policy:
+  allow_implicit_invocation: true

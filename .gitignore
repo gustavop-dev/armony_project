@@ -28,3 +28,8 @@ dist/
 # Sistema
 Thumbs.db
 .DS_Store
+
+# Claude Code (se versionan skills/agents/commands/settings; no worktrees ni estado local)
+.claude/worktrees/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

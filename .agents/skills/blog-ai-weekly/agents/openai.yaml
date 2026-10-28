@@ -1,0 +1,7 @@
+interface:
+  display_name: "Blog Ai Weekly"
+  short_description: "Weekly AI blog post creation — search news from 10 sources..."
+  default_prompt: "Use $blog-ai-weekly to handle this task with its documented workflow."
+
+policy:
+  allow_implicit_invocation: false

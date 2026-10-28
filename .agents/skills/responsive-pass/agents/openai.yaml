@@ -1,0 +1,7 @@
+interface:
+  display_name: "Responsive Pass"
+  short_description: "Mejora la responsividad de un módulo o pestaña contra..."
+  default_prompt: "Use $responsive-pass to handle this task with its documented workflow."
+
+policy:
+  allow_implicit_invocation: true

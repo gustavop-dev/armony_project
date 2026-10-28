@@ -1,0 +1,3 @@
+interface:
+  display_name: "Requirement Calculator"
+  short_description: "Estimate effort and price for a requirement and save it as a panel document"

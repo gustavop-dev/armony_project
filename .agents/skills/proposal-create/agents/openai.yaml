@@ -1,0 +1,7 @@
+interface:
+  display_name: "Proposal Create"
+  short_description: "Crea propuestas comerciales auditadas y borradores seguros"
+  default_prompt: "Usa $proposal-create para preparar una nueva propuesta comercial a partir de este contexto y pregúntame todo lo que falte antes de generar el JSON."
+
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,3 @@
+# Project-scoped Codex additions for Armony.
+# Model, reasoning, sandbox, approval, docs limit and web search inherit
+# from ~/.codex/config.toml. Add only genuine project-specific settings.

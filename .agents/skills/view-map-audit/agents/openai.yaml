@@ -1,0 +1,7 @@
+interface:
+  display_name: "View Map Audit"
+  short_description: "Alias legado de $view-map-update en modo `--check`. Usar..."
+  default_prompt: "Use $view-map-audit to handle this task with its documented workflow."
+
+policy:
+  allow_implicit_invocation: true

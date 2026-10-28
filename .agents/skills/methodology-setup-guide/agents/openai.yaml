@@ -1,0 +1,7 @@
+interface:
+  display_name: "Methodology Setup Guide"
+  short_description: "Apply the repository Memory Bank methodology in Codex"
+  default_prompt: "Use $methodology-setup-guide to align this repository's Memory Bank setup with Codex."
+
+policy:
+  allow_implicit_invocation: true
