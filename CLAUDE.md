@@ -283,6 +283,7 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 - El contexto profundo del proyecto vive en `README.md`, `docs/configuracion-y-contexto.md`, `docs/ui-spec.html` y, cuando exista, en el Memory Bank (`docs/methodology/` + `tasks/`).
 
 ## Qué es
+- **Propósito:** asistente de videollamada que ayuda a resolver problemas de software en vivo. Es un *spike* para otro proyecto: un IDE capaz de llevar proyectos de software mucho más grandes, dirigido por un cliente no técnico. Lo que se valide aquí (audio → transcripción → intención → LLM en streaming, latencia, manejo de contexto) alimenta ese IDE.
 - App de escritorio **solo Windows** (10 build 19041+ / 11) en **Python 3.11 + PySide6**. Escucha el audio de la reunión (WASAPI loopback) y el micrófono, transcribe en vivo (AssemblyAI Universal Streaming por WebSocket, o `faster-whisper` en modo offline) y sugiere respuestas en streaming con Claude (Anthropic) u OpenAI. La ventana es invisible al compartir pantalla (`SetWindowDisplayAffinity`).
 - Se distribuye como un único `dist\Armony.exe` generado con PyInstaller (`build_exe.py`).
 - No hay backend, base de datos, frontend web ni servidor: nada de deploy ni VPS.
