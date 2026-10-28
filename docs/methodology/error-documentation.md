@@ -112,37 +112,61 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Test:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`
 
 ### [KNOWN-501] Final answer is painted twice after `cerrar_respuesta`
-- **Where:** `overlay_ui.py:1378-1382` (`TranscriptPanel.cerrar_respuesta`)
-- **Behavior:** with a repaint pending, it repaints immediately but leaves the 90 ms throttle timer armed; when it fires, `_burbuja_resp` is `None` and `_repintar` opens a new bubble with the same answer. Production path: `app.on_resp_done`.
-- **Repro:** `clear_answer(); append_answer("Final words"); cerrar_respuesta()`, wait 240 ms → 2 suggestion bubbles (expected 1).
+- **Where:** `overlay_ui.py:1357-1382` (`append_answer` arms a 90 ms `QTimer.singleShot(_repintar)`; `cerrar_respuesta` repaints when `_repintado_pendiente` and sets `_burbuja_resp = None`, but cannot cancel the pending single-shot).
+- **Trigger:** `respDone` delivered less than `INTERVALO_REPINTADO` (90 ms) after the last `respDelta`. The engine emits `respDone` from `on_done` immediately after the stream ends (`engine.py:590-609`), so this is the normal path; short answers (`< len(SENTINEL)`) emit `respStart`, one `respDelta` and `respDone` back to back (`engine.py:595-598`).
+- **Reproduced (2026-10-28) through `OverlayApp` signal wiring** (`app.on_resp_done` → `panel.cerrar_respuesta`), `respDone` right after the last delta:
+
+  | Stream shape | Suggestion bubbles |
+  |---|---|
+  | 1 delta (short answer) | 2 |
+  | 2-12 deltas, 10 / 25 / 40 ms apart | 2 in 33/33 runs |
+  | last delta followed by >= 90 ms of idle before `respDone` | 1 |
+- **Root cause:** the throttle timer is a fire-and-forget `singleShot` on a bound method; when it fires after `cerrar_respuesta`, `_repintar` sees `_burbuja_resp is None` and creates a new bubble from the same `_raw`.
+- **Impact:** every streamed suggestion appears twice in the thread; doubles render work per answer (`pintado_ms`).
+- **Proposed fix:** use one `QTimer` instance (`setSingleShot(True)`) owned by the panel and `stop()` it in `cerrar_respuesta` / `clear_answer` / `limpiar_hilo`; or make `_repintar` a no-op when no answer is open.
 - **Test:** `tests/test_overlay_ui_thread.py::test_cerrar_respuesta_does_not_duplicate_answer`
-
 ### [KNOWN-502] Question caret never blinks
-- **Where:** `overlay_ui.py:1242` (`_animate`); `_question_text` initialized at `overlay_ui.py:964` and never assigned again.
-- **Repro:** `set_state("listening"); set_question("Tell me about")`, wait 1.5 s → caret stays on (expected: toggles).
+- **Where:** `overlay_ui.py:1242` (`_animate` re-renders the caret only when `self._question_text`); `_question_text` is set to `""` at `overlay_ui.py:964` and never assigned again.
+- **Reproduced (2026-10-28):** `set_state("listening"); set_question("Tell me about")`, 1.5 s → caret stays visible.
+- **Root cause:** `set_question` stores the text elsewhere and does not update `_question_text`.
+- **Impact:** cosmetic; the caret is static instead of blinking. No functional effect.
+- **Proposed fix:** assign `self._question_text = texto` in `set_question` and clear it in `cerrar_intervencion` / `limpiar_hilo`.
 - **Test:** `tests/test_overlay_ui_thread.py::test_caret_blinks_while_listening`
-
 ### [KNOWN-503] Drag mixin handlers are shadowed by `QWidget`
-- **Where:** `overlay_ui.py:746`, `957`, `1488` — `class X(QtWidgets.QWidget, _Draggable)`; MRO resolves `mousePressEvent`/`mouseMoveEvent` to `QWidget` first, so `_Draggable` (lines 160-170) never runs.
-- **Repro:** `TopBar` at (100,100), press at (110,110), move to (160,140) → stays at (100,100) (expected (150,130)).
+- **Where:** `overlay_ui.py:746`, `957`, `1488` — `class X(QtWidgets.QWidget, _Draggable)`; `_Draggable.mousePressEvent/mouseMoveEvent` (`overlay_ui.py:159-170`) are never reached.
+- **Reproduced (2026-10-28):** MRO resolves `mousePressEvent` to `QWidget` for `TopBar`, `TranscriptPanel` and `CollapsedButton`; a press/move on an empty area of `TopBar` does not move it.
+- **Effective behavior per window:**
+  - `TranscriptPanel`: movable through its `DragBar` header (`overlay_ui.py:1070`), which implements its own handlers — works.
+  - `TopBar`: not movable. In production its empty areas are also click-through (`interactive_widgets()` returns only `[self.btn_cfg]`, `overlay_ui.py:869-871`; `app._update_click_through`), so fixing the MRO alone does not make it draggable.
+  - `CollapsedButton`: its whole surface is a `ClickFrame` child that consumes the press; not movable.
+- **Root cause:** base-class order; the mixin must precede `QWidget` to override Qt's virtual handlers.
+- **Impact:** low; the top bar and the collapsed button stay where `_place` puts them. Dead code in `_Draggable`.
+- **Proposed fix:** decide whether those windows should be movable. If yes: `class TopBar(_Draggable, QtWidgets.QWidget)` plus an interactive drag zone (e.g. a grip) in `interactive_widgets()`. If no: remove `_Draggable` and its docstring claim.
 - **Test:** `tests/test_overlay_ui_widgets.py::test_topbar_drag_from_empty_area_moves_window`
-
 ### [KNOWN-504] Copy-label reset fires on a destroyed `CodeBlock`
-- **Where:** `overlay_ui.py:513` (`CodeBlock._copiar`, 1.4 s `QTimer.singleShot` lambda on `self.lbl_copy`)
-- **Behavior:** re-rendering a streamed answer, pruning rows or `limpiar_hilo` destroys the block; the pending lambda raises `RuntimeError: Internal C++ object already deleted` in the event loop.
+- **Where:** `overlay_ui.py:513` (`CodeBlock._copiar`: `QTimer.singleShot(1400, lambda: self.lbl_copy.setText(...))`)
+- **Trigger:** Copy clicked, then the block is destroyed within 1.4 s (answer re-render while streaming, row pruning, `limpiar_hilo`).
+- **Reproduced (2026-10-28):** `RuntimeError: Internal C++ object already deleted` raised from the event loop.
+- **Root cause:** the lambda is not tied to the widget's lifetime (plain callable, no receiver object).
+- **Impact:** low; PySide reports the exception and the app keeps running. With `--noconsole` nothing is visible.
+- **Proposed fix:** `QtCore.QTimer.singleShot(1400, self.lbl_copy, lambda: ...)` (receiver overload, cancelled on destruction) or a child `QTimer`.
 - **Test:** `tests/test_overlay_ui_widgets.py::test_code_block_destroyed_after_copy_raises_nothing`
-
 ### [KNOWN-002] Session transcript misses turns
-- **Where:** `engine.py:374-378` (`answer_now` with a pending turn) and `engine.py:461-468` (offline path) append to `_history` but not to `_registro`.
-- **Effect:** the saved `sesiones/*.md` file omits those turns.
-
+- **Where:** `_registro` (the transcript saved to `sesiones/sesion-*.md` by `_guardar_acta`, `engine.py:672-695`) is appended only in `_flush_turn` (`engine.py:341`) and in `_respond.on_done` (`engine.py:608`).
+  - `answer_now` with a pending turn (`engine.py:374-378`) appends to `_history` only.
+  - Offline worker path (`engine.py:461-468`): mic (`"Yo"`) and system (`"Ellos"`) utterances append to `_history` only.
+  - Cloud test mode returns before `_flush_turn` (`engine.py:305-308`): nothing is recorded (by design or not — undocumented).
+- **Reproduced (2026-10-28):** the three xfail tests below fail as expected.
+- **Impact:** in offline mode the saved transcript contains only `### Sugerido` blocks, none of the spoken turns; in cloud mode, turns forced with Alt+5 while someone is still speaking are missing.
+- **Proposed fix:** a single `_record(speaker, text)` helper that appends to both `_history` and `_registro`, used at every turn-closing site. Note: if `refactor/28102026-remove-offline-whisper` removes offline mode, only the `answer_now` part remains.
 - **Test:** `tests/test_engine.py::TestTurns::test_manual_answer_records_pending_turn`, `tests/test_engine.py::TestWorker::test_offline_utterance_is_recorded`
-
 ### [KNOWN-003] UI stays in running state when engine start-up fails
-- **Where:** `engine.py:187/195/237` set `_running = False` on init failure; `app.py:185` keeps `OverlayApp._running = True` and `on_error` does not reset it.
-
+- **Where:** `app.py:185-190` set `_running = True`, start the top bar state and the 1 s timer before `engine.start` (`app.py:203`); `on_error` (`app.py:408-413`) only updates the badge and skip pill. Engine-side failures at `engine.py:187`, `195`, `237` set only the engine's `_running = False`.
+- **Trigger:** any init failure reported through `error`: missing AssemblyAI key at engine level, Whisper load failure, `Coach` construction failure (invalid provider SDK, bad key format), contexts read failure (KNOWN-203).
+- **Reproduced (2026-10-28) through `OverlayApp`:** after the error `_running=True`, timer active, badge `Error`. First Start press (Alt+4) calls `stop_meeting` (engine `stop` count 1, no start); only the second press calls `engine.start`.
+- **Impact:** the UI shows a running meeting with an advancing timer and no audio/STT/LLM; the user must press Start twice to recover.
+- **Proposed fix:** add an engine signal for init outcome (e.g. `started(bool)`) or treat errors received while the engine reports `not running` as a start failure: call `stop_meeting()` (UI-only reset) and keep the error visible.
 - **Test:** `tests/test_app.py::TestMeeting::test_initialization_error_restores_idle`
-
 ### [KNOWN-701] Capture context budget ignores line separators
 - **Where:** `engine.py:541` (`_contexto`, capture branch)
 - **Behavior:** the 8000-char budget sums line lengths but not the `\n` joiners, so the joined context can exceed `LIMITE_CHARS_CAPTURA`.
