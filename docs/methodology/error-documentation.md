@@ -69,6 +69,12 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Behavior:** floor division: `+60 → 0` notches but `-60 → -1`; `+180 → 1` but `-180 → -2`. High-resolution wheels/touchpads scroll down on every small step and never scroll up on small steps.
 - **Test:** `tests/test_wheelscroll.py::test_wheel_partial_notch_down_mirrors_up`
 
+### [KNOWN-601] `speech_threshold` slider cannot represent its default value
+- **Where:** `settings_window.py:630-633` (`_number_control`), field schema at `settings_window.py:272` (min 0.001, step 0.002, max 0.1)
+- **Behavior:** slider positions are `0.001 + k*0.002`; `0.012` maps to `round(5.5) = 6` → displays and, after any slider move, saves `0.013`. The top position yields `0.101` (`round(49.5) = 50`), above the declared max.
+- **Repro:** config `speech_threshold=0.012` (default) → label `0.013` (expected `0.012`).
+- **Test:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`
+
 ## Suspected issues — from code review, not yet covered by tests
 
 ### [KNOWN-001] Unsynchronized iteration over session history
