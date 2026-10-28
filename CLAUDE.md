@@ -344,7 +344,7 @@ From WSL the Windows venv runs through interop (`.venv/Scripts/python.exe`); fro
 - Build the exe: `.venv\Scripts\python.exe build_exe.py` → `dist\Armony.exe`
 - Install dev dependencies: `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt`
 - Run tests (one file or test at a time): `.venv/Scripts/python.exe -m pytest tests/<file>.py -v`
-- Coverage for a module: `.venv/Scripts/python.exe -m pytest tests/<file>.py --cov=<module> --cov-report=term-missing`
+- Coverage: `.venv/Scripts/python.exe -m pytest tests/<file>.py --cov=. --cov-report=term-missing` and read the module rows (`--cov=contexts` would measure the `contexts/` data dir, not `contexts.py`)
 
 ## Testing constraints
 - Never run the full suite: only the files or tests for the change. Max 20 tests per batch and 3 test commands per cycle.
