@@ -29,6 +29,10 @@ BLOCK = 341
 class Span:
     start_s: float
     end_s: float
+    speech_end_s: float       # last voiced instant; clips carry trailing silence
+
+    def scaled(self, k):
+        return Span(self.start_s * k, self.end_s * k, self.speech_end_s * k)
 
 
 @dataclass
@@ -37,6 +41,23 @@ class Final:
     audio_s: float            # seconds of session audio sent by then
     text: str
     provider_latency_ms: int  # StreamingSTT's own estimate
+
+
+def speech_end(clip, frame=320, floor_db=-35.0):
+    """Samples up to the last 20 ms frame within ``floor_db`` of the loudest.
+
+    Read-speech datasets leave up to a couple of seconds of silence after the
+    last word, and the provider closes the turn inside it. Latency has to be
+    measured from the end of the voice, not from the end of the file.
+    """
+    n = clip.size // frame
+    if n == 0:
+        return clip.size
+    rms = np.sqrt(np.mean(clip[:n * frame].reshape(n, frame) ** 2, axis=1))
+    if rms.max() <= 0:
+        return clip.size
+    voiced = np.nonzero(rms >= rms.max() * 10 ** (floor_db / 20))[0]
+    return int((voiced[-1] + 1) * frame)
 
 
 def build_session(clips, gap_s=2.0, lead_s=0.5, tail_s=4.0):
@@ -50,11 +71,37 @@ def build_session(clips, gap_s=2.0, lead_s=0.5, tail_s=4.0):
             parts.append(gap)
             pos += gap.size
         parts.append(clip.astype(np.float32))
-        spans.append(Span(pos / SAMPLE_RATE, (pos + clip.size) / SAMPLE_RATE))
+        spans.append(Span(pos / SAMPLE_RATE, (pos + clip.size) / SAMPLE_RATE,
+                          (pos + speech_end(clip)) / SAMPLE_RATE))
         pos += clip.size
     # Trailing silence lets the provider close the last turn before we hang up.
     parts.append(np.zeros(int(tail_s * SAMPLE_RATE), dtype=np.float32))
     return np.concatenate(parts), spans
+
+
+def simulate_capture(audio, mode, device_rate=48000, frames=1024):
+    """Pass 16 kHz audio through the capture path's resampling.
+
+    The clip is first brought to the device rate (as WASAPI delivers it), then
+    cut into ``frames``-sized reads and brought back to 16 kHz:
+      - "stateless": one ``soxr.resample`` call per read, what audio.py does
+        today (no filter state across reads)
+      - "stream": one ``soxr.ResampleStream`` across reads
+    """
+    import soxr
+    if mode in (None, "none"):
+        return audio
+    dev = soxr.resample(audio, SAMPLE_RATE, device_rate).astype(np.float32)
+    reads = [dev[i:i + frames] for i in range(0, dev.size, frames)]
+    if mode == "stateless":
+        out = [soxr.resample(r, device_rate, SAMPLE_RATE) for r in reads]
+    elif mode == "stream":
+        rs = soxr.ResampleStream(device_rate, SAMPLE_RATE, 1, dtype="float32")
+        out = [rs.resample_chunk(r, last=(k == len(reads) - 1))
+               for k, r in enumerate(reads)]
+    else:
+        raise ValueError(f"unknown capture mode {mode!r}")
+    return np.concatenate(out).astype(np.float32)
 
 
 def play(audio, sink, speed=1.0, block=BLOCK, clock=time.monotonic,
@@ -75,12 +122,14 @@ def play(audio, sink, speed=1.0, block=BLOCK, clock=time.monotonic,
 
 
 def run_session(make_stt, samples, gap_s=2.0, speed=1.0, connect_timeout=15.0,
-                clock=time.monotonic):
+                clock=time.monotonic, capture=None):
     """Stream ``samples`` through a client built by ``make_stt`` and score it.
 
     make_stt(on_partial, on_final, on_error) must return an object with
     start(), stop(), feed(block_f32) and a ``connected`` property, i.e. a
     StreamingSTT or a test double.
+
+    capture: optional ``simulate_capture`` mode applied to the session audio.
     """
     finals, partials, errors = [], [], []
     sent = [0]                 # samples handed to the client so far
@@ -91,8 +140,15 @@ def run_session(make_stt, samples, gap_s=2.0, speed=1.0, connect_timeout=15.0,
         on_error=errors.append,
     )
     audio, spans = build_session([s.audio for s in samples], gap_s)
-    ends = [round(sp.end_s * SAMPLE_RATE) for sp in spans]
-    end_sent_at = []           # clock when each clip's last sample went out
+    if capture not in (None, "none"):
+        processed = simulate_capture(audio, capture)
+        # Per-read resampling can drift by a fraction of a sample per read;
+        # keep the clip boundaries on the processed timeline.
+        k = processed.size / audio.size
+        spans = [sp.scaled(k) for sp in spans]
+        audio = processed
+    ends = [round(sp.speech_end_s * SAMPLE_RATE) for sp in spans]
+    end_sent_at = []           # clock when each clip's last voiced sample went out
 
     def sink(block):
         sent[0] += block.size
@@ -119,12 +175,18 @@ def run_session(make_stt, samples, gap_s=2.0, speed=1.0, connect_timeout=15.0,
         "speech_seconds": round(sum(s.seconds for s in samples), 2),
         "partials": len(partials),
         "errors": errors,
+        # Raw material to recompute any metric later without paying a rerun.
+        "spans": [vars(sp) for sp in spans],
+        "finals": [{"t": round(f.t - t_start, 3), "audio_s": round(f.audio_s, 3),
+                    "text": f.text, "provider_latency_ms": f.provider_latency_ms}
+                   for f in finals],
+        "speech_end_sent_t": [round(t - t_start, 3) for t in end_sent_at],
     })
     return report
 
 
 def summarize(samples, spans, finals, end_sent_at):
-    """end_sent_at[i]: clock when clip i's last sample was sent."""
+    """end_sent_at[i]: clock when clip i's last voiced sample was sent."""
     starts = [sp.start_s for sp in spans]
     owned = [[] for _ in samples]
     unassigned = []
@@ -135,8 +197,8 @@ def summarize(samples, spans, finals, end_sent_at):
     per_clip, fin_latency = [], []
     for i, (sample, span, mine) in enumerate(zip(samples, spans, owned)):
         hyp = " ".join(f.text for f in mine)
-        after_end = [f for f in mine if f.audio_s >= span.end_s]
-        # Time from the last spoken sample to the final that closes the turn:
+        after_end = [f for f in mine if f.audio_s >= span.speech_end_s]
+        # Time from the last voiced sample to the final that closes the turn:
         # end-of-turn detection plus transcription plus network.
         latency = None
         if after_end and i < len(end_sent_at):

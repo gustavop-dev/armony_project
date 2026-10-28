@@ -4,7 +4,8 @@
 
 Sends real audio to the provider and is billed by connected time, so it shows
 the estimated cost and asks before connecting (skip with --yes). The API key
-comes from ASSEMBLYAI_API_KEY or, failing that, from the app's config.json.
+comes from ASSEMBLYAI_API_KEY or, failing that, from the app's config.json
+(source checkout first, then %APPDATA%\\Armony).
 """
 import argparse
 import json
@@ -21,11 +22,26 @@ USD_PER_HOUR = 0.45
 
 
 def _api_key():
+    """Env var first, then the config of a source checkout, then the one the
+    installed .exe keeps in %APPDATA%\\Armony (see config.data_dir)."""
     key = os.environ.get("ASSEMBLYAI_API_KEY")
     if key:
         return key
     import config
-    return config.load_config().get("assemblyai_api_key") or ""
+    import secretstore
+    candidates = [config.CONFIG_PATH]
+    if os.environ.get("APPDATA"):
+        candidates.append(os.path.join(os.environ["APPDATA"], "Armony", "config.json"))
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8") as f:
+                stored = json.load(f).get("assemblyai_api_key") or ""
+        except (OSError, ValueError):
+            continue
+        key = secretstore.revelar(stored)
+        if key:
+            return key
+    return ""
 
 
 def _git_rev():
@@ -48,6 +64,9 @@ def main(argv=None):
     ap.add_argument("--model", default="universal-3-5-pro")
     ap.add_argument("--eot", type=float, default=0.4,
                     help="end_of_turn_confidence_threshold")
+    ap.add_argument("--capture", choices=["none", "stateless", "stream"],
+                    default="none",
+                    help="simulate audio.py resampling from a 48 kHz device")
     ap.add_argument("--speed", type=float, default=1.0,
                     help="playback speed; keep 1.0 against the real provider")
     ap.add_argument("--cache", default=".stt_eval_cache")
@@ -80,7 +99,8 @@ def main(argv=None):
                             language=args.language, model=args.model,
                             end_of_turn_threshold=args.eot)
 
-    report = run_session(make_stt, samples, gap_s=args.gap, speed=args.speed)
+    report = run_session(make_stt, samples, gap_s=args.gap, speed=args.speed,
+                         capture=args.capture)
     report["run"] = {
         "dataset": f"fleurs/{args.lang}/{args.split}",
         "limit": args.limit,
@@ -89,13 +109,14 @@ def main(argv=None):
         "model": args.model,
         "eot": args.eot,
         "speed": args.speed,
+        "capture": args.capture,
         "git": _git_rev(),
         "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
 
     os.makedirs(args.out, exist_ok=True)
     path = os.path.join(args.out, f"{time.strftime('%Y%m%d-%H%M%S')}-fleurs-"
-                                  f"{args.lang}-{args.limit}.json")
+                                  f"{args.lang}-{args.limit}-{args.capture}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 

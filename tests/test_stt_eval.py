@@ -14,7 +14,7 @@ import pytest
 
 from stt_eval import fleurs
 from stt_eval.replay import (BLOCK, SAMPLE_RATE, build_session, play,
-                             run_session)
+                             run_session, simulate_capture, speech_end)
 from stt_eval.scoring import score_text
 from stt_eval.textnorm import normalize
 
@@ -75,6 +75,44 @@ def test_play_feeds_everything_paced_to_block_end():
     assert [c.size for c in fed] == [BLOCK, BLOCK, BLOCK, 10]
     assert now[0] == pytest.approx(100.0 + audio.size / SAMPLE_RATE)
     assert sleeps[0] == pytest.approx(BLOCK / SAMPLE_RATE)
+
+
+def _tone(seconds=1.0, hz=440.0):
+    t = np.arange(int(seconds * SAMPLE_RATE)) / SAMPLE_RATE
+    return (0.5 * np.sin(2 * np.pi * hz * t)).astype(np.float32)
+
+
+def test_speech_end_ignores_trailing_silence():
+    clip = np.concatenate([_tone(1.0), np.zeros(SAMPLE_RATE, np.float32)])
+    assert speech_end(clip) == SAMPLE_RATE
+    assert speech_end(np.zeros(SAMPLE_RATE, np.float32)) == SAMPLE_RATE
+
+
+def test_build_session_records_speech_end():
+    clip = np.concatenate([_tone(1.0), np.zeros(SAMPLE_RATE // 2, np.float32)])
+    _, spans = build_session([clip], lead_s=0.5)
+    assert spans[0].speech_end_s == pytest.approx(1.5)
+    assert spans[0].end_s == pytest.approx(2.0)
+
+
+def test_simulate_capture_stream_matches_one_shot_resampling():
+    x = _tone()
+    y = simulate_capture(x, "stream")
+    assert y.size == x.size
+    assert np.max(np.abs(y[200:-200] - x[200:-200])) < 0.01
+
+
+def test_simulate_capture_stateless_drifts_and_distorts():
+    x = _tone(seconds=3.0)
+    y = simulate_capture(x, "stateless")
+    # 1024 reads at 48 kHz give 341.33 samples each; the fraction is lost.
+    assert y.size < x.size
+    assert simulate_capture(x, "none") is x
+
+
+def test_simulate_capture_rejects_unknown_mode():
+    with pytest.raises(ValueError):
+        simulate_capture(_tone(0.1), "bogus")
 
 
 class FakeSTT:
