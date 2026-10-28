@@ -75,6 +75,27 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Repro:** config `speech_threshold=0.012` (default) → label `0.013` (expected `0.012`).
 - **Test:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`
 
+### [KNOWN-501] Final answer is painted twice after `cerrar_respuesta`
+- **Where:** `overlay_ui.py:1378-1382` (`TranscriptPanel.cerrar_respuesta`)
+- **Behavior:** with a repaint pending, it repaints immediately but leaves the 90 ms throttle timer armed; when it fires, `_burbuja_resp` is `None` and `_repintar` opens a new bubble with the same answer. Production path: `app.on_resp_done`.
+- **Repro:** `clear_answer(); append_answer("Final words"); cerrar_respuesta()`, wait 240 ms → 2 suggestion bubbles (expected 1).
+- **Test:** `tests/test_overlay_ui_thread.py::test_cerrar_respuesta_does_not_duplicate_answer`
+
+### [KNOWN-502] Question caret never blinks
+- **Where:** `overlay_ui.py:1242` (`_animate`); `_question_text` initialized at `overlay_ui.py:964` and never assigned again.
+- **Repro:** `set_state("listening"); set_question("Tell me about")`, wait 1.5 s → caret stays on (expected: toggles).
+- **Test:** `tests/test_overlay_ui_thread.py::test_caret_blinks_while_listening`
+
+### [KNOWN-503] Drag mixin handlers are shadowed by `QWidget`
+- **Where:** `overlay_ui.py:746`, `957`, `1488` — `class X(QtWidgets.QWidget, _Draggable)`; MRO resolves `mousePressEvent`/`mouseMoveEvent` to `QWidget` first, so `_Draggable` (lines 160-170) never runs.
+- **Repro:** `TopBar` at (100,100), press at (110,110), move to (160,140) → stays at (100,100) (expected (150,130)).
+- **Test:** `tests/test_overlay_ui_widgets.py::test_topbar_drag_from_empty_area_moves_window`
+
+### [KNOWN-504] Copy-label reset fires on a destroyed `CodeBlock`
+- **Where:** `overlay_ui.py:513` (`CodeBlock._copiar`, 1.4 s `QTimer.singleShot` lambda on `self.lbl_copy`)
+- **Behavior:** re-rendering a streamed answer, pruning rows or `limpiar_hilo` destroys the block; the pending lambda raises `RuntimeError: Internal C++ object already deleted` in the event loop.
+- **Test:** `tests/test_overlay_ui_widgets.py::test_code_block_destroyed_after_copy_raises_nothing`
+
 ## Suspected issues — from code review, not yet covered by tests
 
 ### [KNOWN-001] Unsynchronized iteration over session history
