@@ -4,13 +4,17 @@ Every test runs with user data redirected to a temp dir, outbound network
 blocked and the process-wide metrics singleton reset, so no test can read the
 real config.json, call a paid API or leak samples into another test.
 """
+import os
 import socket
 
-import pytest
+# Qt widgets render without a display (set before any Qt import).
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import config
-import contexts
-from metrics import metricas
+import pytest  # noqa: E402
+
+import config  # noqa: E402
+import contexts  # noqa: E402
+from metrics import metricas  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
