@@ -46,6 +46,18 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Repro:** create `ctx-1.MD`; `write_all(list_contexts())` → directory empty (expected 1 file). Reproduced on Windows.
 - **Test:** `tests/test_contexts.py`
 
+### [KNOWN-301] `preroll=0` keeps the whole silence history
+- **Where:** `audio.py:74` (`_Segmenter.process`, slice `[-self.preroll_samples:]`)
+- **Behavior:** with `preroll_samples == 0` the slice is `[-0:]`, which returns the full buffer; pre-roll grows during silence and is prepended to the utterance.
+- **Repro:** `_Segmenter(preroll=0.0)` fed 3 silent + 3 speech + 5 silent blocks of 1600 samples (test params) → first speech sample at index 4800 and utterance cut as `maxlen` (expected index 0). Not reachable with the default `preroll=0.3`.
+- **Test:** `tests/test_audio.py`
+
+### [KNOWN-302] Speech-onset block longer than the pre-roll window loses its start
+- **Where:** `audio.py:74-77`
+- **Behavior:** the block that triggers speech enters the buffer only through the pre-roll slice; if it is longer than the window its beginning is dropped, while `_speech_samples` counts the full block.
+- **Repro:** `preroll=0.05` (800 samples), 3 speech blocks of 1600 + 5 silent → 4000 speech samples kept (expected 4800). Not reachable with the engine's ~341-sample blocks and default `preroll=0.3`.
+- **Test:** `tests/test_audio.py`
+
 ## Suspected issues — from code review, not yet covered by tests
 
 ### [KNOWN-001] Unsynchronized iteration over session history
@@ -68,6 +80,7 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Effect:** runtime failures leave no trace on disk.
 
 ## Test infrastructure notes
+- `faster_whisper` is not installed in `.venv`; `tests/test_transcribe.py` injects a stub module. Offline mode cannot run from this venv as-is.
 - `--cov=contexts` measures the `contexts/` data directory instead of `contexts.py`. Use `--cov=. --cov-report=term-missing` and read the module rows.
 
 ## Resolved issues
