@@ -21,8 +21,6 @@ desarrollo).
 |---|---|---|---|---|---|
 | `anthropic_api_key` | API key de Anthropic | Texto (oculto) | `sk-ant-...` | *(vacío)* | Credencial para llamar a Claude. Sin ella no arranca la reunión (salvo Modo prueba). |
 | `llm_model` | Modelo | Desplegable | `claude-haiku-4-5`, `claude-opus-4-8`, `claude-sonnet-5` | `claude-haiku-4-5` | Modelo que genera la respuesta. Haiku = más rápido; Opus = más inteligente. |
-| `whisper_size` | Tamaño Whisper | Desplegable | `tiny`, `base`, `small`, `medium` | `base` | Modelo de transcripción local. Mayor = más preciso pero más lento. |
-| `whisper_device` | Dispositivo STT | Desplegable | `auto`, `cpu`, `cuda` | `auto` | Dónde corre Whisper. `cuda` = GPU NVIDIA; `cpu` = procesador; `auto` = detecta. |
 | `language` | Idioma | Desplegable | `es`, `en`, `auto` | `es` | Idioma del reconocimiento de voz. `auto` = detección automática. |
 
 ## 🪟 Overlay
@@ -37,19 +35,14 @@ desarrollo).
 
 | Clave | Etiqueta UI | Tipo | Rango | Default | Qué hace |
 |---|---|---|---|---|---|
-| `gain_system` | Ganancia reunión (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica el audio del sistema antes de medir nivel y detectar voz. |
+| `gain_system` | Ganancia reunión (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica el audio del sistema antes de medir nivel y transcribir. |
 | `gain_mic` | Ganancia micrófono (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica tu micro. Ojo: amplifica también el ruido de fondo. |
-| `speech_threshold` | Umbral de voz | Numérico | 0.001 – 0.100 (paso 0.002) | `0.012` | Energía mínima para considerar que hay voz. Menor = más sensible. |
-| `transcribe_mic` | Transcribir también mi voz | Casilla | on/off | `on` | Añade tus intervenciones al contexto (para que la IA no te sugiera repetir). Nunca dispara una sugerencia por sí sola. |
-| `mic_echo_gate` | Anti-eco del micrófono | Casilla | on/off | `on` | Ignora el micro mientras suena la reunión, para no transcribir el eco de los altavoces. Con auriculares es indiferente. |
-| `auto_normalize` | Normalizar cada frase | Casilla | on/off | `on` | Lleva cada frase al nivel óptimo antes de Whisper. Resuelve el audio flojo mejor que la ganancia manual. |
 
 ## ✂️ Detección de frases
 
 | Clave | Etiqueta UI | Tipo | Rango | Default | Qué hace |
 |---|---|---|---|---|---|
-| `silence_hang` | Pausa de fin de turno (s) | Numérico | 0.3 – 2.0 (paso 0.1) | `0.7` | Silencio necesario para dar la frase por terminada y disparar la respuesta. Bajo = reacciona antes pero puede cortar. |
-| `max_utterance` | Corte de monólogo largo (s) | Numérico | 3 – 20 (paso 1) | `8.0` | Corte de seguridad en monólogos sin pausas. Esos fragmentos se transcriben pero NO disparan respuesta. |
+| `silence_hang` | Pausa de fin de turno (s) | Numérico | 0.3 – 2.0 (paso 0.1) | `0.7` | Pausa que se espera tras un turno cerrado antes de responder; agrupa las frases seguidas de una misma intervención. Bajo = reacciona antes pero puede responder a media intervención. |
 
 ## 🧠 Coach
 

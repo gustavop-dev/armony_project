@@ -222,8 +222,8 @@ def _schema():
                  hint="El código ocupa: quedarse corto lo deja cortado a medias."),
             dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
                  secret=True, placeholder="…",
-                 hint="Transcripción en vivo en la nube. Sin ella solo funciona "
-                      "el modo offline."),
+                 hint="Transcripción en vivo en la nube. Sin ella no se puede "
+                      "iniciar una reunión."),
             dict(key="language", label="Idioma", type="select",
                  hint="Idioma del reconocimiento de voz. Auto detecta solo y "
                       "admite cambios de idioma a mitad de frase.",
@@ -232,24 +232,6 @@ def _schema():
                  type="number", min=0.1, max=0.9, step=0.05, unit="",
                  hint="Cuánta seguridad exige para dar por terminado el turno. "
                       "Bajo = responde antes; alto = espera más y se corta menos."),
-         ]),
-        ("offline", "chip", "Modo offline",
-         "Transcripción local con Whisper: sin internet y sin que el audio salga "
-         "del equipo. A cambio no hay texto en vivo y hay más retardo.", [
-            dict(key="offline_mode", label="Activar modo offline", type="toggle",
-                 hint="Apagado: transcribe AssemblyAI en vivo. Encendido: Whisper "
-                      "local en este equipo."),
-            dict(key="whisper_size", label="Tamaño Whisper", type="select",
-                 hint="Solo en modo offline. En GPU, 'small' mejora bastante la "
-                      "transcripción y sigue siendo rápido (recomendado).",
-                 options=[("tiny", "1 · tiny — el más rápido, menos preciso"),
-                          ("base", "2 · base — equilibrado"),
-                          ("small", "3 · small — preciso (recomendado)"),
-                          ("medium", "4 · medium — máxima precisión, más lento")]),
-            dict(key="whisper_device", label="Dispositivo STT", type="select",
-                 hint="Solo en modo offline. cuda = GPU NVIDIA · cpu = procesador "
-                      "· auto = detecta.",
-                 options=[("auto", "auto"), ("cpu", "cpu"), ("cuda", "cuda")]),
          ]),
         ("overlay", "window", "Overlay",
          "Cómo se ve y se comporta la ventana flotante sobre tus reuniones.", [
@@ -262,35 +244,20 @@ def _schema():
                  hint="Transparencia de las ventanas. Bajo = se ve más el fondo."),
          ]),
         ("audio", "microphone", "Sensibilidad de audio",
-         "Cómo se capta y limpia el audio antes de detectar voz.", [
+         "Cómo se capta el audio antes de transcribirlo.", [
             dict(key="gain_system", label="Ganancia reunión", type="number",
                  min=0.5, max=10, step=0.5, unit="x",
                  hint="Amplifica el audio del sistema antes de medir nivel."),
             dict(key="gain_mic", label="Ganancia micrófono", type="number",
                  min=0.5, max=10, step=0.5, unit="x",
                  hint="Amplifica tu micro (y también el ruido de fondo)."),
-            dict(key="speech_threshold", label="Umbral de voz", type="number",
-                 min=0.001, max=0.1, step=0.002, unit="",
-                 hint="Energía mínima para considerar que hay voz. Menor = más sensible."),
-            dict(key="transcribe_mic", label="Transcribir también mi voz", type="toggle",
-                 hint="Solo en modo offline. Añade tus intervenciones al contexto; "
-                      "nunca dispara una sugerencia sola."),
-            dict(key="mic_echo_gate", label="Anti-eco del micrófono", type="toggle",
-                 hint="Ignora el micro mientras suena la reunión. Con auriculares es indiferente."),
-            dict(key="auto_normalize", label="Normalizar cada frase", type="toggle",
-                 hint="Solo en modo offline: lleva cada frase al nivel óptimo antes "
-                      "de Whisper."),
          ]),
         ("phrases", "scissors", "Detección de frases",
          "Cuándo se da una frase por terminada y se dispara la respuesta.", [
             dict(key="silence_hang", label="Pausa de fin de turno", type="number",
                  min=0.3, max=2, step=0.1, unit=" s",
-                 hint="Pausa que espera antes de responder. Con la transcripción en "
-                      "vivo agrupa las frases seguidas de una misma intervención."),
-            dict(key="max_utterance", label="Corte de monólogo largo", type="number",
-                 min=3, max=20, step=1, unit=" s",
-                 hint="Solo en modo offline. Corte de seguridad en monólogos; esos "
-                      "fragmentos NO disparan respuesta."),
+                 hint="Pausa que espera antes de responder. Agrupa las frases "
+                      "seguidas de una misma intervención."),
          ]),
         ("coach", "chat", "Coach",
          "Cómo se comporta la IA. Un prompt por idioma; el qué sabe vive en Contexts.", [
