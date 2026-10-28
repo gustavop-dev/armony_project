@@ -1,0 +1,623 @@
+"""OverlayApp tests with real Qt widgets and isolated OS/engine boundaries."""
+import base64
+
+import pytest
+from PySide6 import QtCore, QtGui, QtWidgets
+
+import app
+import config
+
+
+class FakeEngine(QtCore.QObject):
+    sysLevel = QtCore.Signal(int)
+    micLevel = QtCore.Signal(int)
+    sttLatency = QtCore.Signal(int)
+    e2eLatency = QtCore.Signal(int)
+    transcript = QtCore.Signal(str, str)
+    partial = QtCore.Signal(str)
+    noAnswer = QtCore.Signal(str)
+    respStart = QtCore.Signal()
+    respDelta = QtCore.Signal(str)
+    respDone = QtCore.Signal()
+    status = QtCore.Signal(str)
+    error = QtCore.Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.starts = []
+        self.stops = 0
+        self.answers = 0
+        self.screenshots = []
+        self.start_error = None
+
+    def start(self, cfg, test_mode=False):
+        self.starts.append((dict(cfg), test_mode))
+        if self.start_error is not None:
+            self.error.emit(self.start_error)
+
+    def stop(self):
+        self.stops += 1
+
+    def answer_now(self):
+        self.answers += 1
+
+    def request_screenshots(self, images):
+        self.screenshots.append(images)
+
+
+class FakeWheel:
+    def __init__(self, callback):
+        self.callback = callback
+        self.installed = False
+        self.zones = None
+
+    def install(self):
+        self.installed = True
+
+    def uninstall(self):
+        self.installed = False
+
+    def set_zones(self, zones):
+        self.zones = zones
+
+
+class FakeScreen:
+    def __init__(self, pixmap):
+        self.pixmap = pixmap
+        self.windows = []
+
+    def grabWindow(self, window):
+        self.windows.append(window)
+        return self.pixmap
+
+    def devicePixelRatio(self):
+        return 1.0
+
+
+@pytest.fixture
+def cfg():
+    return dict(config.DEFAULTS, anthropic_api_key="fake-anthropic",
+                openai_api_key="fake-openai", assemblyai_api_key="fake-stt")
+
+
+@pytest.fixture
+def native(monkeypatch):
+    calls = {"capture": [], "activate": [], "click": []}
+    monkeypatch.setattr(app, "WheelForwarder", FakeWheel)
+    monkeypatch.setattr(app, "set_capture_protection",
+                        lambda handle, active: calls["capture"].append((int(handle), active)))
+    monkeypatch.setattr(app, "set_no_activate",
+                        lambda handle: calls["activate"].append(int(handle)))
+    monkeypatch.setattr(app, "set_click_through",
+                        lambda handle, active: calls["click"].append((int(handle), active)))
+    monkeypatch.setattr(QtWidgets.QApplication, "mouseButtons", lambda: QtCore.Qt.NoButton)
+    monkeypatch.setattr(QtGui.QCursor, "pos", lambda: QtCore.QPoint(-10000, -10000))
+    return calls
+
+
+@pytest.fixture
+def ui(qtbot, monkeypatch, cfg, native):
+    monkeypatch.setattr(app, "CoachEngine", FakeEngine)
+    monkeypatch.setattr(app.cfg_mod, "load_config", lambda: dict(cfg))
+    controller = app.OverlayApp()
+    for widget in (controller.top, controller.panel, controller.collapsed):
+        qtbot.addWidget(widget)
+    controller._ct_timer.stop()
+    yield controller
+    if controller.settings is not None:
+        controller.settings.close()
+    if controller.wheel.installed:
+        controller.shutdown()
+    QtWidgets.QApplication.processEvents()
+
+
+@pytest.fixture
+def settings_assets(monkeypatch, tmp_path):
+    """Keep the real settings widget's generated icon in its temporary directory."""
+    import icons
+
+    save_png = icons.save_png
+    monkeypatch.setattr(icons, "save_png", lambda name, color, size, path:
+                        save_png(name, color, size, str(tmp_path / "chevron.png")))
+
+
+def open_registered_settings(ui, qtbot):
+    ui.open_settings()
+    qtbot.addWidget(ui.settings)
+    return ui.settings
+
+
+def badge(ui):
+    return ui.panel.badge._lbl.text()
+
+
+class TestMeeting:
+    @pytest.mark.parametrize("provider,key,expected", [
+        ("anthropic", "anthropic_api_key", "Add your Anthropic API key in Settings (⚙) to start"),
+        ("openai", "openai_api_key", "Add your OpenAI API key in Settings (⚙) to start"),
+    ])
+    def test_missing_provider_key_blocks_start(self, ui, cfg, provider, key, expected):
+        """Catch provider validation using the other provider's credentials."""
+        cfg.update(llm_provider=provider)
+        cfg[key] = ""
+
+        ui.start_meeting()
+
+        assert badge(ui) == expected
+        assert ui.engine.starts == []
+        assert ui._running is False
+        assert ui._timer.isActive() is False
+
+    @pytest.mark.parametrize("test_mode", [False, True])
+    def test_cloud_requires_stream_key(self, ui, cfg, test_mode):
+        """Catch cloud test mode bypassing the required STT credential."""
+        cfg.update(assemblyai_api_key="", test_mode=test_mode)
+
+        ui.start_meeting()
+
+        assert badge(ui) == "Add your AssemblyAI key in Settings (⚙), or turn on Offline mode"
+        assert ui.engine.starts == []
+        assert ui._running is False
+
+    @pytest.mark.parametrize("test_mode,offline,key,stt_key", [
+        (False, False, "fake-key", "fake-stt"),
+        (True, False, "", "fake-stt"),
+        (False, True, "fake-key", ""),
+        (True, True, "", ""),
+    ])
+    def test_start_uses_reloaded_configuration(self, ui, cfg, test_mode, offline, key, stt_key):
+        """Catch cached settings or key checks blocking valid offline/test sessions."""
+        cfg.update(test_mode=test_mode, offline_mode=offline, anthropic_api_key=key,
+                   assemblyai_api_key=stt_key, language="en")
+
+        ui.start_meeting()
+
+        assert ui.engine.starts == [(cfg, test_mode)]
+        assert ui._running is True
+        assert ui._timer.isActive() is True
+        assert ui._timer.interval() == 1000
+        assert ui.top.lbl_meeting.text() == "Stop meeting"
+        assert ui.top.lbl_timer.text() == "00:00"
+        assert ui.panel._state == "listening"
+        assert badge(ui) == "Loading…"
+
+    def test_stop_restores_idle(self, ui):
+        """Catch stopping a session leaving timer, listening state or latency visible."""
+        ui.start_meeting()
+        ui.engine.sttLatency.emit(250)
+        ui.engine.noAnswer.emit("no_question")
+
+        ui.stop_meeting()
+
+        assert ui._running is False
+        assert ui._timer.isActive() is False
+        assert ui.top.lbl_meeting.text() == "Start meeting"
+        assert ui.top.lbl_timer.text() == ""
+        assert ui.panel._state == "idle"
+        assert ui.panel.lat.text() == ""
+        assert ui.panel.skip_pill.isHidden() is True
+        assert badge(ui) == "Idle"
+        assert ui.engine.stops == 1
+
+    def test_toggle_starts_idle_meeting(self, ui):
+        """Catch the start/stop control failing to start an idle session."""
+        ui.toggle_meeting()
+
+        assert len(ui.engine.starts) == 1
+        assert ui.top.lbl_meeting.text() == "Stop meeting"
+
+    def test_toggle_stops_running_meeting(self, ui):
+        """Catch the start/stop control starting a second session."""
+        ui.start_meeting()
+
+        ui.toggle_meeting()
+
+        assert ui.engine.stops == 1
+        assert ui.top.lbl_meeting.text() == "Start meeting"
+
+    @pytest.mark.parametrize("elapsed,expected", [(0, "00:01"), (59, "01:00"), (3599, "60:00")])
+    def test_tick_formats_elapsed_time(self, ui, elapsed, expected):
+        """Catch minute rollover or missing zero padding in the meeting timer."""
+        ui._elapsed = elapsed
+
+        ui._tick()
+
+        assert ui.top.lbl_timer.text() == expected
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError,
+                       reason="[KNOWN-003] Engine initialization errors leave the UI running")
+    def test_initialization_error_restores_idle(self, ui):
+        """Catch a failed engine initialization leaving a false running UI."""
+        ui.engine.start_error = "No se pudo cargar Whisper: load failed"
+
+        ui.start_meeting()
+
+        assert (ui._running, ui._timer.isActive(), ui.top.lbl_meeting.text(),
+                ui.panel._state) == (False, False, "Start meeting", "idle")
+
+
+class TestActions:
+    @pytest.mark.parametrize("action", ["take_shot", "generate", "answer_now"])
+    def test_idle_action_requests_meeting(self, ui, action):
+        """Catch model or screen actions proceeding before a meeting starts."""
+        getattr(ui, action)()
+
+        assert badge(ui) == "Start the meeting first"
+        assert ui._shots == []
+        assert ui.engine.screenshots == []
+        assert ui.engine.answers == 0
+
+    @pytest.mark.parametrize("width,height,expected", [(1600, 800, (1280, 640)),
+                                                      (640, 320, (640, 320))])
+    def test_capture_encodes_scaled_png(self, ui, monkeypatch, width, height, expected):
+        """Catch oversized uploads, non-PNG encoding or unexpected screen selection."""
+        ui.start_meeting()
+        pixmap = QtGui.QPixmap(width, height)
+        pixmap.fill(QtGui.QColor("red"))
+        screen = FakeScreen(pixmap)
+        monkeypatch.setattr(QtWidgets.QApplication, "primaryScreen",
+                            staticmethod(lambda: screen))
+
+        ui.take_shot()
+
+        assert screen.windows == [0]
+        assert len(ui._shots) == 1
+        raw = base64.b64decode(ui._shots[0], validate=True)
+        assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+        decoded = QtGui.QImage.fromData(raw, "PNG")
+        assert (decoded.width(), decoded.height()) == expected
+        assert decoded.pixelColor(0, 0).name() == "#ff0000"
+        assert badge(ui) == "1 screenshot ready — Alt+3 to generate"
+        assert ui.top.keys_gen.isEnabled() is True
+        assert ui.engine.screenshots == []
+
+    def test_generate_requires_screenshots(self, ui):
+        """Catch Generate submitting an empty screenshot batch."""
+        ui.start_meeting()
+
+        ui.generate()
+
+        assert badge(ui) == "Take a screenshot first"
+        assert ui.engine.screenshots == []
+
+    def test_generate_transfers_snapshot(self, ui):
+        """Catch clearing the pending shots also clearing the submitted images."""
+        ui.start_meeting()
+        ui._shots = ["png-a", "png-b"]
+
+        ui.generate()
+
+        assert ui.engine.screenshots == [["png-a", "png-b"]]
+        assert ui._shots == []
+        assert ui._answer_lleva_capturas is True
+        assert ui.top.keys_gen.isEnabled() is False
+        assert badge(ui) == "Analyzing…"
+
+    def test_manual_answer_clears_skip_notice(self, ui):
+        """Catch forced answering retaining a stale no-question notice."""
+        ui.start_meeting()
+        ui.engine.noAnswer.emit("no_question")
+
+        ui.answer_now()
+
+        assert ui.engine.answers == 1
+        assert ui.panel.skip_pill.isHidden() is True
+        assert badge(ui) == "Answering…"
+
+    def test_toggle_hides_overlay(self, ui):
+        """Catch hiding the overlay also hiding the restore control."""
+        ui.toggle_overlay()
+
+        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == (False, False, True)
+        assert ui._visible is False
+
+    def test_toggle_restores_overlay(self, ui):
+        """Catch the restore control failing to restore both overlay windows."""
+        ui.toggle_overlay()
+
+        ui.toggle_overlay()
+
+        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == (True, True, False)
+        assert ui._visible is True
+
+
+class TestEvents:
+    @pytest.mark.parametrize("message,expected", [
+        ("Cargando modelo de transcripcion...", "Loading model…"),
+        ("Escuchando la reunion.", "Listening"),
+        ("Sigue hablando...", "Still talking…"),
+        ("Sin pregunta todavia: guardado como contexto.", "Context saved"),
+        ("Aun no hay nada que responder.", "Nothing to answer yet"),
+        ("Modelo listo.", "Loading…"),
+    ])
+    def test_engine_status_maps_to_badge(self, ui, message, expected):
+        """Catch untranslated engine messages or unrelated messages replacing the badge."""
+        ui.start_meeting()
+
+        ui.engine.status.emit(message)
+
+        assert badge(ui) == expected
+
+    @pytest.mark.parametrize("reason,expected", [
+        ("model_declined", "Not a question — Alt+5 to answer"),
+        ("no_question", "No question yet — Alt+5 to answer"),
+    ])
+    def test_no_answer_explains_reason(self, ui, reason, expected):
+        """Catch model refusal being indistinguishable from the lexical filter."""
+        ui.start_meeting()
+
+        ui.engine.noAnswer.emit(reason)
+
+        assert ui.panel.skip_pill.text() == expected
+        assert ui.panel.skip_pill.isHidden() is False
+
+    def test_partial_updates_live_bubble(self, ui):
+        """Catch live transcription failing to replace a stale skip notice."""
+        ui.start_meeting()
+        ui.engine.noAnswer.emit("no_question")
+
+        ui.engine.partial.emit("¿Podemos")
+
+        assert ui.panel._burbuja_viva._raw == "¿Podemos"
+        assert ui.panel.skip_pill.isHidden() is True
+
+    def test_system_transcript_closes_bubble(self, ui):
+        """Catch finalized participant speech remaining an editable partial."""
+        ui.start_meeting()
+        ui.engine.partial.emit("¿Podemos")
+
+        ui.engine.transcript.emit("system", "¿Podemos empezar?")
+
+        assert ui.panel._burbuja_viva is None
+        assert ui.panel._burbujas[-1]._raw == "¿Podemos empezar?"
+        assert badge(ui) == "Transcribing…"
+
+    def test_microphone_transcript_does_not_replace_question(self, ui):
+        """Catch local speech appearing as the other participant's question."""
+        ui.start_meeting()
+
+        ui.engine.transcript.emit("mic", "Sí.")
+
+        assert ui.panel._burbujas == []
+        assert badge(ui) == "Loading…"
+
+    def test_response_start_opens_answer_bubble(self, ui):
+        """Catch model output starting without a fresh generating bubble."""
+        ui.start_meeting()
+        ui.engine.noAnswer.emit("no_question")
+
+        ui.engine.respStart.emit()
+
+        assert ui._responding is True
+        assert ui.panel._state == "generating"
+        assert ui.panel._burbuja_resp._raw == ""
+        assert ui.panel.skip_pill.isHidden() is True
+        assert badge(ui) == "Drafting…"
+
+    def test_response_done_renders_final_delta(self, ui):
+        """Catch buffered final response text disappearing when generation finishes."""
+        ui.start_meeting()
+        ui.engine.respStart.emit()
+        ui.engine.respDelta.emit("Ready to start.")
+
+        ui.engine.respDone.emit()
+
+        assert ui._responding is False
+        assert ui.panel._burbuja_resp is None
+        assert ui.panel._burbujas[-1]._raw == "Ready to start."
+        assert ui.panel._state == "listening"
+        assert badge(ui) == "Listening"
+
+    def test_latency_signal_updates_label(self, ui):
+        """Catch STT latency signals disconnected from their displayed value."""
+        ui.start_meeting()
+
+        ui.engine.sttLatency.emit(250)
+
+        assert ui.panel.lat.text() == "250 ms"
+
+    def test_e2e_signal_updates_label(self, ui):
+        """Catch end-to-end latency signals disconnected from their displayed value."""
+        ui.start_meeting()
+
+        ui.engine.e2eLatency.emit(1250)
+
+        assert ui.panel.e2e.text() == "⚡ 1.2 s"
+
+    def test_error_preserves_existing_answer(self, ui):
+        """Catch an error erasing the suggestion already visible to the user."""
+        ui.start_meeting()
+        ui.engine.respStart.emit()
+        ui.engine.respDelta.emit("Keep this answer.")
+        ui.engine.respDone.emit()
+
+        ui.engine.error.emit("provider unavailable")
+
+        assert ui.panel._burbujas[-1]._raw == "Keep this answer."
+        assert badge(ui) == "Error"
+        assert ui.panel.skip_pill.text() == "Error: provider unavailable"
+
+
+class TestLateEvents:
+    @pytest.mark.parametrize("signal,args", [
+        ("status", ("Escuchando la reunion",)),
+        ("partial", ("late speech",)),
+        ("transcript", ("system", "late transcript")),
+        ("noAnswer", ("model_declined",)),
+        ("respStart", ()),
+        ("sttLatency", (500,)),
+        ("e2eLatency", (800,)),
+    ])
+    def test_stopped_ui_ignores_late_signal(self, ui, signal, args):
+        """Catch late engine events changing the idle UI after Stop."""
+        ui.start_meeting()
+        ui.stop_meeting()
+
+        getattr(ui.engine, signal).emit(*args)
+
+        assert badge(ui) == "Idle"
+        assert ui.panel._burbujas == []
+        assert ui.panel._state == "idle"
+        assert ui.panel.lat.text() == ""
+        assert ui.panel.e2e.text() == ""
+        assert ui.panel.skip_pill.isHidden() is True
+
+    def test_late_response_done_preserves_idle_badge(self, ui):
+        """Catch response completion restoring Listening after Stop."""
+        ui.start_meeting()
+        ui.engine.respStart.emit()
+        ui.engine.respDelta.emit("Final answer.")
+        ui.stop_meeting()
+
+        ui.engine.respDone.emit()
+
+        assert badge(ui) == "Idle"
+        assert ui.panel._state == "idle"
+        assert ui._responding is False
+
+
+class TestSettings:
+    def test_running_meeting_blocks_settings(self, ui):
+        """Catch configuration opening while an audio session is active."""
+        ui.start_meeting()
+
+        ui.open_settings()
+
+        assert ui.settings is None
+        assert badge(ui) == "Stop the meeting to open settings"
+
+    def test_settings_hides_overlay(self, ui, qtbot, settings_assets, cfg):
+        """Catch settings opening with stale configuration or overlapping overlays."""
+        cfg["language"] = "en"
+
+        window = open_registered_settings(ui, qtbot)
+
+        assert window.cfg["language"] == "en"
+        assert window.isVisible() is True
+        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == (False, False, False)
+        assert ui._ct_timer.isActive() is False
+
+    @pytest.mark.parametrize("action", ["toggle_meeting", "toggle_overlay", "answer_now", "open_settings"])
+    def test_settings_blocks_overlay_action(self, ui, qtbot, settings_assets, action):
+        """Catch shortcuts acting on the hidden overlay while settings is open."""
+        window = open_registered_settings(ui, qtbot)
+
+        getattr(ui, action)()
+
+        assert ui.settings is window
+        assert ui.engine.starts == []
+        assert ui.engine.answers == 0
+        assert ui._visible is True
+        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == (False, False, False)
+
+    @pytest.mark.parametrize("visible,expected", [(True, (True, True, False)),
+                                                (False, (False, False, True))])
+    def test_settings_closed_restores_visibility(self, ui, qtbot, settings_assets, visible, expected):
+        """Catch closing settings losing the previous expanded/collapsed state."""
+        ui._visible = visible
+        window = open_registered_settings(ui, qtbot)
+        ui._ct_state[ui.top] = True
+        window.close()
+
+        window.closed.emit()
+
+        assert ui.settings is None
+        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == expected
+        assert ui._ct_timer.interval() == 30
+        assert ui._ct_timer.isActive() is True
+        assert ui._ct_state == {}
+
+    def test_settings_saved_reloads_configuration(self, ui, qtbot, settings_assets, cfg):
+        """Catch saved configuration leaving the controller's cache stale."""
+        window = open_registered_settings(ui, qtbot)
+        cfg["window_opacity"] = 0.8
+
+        window.saved.emit()
+
+        assert ui.cfg["window_opacity"] == 0.8
+
+    def test_quit_from_settings_releases_resources(self, ui, qtbot, settings_assets, monkeypatch):
+        """Catch the settings close-app action leaving engine or mouse hook alive."""
+        window = open_registered_settings(ui, qtbot)
+        quits = []
+        monkeypatch.setattr(QtWidgets.QApplication, "quit", lambda: quits.append("quit"))
+
+        window.closeApp.emit()
+
+        assert quits == ["quit"]
+        assert ui.settings is None
+        assert window.isVisible() is False
+        assert ui.engine.stops == 1
+        assert ui.wheel.installed is False
+
+
+class TestWindows:
+    @pytest.mark.parametrize("value,expected", [(-1, 0.15), (0.6, 0.6), (2, 1.0)])
+    def test_opacity_is_clamped(self, ui, value, expected):
+        """Catch opacity settings making an overlay invisible or exceeding full opacity."""
+        ui.cfg["window_opacity"] = value
+
+        ui._apply_opacity()
+
+        assert ui.top.windowOpacity() == pytest.approx(expected, abs=1 / 255)
+        assert ui.panel.windowOpacity() == pytest.approx(expected, abs=1 / 255)
+        assert ui.collapsed.windowOpacity() == pytest.approx(expected, abs=1 / 255)
+
+    def test_constructor_protects_all_windows(self, ui, native):
+        """Catch a new overlay window missing capture protection or no-activate styling."""
+        assert native["capture"] == [(int(ui.top.winId()), True),
+                                      (int(ui.panel.winId()), True),
+                                      (int(ui.collapsed.winId()), True)]
+        assert native["activate"] == [int(ui.top.winId()), int(ui.panel.winId()), int(ui.collapsed.winId())]
+        assert ui.wheel.installed is True
+
+    def test_click_through_only_writes_on_change(self, ui, native):
+        """Catch redundant Win32 style writes on every polling tick."""
+        ui._update_click_through()
+
+        ui._update_click_through()
+
+        assert native["click"] == [(int(ui.top.winId()), True), (int(ui.panel.winId()), True)]
+
+    def test_interactive_control_disables_click_through(self, ui, native, monkeypatch):
+        """Catch the settings control remaining click-through under the cursor."""
+        ui._update_click_through()
+        native["click"].clear()
+        position = ui.top.btn_cfg.mapToGlobal(ui.top.btn_cfg.rect().center())
+        monkeypatch.setattr(QtGui.QCursor, "pos", lambda: position)
+
+        ui._update_click_through()
+
+        assert native["click"] == [(int(ui.top.winId()), False)]
+
+    def test_drag_suspends_click_through_changes(self, ui, native, monkeypatch):
+        """Catch polling changing mouse transparency midway through a drag."""
+        monkeypatch.setattr(QtWidgets.QApplication, "mouseButtons", lambda: QtCore.Qt.LeftButton)
+
+        ui._update_click_through()
+
+        assert native["click"] == []
+        assert ui.wheel.zones is None
+
+    def test_interactive_panel_disables_wheel_forwarding(self, ui, monkeypatch):
+        """Catch Qt and the mouse hook both processing the same wheel event."""
+        position = ui.panel._drag_header.mapToGlobal(ui.panel._drag_header.rect().center())
+        monkeypatch.setattr(QtGui.QCursor, "pos", lambda: position)
+
+        ui._update_click_through()
+
+        assert ui.wheel.zones == []
+
+    def test_shutdown_releases_engine_hooks(self, ui):
+        """Catch application shutdown retaining a running timer or mouse hook."""
+        ui.start_meeting()
+        ui._ct_timer.start(30)
+
+        ui.shutdown()
+
+        assert ui._timer.isActive() is False
+        assert ui._ct_timer.isActive() is False
+        assert ui.wheel.installed is False
+        assert ui.engine.stops == 1
+        ui.engine.status.emit("Escuchando la reunion")
+        assert badge(ui) == "Loading…"
