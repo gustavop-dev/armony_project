@@ -276,81 +276,89 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 <!-- fleet-base:end -->
 
 <!-- project-shared:begin source=CLAUDE.md -->
-# Armony (Meeting Coach) — guía del proyecto
+# Armony — project guide
 
-## Fuente de verdad
-- Este `CLAUDE.md` es la fuente de verdad. `AGENTS.md` es su espejo para Codex y debe quedar alineado (el bloque `project-shared` de `AGENTS.md` es copia literal de esta sección).
-- Las skills de `.claude/skills/` y `.agents/skills/` y los agentes de `.claude/agents/` y `.codex/agents/` se importaron de `WeAreProjectApp/projectapp` (commit `3db2eeb`, 2026-10-26). Su cuerpo de reglas (protocolo de salida, gating, calidad de tests, verificación) aplica aquí; los pasos atados a Django/Nuxt/VPS se adaptan según «Adaptaciones al stack» más abajo.
-- El contexto profundo del proyecto vive en `README.md`, `docs/configuracion-y-contexto.md`, `docs/ui-spec.html` y, cuando exista, en el Memory Bank (`docs/methodology/` + `tasks/`).
+## Source of truth
+- This `CLAUDE.md` is the source of truth. `AGENTS.md` mirrors it for Codex: its `project-shared` block is a literal copy of this section and must stay aligned.
+- Skills in `.claude/skills/` and `.agents/skills/` and agents in `.claude/agents/` and `.codex/agents/` were imported from `WeAreProjectApp/projectapp` (commit `3db2eeb`, 2026-10-26). Their rules (output protocol, gating, test quality, verification) apply here; steps bound to Django/Nuxt/VPS are adapted per "Stack adaptations" below.
+- Technical reference: `docs/configuracion-y-contexto.md`, `docs/ui-spec.html` and, once created, the Memory Bank (`docs/methodology/` + `tasks/`).
 
-## Qué es
-- **Propósito:** asistente de videollamada que ayuda a resolver problemas de software en vivo. Es un *spike* para otro proyecto: un IDE capaz de llevar proyectos de software mucho más grandes, dirigido por un cliente no técnico. Lo que se valide aquí (audio → transcripción → intención → LLM en streaming, latencia, manejo de contexto) alimenta ese IDE.
-- App de escritorio **solo Windows** (10 build 19041+ / 11) en **Python 3.11 + PySide6**. Escucha el audio de la reunión (WASAPI loopback) y el micrófono, transcribe en vivo (AssemblyAI Universal Streaming por WebSocket, o `faster-whisper` en modo offline) y sugiere respuestas en streaming con Claude (Anthropic) u OpenAI. La ventana es invisible al compartir pantalla (`SetWindowDisplayAffinity`).
-- Se distribuye como un único `dist\Armony.exe` generado con PyInstaller (`build_exe.py`).
-- No hay backend, base de datos, frontend web ni servidor: nada de deploy ni VPS.
+## Documentation rules
+- All documentation is **English** and **strictly technical**: it describes code, modules, interfaces, data flow, configuration, commands and observed behavior.
+- No product narrative, intended-use claims, opinions or subjective/ambiguous purpose statements. State what the code does and how, with file references (`path:line`) where useful.
+- Applies to Markdown docs, the Memory Bank, `CLAUDE.md`/`AGENTS.md` project sections, docstrings and comments in new or modified code, commit messages and PR descriptions.
+- This overrides the fleet-base language convention ("docs in Spanish") for this repo. Imported skills keep their original language. Existing Spanish docs (`README.md`, `docs/`, docstrings) are migrated when touched.
+- User-facing UI strings are not documentation; they keep the language the UI uses.
 
-## Mapa de módulos
-- `app.py` — punto de entrada, interfaz (PySide6) y orquestación.
-- `engine.py` — ciclo de la sesión: audio → STT → intención → LLM → pintado.
-- `audio.py` — captura WASAPI (loopback + micrófono), niveles y segmentación por silencio.
-- `stt_stream.py` — STT en vivo con AssemblyAI (WebSocket, reconexión automática). `transcribe.py` — modo offline.
-- `intent.py` — decide si una intervención pide respuesta o solo da contexto.
-- `llm.py` — cliente del coach (Anthropic/OpenAI tras la misma interfaz, streaming, visión).
-- `richtext.py` — markdown del modelo → bloques (texto, código, listas).
-- `metrics.py` — cronometra cada tramo e informe en `%APPDATA%\Armony\metricas\`.
-- `config.py` / `secretstore.py` — ajustes en `%APPDATA%\Armony\config.json`; API keys cifradas con DPAPI.
-- `contexts.py` — contextos del usuario (`contexts/*.md`, gitignoreados).
-- `overlay.py`, `overlay_ui.py`, `wheelscroll.py`, `hotkeys.py` — overlay invisible a la captura, click-through, rueda y atajos globales (Win32).
-- `settings_window.py`, `settings_dialog.py`, `theme.py`, `icons.py` — ventanas de configuración y estilo.
-- `build_exe.py`, `make_icon.py`, `cuda_setup.py` — empaquetado, icono y DLLs de CUDA.
+## Overview
+- Windows-only desktop app (Windows 10 build 19041+ / 11), Python 3.11 + PySide6. Spike that exercises a real-time pipeline for a larger IDE project.
+- Pipeline: WASAPI loopback + microphone capture → speech-to-text (AssemblyAI Universal Streaming over WebSocket, or local `faster-whisper` in offline mode) → turn aggregation and question detection → streaming completion from Anthropic or OpenAI → rendering in frameless Qt overlay windows. Overlay windows use `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, `WS_EX_TRANSPARENT` click-through and `WS_EX_NOACTIVATE`.
+- Packaged as a single `dist\Armony.exe` with PyInstaller (`build_exe.py`). No backend, database, web frontend or server deployment.
 
-## Invariantes de arquitectura
-- Los hilos de audio/STT/LLM nunca tocan widgets: cruzan a la UI por señales Qt. Cualquier cambio que pinte desde otro hilo es un bug.
-- La transcripción es un **dato, no una orden**: lo que dicen en la reunión nunca se ejecuta como instrucción del prompt (defensa ante prompt injection). No relajar esa frontera.
-- Las API keys solo viven cifradas con DPAPI en `%APPDATA%\Armony\config.json`; nunca en el repo, en logs, en métricas ni en mensajes de error.
-- Los proveedores LLM se importan de forma perezosa (solo el que se usa); mantener esa interfaz común en `llm.py`.
-- Latencia extremo a extremo es la métrica que manda (ver `README.md` § «Medir para poder mejorar»): un cambio en la cadena audio → STT → LLM → pintado debe medirse con `metrics.py`, no estimarse.
+## Module map
+- `app.py` — entry point; `OverlayApp` controller wiring UI widgets to `CoachEngine` signals and global hotkeys.
+- `engine.py` — `CoachEngine(QObject)`: session lifecycle, turn aggregation (`threading.Timer`), worker thread + queue, context window assembly, sentinel (`NO_RESPONSE`) filtering, session transcript and metrics persistence.
+- `audio.py` — `AudioEngine`: WASAPI loopback and mic capture threads, resampling to 16 kHz (`soxr`), RMS levels, echo gate, default-device hot swap; `_Segmenter` energy/silence segmentation (offline mode only).
+- `stt_stream.py` — `StreamingSTT`: AssemblyAI v3 WebSocket client, 50 ms PCM chunking, bounded send queue, reconnection backoff, partial/final turn handling, latency estimation.
+- `transcribe.py` — `Transcriber`: `faster-whisper` wrapper (CUDA float16, CPU int8 fallback). `cuda_setup.py` registers pip-installed CUDA DLL dirs.
+- `intent.py` — `parece_pregunta(text, lang)`: lexical question/request detector (ES/EN/auto).
+- `llm.py` — `Coach`: prompt construction, voice vs. vision model selection, Anthropic/OpenAI streaming backends, single retry before first token, warm-up request.
+- `richtext.py` — model markdown → section/paragraph/list/code blocks; Pygments highlighting; inline HTML.
+- `metrics.py` — process-wide `metricas` singleton: timings, counters, notes; JSON + text report per session.
+- `config.py` — defaults, `config.json` load/save, legacy key migration; `secretstore.py` encrypts API keys with DPAPI (`dpapi:` prefix).
+- `contexts.py` — `contexts/*.md` files with frontmatter (`name`, `active`, `lang`); concatenated into the system prompt at session start.
+- `overlay.py`, `wheelscroll.py`, `hotkeys.py` — Win32 via `ctypes`: display affinity / extended styles, `WH_MOUSE_LL` wheel forwarding, `WH_KEYBOARD_LL` Alt+1..5 capture with `RegisterHotKey` fallback.
+- `overlay_ui.py`, `settings_window.py`, `theme.py`, `icons.py` — Qt widgets and styling. `settings_dialog.py` is not imported anywhere.
+- `build_exe.py`, `make_icon.py` — packaging and icon generation.
 
-## Reglas de trabajo
-- Preferir los patrones existentes del proyecto sobre consejos genéricos de framework.
-- El código existente comenta en español y mezcla identificadores en español e inglés: en archivos existentes, seguir el estilo del archivo; en código nuevo, identificadores en inglés (convención del fleet) y comentarios en español.
-- Ediciones localizadas en archivos grandes (`overlay_ui.py`, `settings_window.py`, `engine.py`).
-- Texto visible al usuario final: español.
-- No leer ni imprimir `%APPDATA%\Armony\config.json` ni `contexts/*.md`: contienen claves y datos personales.
+## Architecture invariants
+- Worker threads (audio, STT, LLM, timers) never touch widgets; they cross to the UI only through Qt signals.
+- Transcript text, screenshots and user contexts are passed to the model as delimited data, never as instructions; the prompt notice in `llm.py` (`Coach._prompt`) must be preserved.
+- API keys are stored only DPAPI-encrypted in `config.json`; never in the repo, logs, metrics, transcripts or error messages.
+- LLM provider SDKs are imported lazily; both providers sit behind the `Coach` interface.
+- End-to-end latency (`extremo_a_extremo_ms` in `metrics.py`) is the primary performance metric; pipeline changes are measured with `metrics.py`, not estimated.
 
-## Adaptaciones al stack (dónde difiere del fleet)
-El bloque `fleet-base` de arriba se importó tal cual porque sus normas valen aquí. Donde asume infraestructura que Armony no tiene, rige esto:
-- **Fuera del fleet.** Armony no está en `vps-ops-toolkit/projects.yml`: la base de integración es `main` (sección 0, rama «Sin toolkit»). No hay `session-worktree.sh`, `resolve-work-coordinate.sh` ni hook guard.
-- **Ubicación.** El clon vive en `C:\Users\devgu\armony_project` (en WSL: `/mnt/c/Users/devgu/armony_project`), no en `~/webapps/<repo>`. No es un checkout de deploy, pero la regla se mantiene: **nunca commitear en `main`**; cada tarea va en su rama `<prefijo>/<DDMMYYYY>-<slug>` (sección 3).
-- **Worktree opcional.** Con una sola sesión a la vez basta con la rama en el clon. Si hay sesiones en paralelo, cada una entra a su worktree con `EnterWorktree` (Claude Code los crea bajo `.claude/worktrees/`, gitignoreado).
-- **Entrega mientras no haya remoto.** Hoy el repo no tiene `origin` ni CI. Definition of done: árbol limpio + commits en la rama de la sesión + tests del cambio en verde + resumen al operador. El merge a `main` lo decide el operador. Cuando exista remoto, rige la sección 9-10 completa (PR al primer push + CI verde).
-- **Sin flujos E2E web.** El bloque «E2E User Flows Check» no aplica (no hay `frontend/`). Su equivalente aquí: si un cambio altera un flujo visible (overlay, configuración, atajos), describir cómo probarlo a mano en Windows antes de darlo por terminado.
-- **Skills que no aplican** (dependen de Django/Nuxt, VPS, clientes o propuestas de ProjectApp): `blog-ai-weekly`, `client-message`, `client-report`, `client-response`, `data-integrity`, `deploy-and-check`, `dev-up`, `dev-down`, `e2e-user-flows-check`, `fake-data-refresh`, `frontend-e2e-test-coverage`, `frontend-unit-test-coverage`, `merge-queue`, `merge-when-green`, `migrate-project`, `platform-delivery-authoring`, `playwright-validation`, `proposal-create`, `requirement-calculator`, `responsive-pass`, `tailscale-connect`, `view-map-audit`, `view-map-update`. Se conservan como referencia; no invocarlas aquí.
-- **Skills que se adaptan:** `backend-test-coverage` → tests pytest de los módulos Python; `qa-engineer-backend` es el agente de tests aquí. `security-pass`/`vuln-audit` → foco en secretos, DPAPI, prompt injection, dependencias de `requirements.txt` y PyInstaller. `perf-pass`/`perf-scout` → latencia de la cadena en vivo medida con `metrics.py`.
+## Working rules
+- Follow existing project patterns over generic framework advice.
+- Existing code mixes Spanish and English identifiers and comments in Spanish. In existing files, follow the file's identifier style; new identifiers, docstrings and comments are in English.
+- Keep edits localized in large files (`overlay_ui.py`, `settings_window.py`, `engine.py`).
+- Do not read or print `%APPDATA%\Armony\config.json` or `contexts/*.md`: they contain API keys and user data.
 
-## Commits y PR
-- NO añadir trailers `Co-Authored-By: Claude ...` a los commits. El dueño del repositorio es el único autor.
-- NO incluir «Generated with Claude Code», «🤖 Generated with...» ni ninguna atribución parecida en commits ni en descripciones de PR.
-- Mensajes en inglés con Conventional Commits (`feat:`, `fix:`, `chore:`, …), con resumen claro y plan de prueba cuando aplique.
+## Stack adaptations (differences from the fleet)
+The `fleet-base` block above is imported verbatim. Where it assumes infrastructure this repo lacks, these rules apply:
+- **Not in the fleet.** Armony is not in `vps-ops-toolkit/projects.yml`: integration base is `main` (section 0, "no toolkit" branch). No `session-worktree.sh`, `resolve-work-coordinate.sh` or hook guard.
+- **Location.** The clone lives at `C:\Users\devgu\armony_project` (WSL: `/mnt/c/Users/devgu/armony_project`), not `~/webapps/<repo>`. Never commit on `main`; each task uses its own `<prefix>/<DDMMYYYY>-<slug>` branch (section 3).
+- **Worktrees.** Optional for a single session. Parallel sessions/agents each use their own worktree under `.claude/worktrees/` (gitignored). `.venv` is not present in worktrees: use the main clone's interpreter by absolute path.
+- **Delivery without a remote.** No `origin` or CI yet. Definition of done: clean tree + commits on the session branch + tests for the change passing + summary to the operator. The operator decides merges to `main`. Once a remote exists, sections 9-10 apply in full (PR on first push + green CI).
+- **No web E2E flows.** The "E2E User Flows Check" block does not apply (no `frontend/`). Equivalent: when a change alters a visible flow (overlay, settings, hotkeys), document manual verification steps on Windows before reporting done.
+- **Skills that do not apply** (Django/Nuxt, VPS, ProjectApp clients/proposals): `blog-ai-weekly`, `client-message`, `client-report`, `client-response`, `data-integrity`, `deploy-and-check`, `dev-up`, `dev-down`, `e2e-user-flows-check`, `fake-data-refresh`, `frontend-e2e-test-coverage`, `frontend-unit-test-coverage`, `merge-queue`, `merge-when-green`, `migrate-project`, `platform-delivery-authoring`, `playwright-validation`, `proposal-create`, `requirement-calculator`, `responsive-pass`, `tailscale-connect`, `view-map-audit`, `view-map-update`. Kept for reference; do not invoke here.
+- **Adapted skills:** `backend-test-coverage` → pytest tests for the Python modules; `qa-engineer-backend` is the test-writing agent. `security-pass` / `vuln-audit` → secrets, DPAPI, prompt injection, `requirements.txt` dependencies and PyInstaller bundle. `perf-pass` / `perf-scout` → live pipeline latency measured with `metrics.py`.
 
-## Comandos
-Desde WSL la venv de Windows se usa vía interop (`.venv/Scripts/python.exe`); desde PowerShell, `.venv\Scripts\python.exe`.
-- Ejecutar la app (solo en Windows, necesita audio y escritorio): `.venv\Scripts\python.exe app.py`
-- Compilar el exe: `.venv\Scripts\python.exe build_exe.py` → `dist\Armony.exe`
-- Chequeo rápido de sintaxis (WSL o Windows): `python3 -c "import ast,glob; [ast.parse(open(f,encoding='utf-8').read(),f) for f in glob.glob('*.py')]"`
-- Tests: **todavía no hay suite.** Cuando exista: `.venv/Scripts/python.exe -m pytest tests/<archivo>.py -v`
+## Commits and PRs
+- Do NOT add `Co-Authored-By: Claude ...` trailers. The repository owner is the sole author.
+- Do NOT include "Generated with Claude Code", "🤖 Generated with..." or any similar attribution in commits or PR descriptions.
+- English Conventional Commits (`feat:`, `fix:`, `test:`, `chore:`, ...), with a plain summary and a test plan where applicable.
 
-## Restricciones de tests
-- Nunca correr la suite completa: solo el archivo o los tests del cambio. Máximo 20 tests por lote y 3 comandos de tests por ciclo.
-- Cada test verifica UN comportamiento, sin conjunciones en el nombre, sin condicionales en el cuerpo (parametrizar), patrón AAA y valores esperados literales verificados a mano.
-- Mockear solo en las fronteras del sistema: APIs de Anthropic/OpenAI/AssemblyAI, WASAPI/PyAudio, Win32 (`ctypes`), reloj y sistema de archivos de `%APPDATA%`.
-- Prioridad de cobertura: lógica pura sin Windows ni Qt (`intent.py`, `richtext.py`, `metrics.py`, `config.py`, `contexts.py`, armado de prompts en `llm.py`), después `engine.py` con fronteras mockeadas.
-- Ningún test hace llamadas reales a APIs de pago ni lee la configuración real del usuario.
+## Commands
+From WSL the Windows venv runs through interop (`.venv/Scripts/python.exe`); from PowerShell use `.venv\Scripts\python.exe`.
+- Run the app (Windows only, needs audio devices and a desktop): `.venv\Scripts\python.exe app.py`
+- Build the exe: `.venv\Scripts\python.exe build_exe.py` → `dist\Armony.exe`
+- Install dev dependencies: `.venv/Scripts/python.exe -m pip install -r requirements-dev.txt`
+- Run tests (one file or test at a time): `.venv/Scripts/python.exe -m pytest tests/<file>.py -v`
+- Coverage for a module: `.venv/Scripts/python.exe -m pytest tests/<file>.py --cov=<module> --cov-report=term-missing`
+
+## Testing constraints
+- Never run the full suite: only the files or tests for the change. Max 20 tests per batch and 3 test commands per cycle.
+- One behavior per test, no conjunctions in test names, no conditionals in test bodies (parametrize), AAA pattern, hand-verified literal expected values.
+- Mock only at system boundaries: Anthropic/OpenAI/AssemblyAI APIs, WASAPI/PyAudio, Win32 (`ctypes`), clock, and the `%APPDATA%` file system.
+- Tests never call paid APIs, open real network connections or read the user's real configuration (`tests/conftest.py` enforces isolation).
+- A test that exposes a bug is marked `pytest.mark.xfail(strict=True, reason="[KNOWN-NNN] ...")` and the bug is recorded in `docs/methodology/error-documentation.md`; the fix lands in a separate `fix/...` branch.
+- Coverage priority: pure logic without Windows/Qt (`intent.py`, `richtext.py`, `metrics.py`, `config.py`, `contexts.py`, prompt building in `llm.py`), then `engine.py`, `llm.py` and `stt_stream.py` with boundaries mocked.
 
 ## Memory Bank
-- Archivos núcleo (se crean con la skill `methodology-setup`; aún no existen): `docs/methodology/product_requirement_docs.md`, `architecture.md`, `technical.md`, `error-documentation.md`, `lessons-learned.md`, `tasks/tasks_plan.md`, `tasks/active_context.md`.
-- Los bugs conocidos y resueltos se registran en `docs/methodology/error-documentation.md` (`[KNOWN-NNN]` / `[ERR-NNN]`).
-- Actualizar los archivos de memoria cuando lo pida el usuario o tras un cambio verificado de arquitectura, superficies o flujo de trabajo; no tocarlos en cada edición rutinaria.
+- Core files (created with the `methodology-setup` skill; not yet present): `docs/methodology/product_requirement_docs.md`, `architecture.md`, `technical.md`, `error-documentation.md`, `lessons-learned.md`, `tasks/tasks_plan.md`, `tasks/active_context.md`.
+- Known and resolved bugs go in `docs/methodology/error-documentation.md` (`[KNOWN-NNN]` / `[ERR-NNN]`).
+- Update memory files when the user asks or after a verified change to architecture, runtime surfaces or workflow; not on every routine edit.
 <!-- project-shared:end -->
 
 <!-- codex-specific:begin -->
