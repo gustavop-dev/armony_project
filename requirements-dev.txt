@@ -1,0 +1,4 @@
+# Development-only dependencies (not bundled into the exe)
+-r requirements.txt
+pytest>=9.2
+pytest-cov>=7.1
