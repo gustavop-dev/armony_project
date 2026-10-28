@@ -76,23 +76,73 @@ Cause in `engine.py`:
 - The worker answers items sequentially. A generation in flight cannot be
   cancelled, and the follow-ups go out with only the fragment as `latest`.
 
-Direction:
-1. Grace window after a question-like final. Partials from the same speaker
-   inside it extend the turn instead of opening a new one. Also tune AssemblyAI
-   turn parameters (`end_of_turn_confidence_threshold`,
-   `min_end_of_turn_silence_when_confident`, `max_turn_silence`).
-2. Speculative start with revision. Generate immediately to keep latency low.
-   If more speech arrives while generating or shortly after, classify it:
-   - filler: ignore
-   - extension of the same question: cancel and regenerate with the merged
-     question, or append a short addendum if most of the answer is already
-     shown
-   - new question: queue a new answer
-3. UI: one answer card per question, updated in place.
-4. Metrics: answers per question, and questions closed before the speaker
-   finished. Test sets:
-   - synthetic: references joined by 0.5–2 s pauses
-   - real: analyst multi-part questions in Earnings-21
+A fixed grace window is not enough. Typical sequence:
+
+1. Interviewer asks.
+2. Tester says "vale" / "listo".
+3. Interviewer adds "ah, pero …" or "no te preocupes, puedes usar …".
+
+The follow-up arrives seconds later, often after the tester has spoken.
+
+Decided behavior (product owner, 2026-10-28):
+- Always work on the **first answer**. A follow-up either revises that answer
+  in place or is dismissed. It never produces a separate answer card, unless it
+  is a genuinely new question.
+- Transcribe the **tester's microphone** as well. The tester's speech
+  ("vale", starting to answer) is context for deciding what a follow-up means.
+- Use **Jev** (TypeSafe System One) to judge each follow-up. Code applies
+  deterministic thresholds to its probabilities.
+
+Design: question thread + arbiter.
+- **Thread**: opened by a question-like turn from the other party. It holds:
+  - the question parts
+  - the answer state (generating / shown + text so far)
+  - the tester's utterances since the question
+
+  The answer starts generating immediately (no added latency). The thread stays
+  open until a new question opens or after a timeout (≈30–60 s, to be tuned).
+  It is not limited to a 1 s window.
+- **Arbiter**: one Jev request per follow-up turn while a thread is open. State
+  = thread + follow-up text. Questions asked together:
+  - `relation` (Choice):
+    - `filler_or_ack`: filler or acknowledgement
+    - `extends_question`: adds a requirement, constraint or clarification
+    - `relaxes_or_answers`: e.g. "no te preocupes, puedes usar X"
+    - `new_question`
+    - `unrelated`
+  - `changes_answer` (Noul): would a correct suggested answer now differ from
+    the one generated?
+  - `reacts_to_tester` (Noul): is the follow-up a reaction to what the tester
+    just said?
+- **Policy (code)**:
+  - `filler_or_ack` / `unrelated`: keep the answer.
+  - `extends_question` or `relaxes_or_answers` with `changes_answer` ≥ τ:
+    - still generating: cancel and regenerate with the merged question
+    - already shown: regenerate as a revision of the shown answer, streamed
+      into the same card and marked as updated
+  - `changes_answer` < τ: keep the answer and store the follow-up as context.
+  - `new_question`: close the thread and open a new one.
+  - Low confidence, or a Jev error or timeout: keep the answer (never spam a
+    revision).
+- **Requirements this adds**:
+  - a second AssemblyAI stream for the mic: roughly doubles STT cost, and needs
+    an echo strategy unless headphones are used
+  - cancellable LLM streaming in `llm.Coach`
+  - a "revise" prompt that receives the shown answer plus the follow-up
+  - a UI card that can be replaced in place
+- **Validation before wiring it in**: a labeled Spanish set of dialogue
+  snippets (question, tester reply, follow-up → expected relation and
+  revise/keep) to measure Jev's accuracy and latency on Spanish. English is its
+  strongest language. Then replay through the engine with a fake STT, and
+  finally with audio.
+
+Also tune AssemblyAI turn parameters (`end_of_turn_confidence_threshold`,
+`min_end_of_turn_silence_when_confident`, `max_turn_silence`) so that a single
+question is not split in the first place.
+
+Metrics: answer cards per question, revisions per question, wrong revisions
+(revised on noise), and missed revisions (kept an answer the follow-up
+invalidated).
 
 ## Workstream C: meeting memory without resending everything
 
