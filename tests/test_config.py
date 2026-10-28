@@ -353,3 +353,30 @@ def test_data_dir_frozen_without_appdata_uses_program_folder(monkeypatch, tmp_pa
     result = real_data_dir()
 
     assert result == str(tmp_path / "Armony")
+
+
+# --- data-loss paths found during bug analysis ------------------------------------
+
+@pytest.mark.xfail(strict=True,
+                   reason="[KNOWN-205] UTF-8 BOM config.json is discarded: keys are "
+                          "blanked and the next save persists the blank values")
+def test_load_config_reads_utf8_file_with_bom():
+    payload = json.dumps({"language": "en",
+                          "anthropic_api_key": secretstore.proteger("sk-ant-test")})
+    Path(config.CONFIG_PATH).write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+
+    cfg = config.load_config()
+
+    assert (cfg["language"], cfg["anthropic_api_key"]) == ("en", "sk-ant-test")
+
+
+@pytest.mark.xfail(strict=True, raises=TypeError,
+                   reason="[KNOWN-206] save_config truncates config.json before "
+                          "serialising; a failed dump leaves an empty file")
+def test_failed_save_keeps_previous_config_file():
+    _write_config({"language": "en"})
+    before = _read_raw_config()
+
+    config.save_config({"language": "es", "bad": object()})
+
+    assert _read_raw_config() == before

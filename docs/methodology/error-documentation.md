@@ -24,27 +24,63 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Test:** `tests/test_richtext.py`
 
 ### [KNOWN-201] Non-UTF-8 `config.json` raises in `load_config`
-- **Where:** `config.py:168`
-- **Behavior:** `UnicodeDecodeError` is not caught (only `JSONDecodeError`/`OSError`), so startup fails instead of falling back to defaults.
-- **Repro:** file bytes `{"language": "espa\xf1ol"}` → `UnicodeDecodeError`.
-- **Test:** `tests/test_config.py`
-
+- **Where:** `config.py:167-169` (`open(..., encoding="utf-8")` + `except (json.JSONDecodeError, OSError)`)
+- **Trigger:** `config.json` saved in a legacy code page (e.g. edited and saved as "ANSI"/cp1252) containing any non-ASCII character (`é`, `ñ` in prompts).
+- **Reproduced (2026-10-28):** cp1252 file with `"Sé breve y en español"` → `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9`.
+- **Root cause:** `UnicodeDecodeError` is a `ValueError`, not a `JSONDecodeError`/`OSError`, so it escapes the handler.
+- **Impact:** `load_config` runs in `OverlayApp.__init__` (`app.py:28`) before any window exists; the exception aborts `main()`. Built with `--noconsole`, the exe exits with no visible error. Also raised from `start_meeting` (`app.py:169`), `open_settings` (`app.py:306`) and `_on_settings_saved` (`app.py:329`).
+- **Proposed fix:** catch `(ValueError, OSError)` (covers `JSONDecodeError` and `UnicodeDecodeError`); combine with KNOWN-205/206 handling of unreadable files (keep a backup instead of overwriting).
+- **Test:** `tests/test_config.py::test_load_config_with_non_utf8_file_falls_back_to_defaults`
 ### [KNOWN-202] Non-object JSON in `config.json` raises in `load_config`
-- **Where:** `config.py:167` (`cfg.update(json.load(f))`)
-- **Repro:** file content `null`, `42`, `"text"` or `[1, 2]` → `TypeError`/`ValueError` (expected: defaults).
-- **Test:** `tests/test_config.py`
-
+- **Where:** `config.py:168` (`cfg.update(json.load(f))`)
+- **Trigger:** syntactically valid JSON whose top level is not an object (`null`, a number, a string, a list).
+- **Reproduced (2026-10-28):** `null` → `TypeError: 'NoneType' object is not iterable`; `[1, 2]` → `TypeError: cannot convert dictionary update sequence element #0`.
+- **Root cause:** the result of `json.load` is passed to `dict.update` without a type check; the `TypeError`/`ValueError` is outside the caught set.
+- **Impact:** same crash path as KNOWN-201 (startup abort). Lower likelihood: requires an external edit or tool writing the file.
+- **Proposed fix:** `data = json.load(f)`; ignore (and back up) when `not isinstance(data, dict)`.
+- **Test:** `tests/test_config.py::test_load_config_with_non_object_json_falls_back_to_defaults`
 ### [KNOWN-203] One non-UTF-8 context file breaks `list_contexts`
-- **Where:** `contexts.py:66`
-- **Behavior:** `UnicodeDecodeError` propagates (only `OSError` is caught), so `active_text`/`active_count` fail and no context is loaded.
-- **Repro:** `ctx-1.md` with bytes `espa\xf1ol` next to a valid `ctx-2.md` → exception (expected `["ctx-2"]`).
-- **Test:** `tests/test_contexts.py`
-
+- **Where:** `contexts.py:64-67` (`open(..., encoding="utf-8")` + `except OSError`)
+- **Trigger:** any `contexts/*.md` written outside the app in a legacy code page with non-ASCII text.
+- **Reproduced (2026-10-28):** cp1252 `ctx-2.md` next to a valid `ctx-1.md` → `UnicodeDecodeError` from `list_contexts`, `active_count`, `active_text` and `SettingsWindow(...)` construction (`settings_window.py:354`).
+- **Root cause:** `UnicodeDecodeError` is not an `OSError`; one bad file aborts the whole listing instead of being skipped.
+- **Impact:**
+  - Settings window cannot open (exception in the `settingsClicked` slot).
+  - `start_meeting` sets `_running = True`, starts the top bar and timer (`app.py:185-190`) and then raises at `active_count` (`app.py:197`) before `engine.start` (`app.py:203`): the UI shows a running meeting with no engine (same end state as KNOWN-003).
+  - In the engine thread, `active_text` (`engine.py:220`) raises inside the `try` and is reported as "No se pudo iniciar Claude".
+- **Proposed fix:** catch `(OSError, UnicodeDecodeError)` per file and skip it (or read with `errors="replace"`); surface skipped files in the settings UI.
+- **Test:** `tests/test_contexts.py` (KNOWN-203 xfail)
 ### [KNOWN-204] `write_all` deletes a context whose extension is upper-case (data loss)
-- **Where:** `contexts.py:97`
-- **Behavior:** `list_contexts` accepts `*.MD` case-insensitively; `write_all` writes `<id>.md` (same file on NTFS) and then deletes every name not in its case-sensitive keep set, removing the file it just wrote.
-- **Repro:** create `ctx-1.MD`; `write_all(list_contexts())` → directory empty (expected 1 file). Reproduced on Windows.
-- **Test:** `tests/test_contexts.py`
+- **Where:** `contexts.py:60` (listing filter uses `fn.lower().endswith(".md")`) vs `contexts.py:87-97` (writes `<id>.md`, deletes every `.md` whose exact name is not in `vivos`).
+- **Trigger:** a context file with a non-lower-case extension (`.MD`, `.Md`) placed in `contexts/` outside the app; the app itself always writes `.md`.
+- **Reproduced (2026-10-28), user path:** open Settings, press Save without editing (`settings_window.py:941-947`):
+
+  | Files before | Files after | UI status |
+  |---|---|---|
+  | `ctx-1.md` | `ctx-1.md` | "Todo guardado" |
+  | `ctx-1.MD` | *(none)* | "Todo guardado" |
+  | `ctx-1.Md`, `ctx-2.md` | `ctx-2.md` | "Todo guardado" |
+  | `Notas.MD` | *(none)* | "Todo guardado" |
+- **Root cause:** NTFS is case-insensitive: writing `ctx-1.md` overwrites `ctx-1.MD` in place and the directory entry keeps the original spelling `ctx-1.MD`; the delete pass compares names case-sensitively, so the just-written file is not in `vivos` and is removed.
+- **Impact:** silent, permanent loss of the context content; no error is shown. On a case-sensitive file system the effect is a rename instead (no loss).
+- **Proposed fix:** build `vivos` and compare with `os.path.normcase` (or `.lower()`), or remember each context's original filename and write back to it.
+- **Test:** `tests/test_contexts.py` (KNOWN-204 xfail)
+### [KNOWN-205] UTF-8 BOM `config.json` is discarded and keys are lost on next save
+- **Where:** `config.py:167` (`encoding="utf-8"` does not strip a BOM → `JSONDecodeError` → silently returns defaults)
+- **Trigger:** `config.json` saved by an editor that writes a UTF-8 BOM.
+- **Reproduced (2026-10-28):** BOM file with an encrypted `anthropic_api_key` and `language: en` → `load_config` returns `language: es` and an empty key; Settings → Save writes the empty key to disk.
+- **Root cause:** decode/parse failures are swallowed and replaced by defaults with no backup and no user-visible warning; the next `save_config` overwrites the original file with those defaults.
+- **Impact:** permanent loss of all stored API keys and settings. The same overwrite path applies to any unreadable file (empty file left by KNOWN-206, KNOWN-201/202 once they stop crashing).
+- **Proposed fix:** read with `encoding="utf-8-sig"`; when a file exists but cannot be parsed, rename it to `config.json.bad-<timestamp>` before continuing with defaults and report it in the UI.
+- **Test:** `tests/test_config.py::test_load_config_reads_utf8_file_with_bom`
+
+### [KNOWN-206] `save_config` is not atomic
+- **Where:** `config.py:199-203` (`open(CONFIG_PATH, "w")` truncates, then `json.dump` streams into it; only `OSError` is caught)
+- **Trigger:** any exception during serialisation (non-JSON value) or process termination/power loss during the write.
+- **Reproduced (2026-10-28):** existing `{"language": "en"}`; `save_config({"bad": object()})` → `TypeError` propagates and `config.json` is left truncated.
+- **Impact:** an empty/partial `config.json`; on the next start KNOWN-205's path blanks every key. `SettingsWindow._save` catches the exception and shows "Error al guardar", but the file is already damaged.
+- **Proposed fix:** serialise to a string first, write to `config.json.tmp`, `flush` + `os.fsync`, then `os.replace` onto `config.json`.
+- **Test:** `tests/test_config.py::test_failed_save_keeps_previous_config_file`
 
 ### [KNOWN-301] `preroll=0` keeps the whole silence history
 - **Where:** `audio.py:74` (`_Segmenter.process`, slice `[-self.preroll_samples:]`)
