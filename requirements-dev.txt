@@ -2,3 +2,4 @@
 -r requirements.txt
 pytest>=9.2
 pytest-cov>=7.1
+jiwer>=4.0                   # WER/CER for the STT evaluation harness (stt_eval/)
