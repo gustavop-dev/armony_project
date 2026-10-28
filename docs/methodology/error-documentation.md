@@ -96,18 +96,29 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Behavior:** re-rendering a streamed answer, pruning rows or `limpiar_hilo` destroys the block; the pending lambda raises `RuntimeError: Internal C++ object already deleted` in the event loop.
 - **Test:** `tests/test_overlay_ui_widgets.py::test_code_block_destroyed_after_copy_raises_nothing`
 
-## Suspected issues — from code review, not yet covered by tests
-
-### [KNOWN-001] Unsynchronized iteration over session history
-- **Where:** `engine.py:531` (`list(self._history)` in the worker) vs `engine.py:340` (`append` from the turn timer / WebSocket thread).
-- **Risk:** `RuntimeError: deque mutated during iteration`, swallowed at `engine.py:496`; the suggestion for that turn is dropped.
-
 ### [KNOWN-002] Session transcript misses turns
 - **Where:** `engine.py:374-378` (`answer_now` with a pending turn) and `engine.py:461-468` (offline path) append to `_history` but not to `_registro`.
 - **Effect:** the saved `sesiones/*.md` file omits those turns.
 
+- **Test:** `tests/test_engine.py::TestTurns::test_manual_answer_records_pending_turn`, `tests/test_engine.py::TestWorker::test_offline_utterance_is_recorded`
+
 ### [KNOWN-003] UI stays in running state when engine start-up fails
 - **Where:** `engine.py:187/195/237` set `_running = False` on init failure; `app.py:185` keeps `OverlayApp._running = True` and `on_error` does not reset it.
+
+- **Test:** `tests/test_app.py::TestMeeting::test_initialization_error_restores_idle`
+
+### [KNOWN-701] Capture context budget ignores line separators
+- **Where:** `engine.py:541` (`_contexto`, capture branch)
+- **Behavior:** the 8000-char budget sums line lengths but not the `\n` joiners, so the joined context can exceed `LIMITE_CHARS_CAPTURA`.
+- **Repro:** two history lines of 4000 chars each → 8001-char context (expected <= 8000).
+- **Test:** `tests/test_engine.py::TestContext::test_capture_limit_includes_line_separators`
+
+## Suspected issues — from code review, not yet covered by tests
+
+### [KNOWN-001] Unsynchronized iteration over session history
+- **Status:** not deterministically testable; needs a lock or a snapshot under lock.
+- **Where:** `engine.py:531` (`list(self._history)` in the worker) vs `engine.py:340` (`append` from the turn timer / WebSocket thread).
+- **Risk:** `RuntimeError: deque mutated during iteration`, swallowed at `engine.py:496`; the suggestion for that turn is dropped.
 
 ### [KNOWN-004] Anthropic client uses SDK default retries and timeout
 - **Where:** `llm.py:84` (`anthropic.Anthropic(api_key=...)`), plus the manual retry at `llm.py:192-217`.
