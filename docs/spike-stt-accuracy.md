@@ -63,8 +63,83 @@ Notes:
 4. On reconnect, queued audio is dropped silently, and `_audio_ms` resets while
    old audio is still queued. That skews `provider_estimate`.
 
+## Workstream B: one answer per question (turn fragmentation)
+
+Problem: a speaker asks, pauses, adds a clarification, pauses, adds more. Today
+that produces three answers. Only the first has the full question; the other
+two answer the fragments.
+
+Cause in `engine.py`:
+- `_on_stt_final` flushes the turn **immediately** when a final looks like a
+  question (`intent.parece_pregunta`), without waiting `silence_hang`.
+- Each later addition becomes a new turn and a new `respond` item.
+- The worker answers items sequentially. A generation in flight cannot be
+  cancelled, and the follow-ups go out with only the fragment as `latest`.
+
+Direction:
+1. Grace window after a question-like final. Partials from the same speaker
+   inside it extend the turn instead of opening a new one. Also tune AssemblyAI
+   turn parameters (`end_of_turn_confidence_threshold`,
+   `min_end_of_turn_silence_when_confident`, `max_turn_silence`).
+2. Speculative start with revision. Generate immediately to keep latency low.
+   If more speech arrives while generating or shortly after, classify it:
+   - filler: ignore
+   - extension of the same question: cancel and regenerate with the merged
+     question, or append a short addendum if most of the answer is already
+     shown
+   - new question: queue a new answer
+3. UI: one answer card per question, updated in place.
+4. Metrics: answers per question, and questions closed before the speaker
+   finished. Test sets:
+   - synthetic: references joined by 0.5–2 s pauses
+   - real: analyst multi-part questions in Earnings-21
+
+## Workstream C: meeting memory without resending everything
+
+The LLM APIs are stateless: a chat like Claude Code also resends the whole
+conversation on every turn. It stays fast and cheap through prompt caching,
+which reuses an already-processed prefix, and through compaction (summarizing
+old turns) when the conversation gets long.
+
+Current state:
+- `engine._contexto` sends only the last 36 history entries (~18 turns). Older
+  content is dropped and nothing summarizes it.
+- `llm._stream_anthropic` passes `system` as a plain string with no
+  `cache_control`, so no prompt caching happens for Anthropic. That holds even
+  though `engine._init_and_run` freezes the prompt "so as not to break the
+  cache".
+- The transcript is rebuilt inside one user message on every call. A sliding
+  window changes the prefix, so it could not be cached even with
+  `cache_control`.
+
+Direction: a layered prompt with a stable, cacheable prefix.
+1. System prompt + active contexts: fixed for the meeting, cached.
+2. Meeting memory: a running summary of older turns (topics, decisions, what
+   was already answered). A fast model refreshes it in the background, off the
+   critical path. Cached.
+3. Recent transcript verbatim, append-only, so the cached prefix keeps growing
+   (incremental cache hits).
+4. The current question, with an explicit instruction to answer that question
+   and use the rest as background.
+
 ## Results
 
 | Date | Dataset | Config | WER | WER no accents | CER | Final. latency p50 / p95 | Notes |
 |---|---|---|---|---|---|---|---|
-| | | | | | | | |
+| 2026-10-28 | FLEURS es_419 test, 30 clips (760 words) | direct 16 kHz, eot 0.4 | 1.97% | 1.84% | 0.89% | n/a (measured from file end; fixed in 208896a) | provider estimate p50 263 / p95 352 ms |
+| 2026-10-28 | same | `--capture stateless` (current audio.py), eot 0.4 | 2.11% | 1.97% | 0.98% | 696 / 1897 ms (n=24) | provider estimate p50 293 / p95 365 ms |
+| 2026-10-28 | same | `--capture stream` (ResampleStream), eot 0.4 | 2.11% | 1.97% | 0.87% | 657 / 1878 ms (n=23) | provider estimate p50 275 / p95 373 ms |
+
+Reading:
+- Hypothesis 1: per-read resampling degrades the signal (~22 dB aligned SNR,
+  0.1% drift), but on clean read speech it costs at most one word in 760.
+  Errors are 15–16 across all three runs, which is within run-to-run noise.
+  Still worth fixing (cheap, removes drift), but it is not where accuracy is
+  lost.
+- Remaining errors: rare proper nouns (Carpanedo, Jakar/Bumthang, pohutukawa),
+  plus number formatting ("dos" vs "2") counted as substitutions by the
+  normalizer.
+- Finalization latency (last voiced sample → closing final) has a median of
+  ~0.65–0.7 s and a p95 of ~1.9 s. This is mostly the provider's end-of-turn
+  wait, the knob of workstream B. 6–7 clips have no value because the
+  energy-based speech end landed after the final arrived.
