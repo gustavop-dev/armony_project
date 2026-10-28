@@ -3,26 +3,61 @@
 Known defects and their resolution. IDs: `[KNOWN-NNN]` while open, renamed to `[ERR-NNN]` once fixed.
 Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` test asserting the correct behavior; when the fix lands, the xfail turns into an XPASS failure and must be removed together with the fix.
 
+## Triage (2026-10-28)
+
+All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6 6.12, offscreen Qt for UI paths). Severity: **P1** data loss / app unusable, **P2** visible malfunction in normal use, **P3** limited or cosmetic, **P4** latent (not reachable today).
+
+| Priority | IDs | Summary | Suggested fix branch |
+|---|---|---|---|
+| P1 | KNOWN-204 | Settings → Save deletes contexts with an upper-case `.MD` extension | `fix/…-contexts-case-insensitive` |
+| P1 | KNOWN-205, KNOWN-206 | Unreadable/BOM `config.json` → keys blanked and persisted; non-atomic save truncates the file | `fix/…-safe-config-io` |
+| P1 | KNOWN-201, KNOWN-202 | Corrupt `config.json` aborts startup (`--noconsole`: no message) | `fix/…-safe-config-io` |
+| P2 | KNOWN-501 | Every streamed suggestion is painted twice | `fix/…-answer-repaint-timer` |
+| P2 | KNOWN-203 | One non-UTF-8 context blocks Settings and leaves the meeting UI running without engine | `fix/…-safe-config-io` |
+| P2 | KNOWN-003 | Engine init failure leaves the UI in running state | `fix/…-start-failure-state` |
+| P2 | KNOWN-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
+| P2 | KNOWN-005 | No logging; background-thread failures discarded | `feat/…-file-logging` |
+| P2 | KNOWN-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
+| P2 | KNOWN-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
+| P3 | KNOWN-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
+| P3 | KNOWN-101, KNOWN-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
+| P3 | KNOWN-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
+| P3 | KNOWN-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
+| P3 | KNOWN-503, KNOWN-504, KNOWN-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
+| P3 | KNOWN-701 | Capture context can exceed 8000 chars by ≤ 79 | any engine branch |
+| P4 | KNOWN-301, KNOWN-302 | Segmenter pre-roll edge cases; unreachable with fixed `preroll=0.3` | drop with offline removal |
+| — | KNOWN-001 | Closed: not a defect on CPython 3.11 (measured) | — |
+
 ## Known issues — confirmed by tests
 
-### [KNOWN-101] Mid-sentence interrogative is classified as a question
-- **Where:** `intent.py:92-97` (`parece_pregunta`)
-- **Behavior:** any interrogative word within the first 4 tokens returns `True`, contradicting the module comment that a mid-sentence interrogative is not a question.
-- **Repro:** `parece_pregunta("no se que hacer", "es")` → `True` (expected `False`); same for `"lo que sea"`.
-- **Test:** `tests/test_intent.py`
+### [KNOWN-101] Interrogative or request token inside a statement is classified as a question
+- **Where:** `intent.py:92-97` (any interrogative within the first 4 tokens → `True`) and `intent.py:85-86` (request phrases matched as substrings anywhere).
+- **Reproduced (2026-10-28), phrases without `?`:**
 
+  | Phrase | Result | Expected |
+  |---|---|---|
+  | `no sé qué hacer con el despliegue` | `True` | `False` |
+  | `lo que sea que decidan está bien` | `True` | `False` |
+  | `que el equipo lo revise mañana` | `True` | `False` |
+  | `cuando terminemos lo subimos` | `True` | `False` |
+  | `las dimensiones del cluster son grandes` (`dime` ⊂ `dimensiones`) | `True` | `False` |
+  | `cómo lo harías tú` | `True` | `True` |
+- **Impact:** gate 1 is intentionally permissive; a false positive costs one LLM request with `allow_silence=True`, normally answered with `NO_RESPONSE` (gate 2) → extra latency/cost per statement and a "Not a question" pill. Only relevant when the transcript has no `?` (AssemblyAI `format_turns=true` usually adds it).
+- **Proposed fix:** match request phrases on word boundaries (`\b`); treat `que`/`cuando`/`como` as interrogative only at token 0 or after a conjunction, or require accent-bearing forms when the transcript keeps accents.
+- **Test:** `tests/test_intent.py` (KNOWN-101 xfail)
 ### [KNOWN-102] English contractions with ASCII apostrophe are not detected
-- **Where:** `intent.py:74` (token regex `[a-z0-9']+`)
-- **Behavior:** `what's` is tokenized as one word and never matches `what`; the typographic apostrophe (`’`) works.
-- **Repro:** `parece_pregunta("what's the plan", "en")` → `False` (expected `True`); also `how's`, `where's`.
-- **Test:** `tests/test_intent.py`
-
+- **Where:** `intent.py:74` (token regex `[a-z0-9']+` keeps `what's` as one token; `_INTERROGATIVAS_EN` contains `what`).
+- **Reproduced (2026-10-28), phrases without `?`:** `what's your take on this`, `how's the migration going`, `where's the bottleneck in your design` → `False` (expected `True`); `what is your take on this` → `True`.
+- **Impact:** false negative at gate 1: the turn is stored as context and no suggestion is requested; the user must press Alt+5. Only when the transcript lacks `?`.
+- **Proposed fix:** split contractions (`re.findall(r"[a-z0-9]+", ...)` or strip `'s`/`'re`/`'d`) before the interrogative lookup.
+- **Test:** `tests/test_intent.py` (KNOWN-102 xfail)
 ### [KNOWN-103] Bold/italic substitution runs inside inline code
-- **Where:** `richtext.py:254-259` (`inline_html`)
-- **Behavior:** emphasis regexes are applied to inline code spans, altering code text and producing unbalanced markup.
-- **Repro:** ``inline_html("`__init__`")`` → `<span style=""><b>init</b></span>` (expected `<span style="">__init__</span>`); ``inline_html("`x ** 2` and **bold**")`` → broken nesting.
-- **Test:** `tests/test_richtext.py`
-
+- **Where:** `richtext.py:254-259` (`inline_html`); rendered through `overlay_ui.py:1446` (paragraphs) and `:1455` (bullets).
+- **Reproduced (2026-10-28) in `TranscriptPanel`:** model text ``Override `__init__` and forward `**kwargs` `` renders the code span as `<b>init</b>`; ``Use `a * b * c` `` renders `a <i> b </i> c` inside the code span. With two `**` on a line (``\`x ** 2\` and **bold**``) the generated markup is unbalanced.
+- **Root cause:** emphasis regexes run on the whole string after code spans are converted, without protecting their content.
+- **Impact:** code identifiers in suggestions are displayed incorrectly (dunder methods, `**kwargs`, `*args`, arithmetic) — the case the vision model is prompted to produce.
+- **Proposed fix:** tokenize code spans first (replace with placeholders), apply emphasis to the remaining text, then restore escaped code spans.
+- **Test:** `tests/test_richtext.py` (KNOWN-103 xfail)
 ### [KNOWN-201] Non-UTF-8 `config.json` raises in `load_config`
 - **Where:** `config.py:167-169` (`open(..., encoding="utf-8")` + `except (json.JSONDecodeError, OSError)`)
 - **Trigger:** `config.json` saved in a legacy code page (e.g. edited and saved as "ANSI"/cp1252) containing any non-ASCII character (`é`, `ñ` in prompts).
@@ -185,29 +220,41 @@ Every KNOWN entry with a test is pinned by a `pytest.mark.xfail(strict=True)` te
 - **Proposed fix:** add an engine signal for init outcome (e.g. `started(bool)`) or treat errors received while the engine reports `not running` as a start failure: call `stop_meeting()` (UI-only reset) and keep the error visible.
 - **Test:** `tests/test_app.py::TestMeeting::test_initialization_error_restores_idle`
 ### [KNOWN-701] Capture context budget ignores line separators
-- **Where:** `engine.py:541` (`_contexto`, capture branch)
-- **Behavior:** the 8000-char budget sums line lengths but not the `\n` joiners, so the joined context can exceed `LIMITE_CHARS_CAPTURA`.
-- **Repro:** two history lines of 4000 chars each → 8001-char context (expected <= 8000).
+- **Where:** `engine.py:538-545` (`_contexto`, capture branch sums `len(linea)` but the result is joined with `"\n"`).
+- **Repro:** two history lines of 4000 chars → 8001-char context (limit 8000).
+- **Impact:** negligible: the overshoot is at most `lines - 1` characters (≤ 79 with `CONTEXTO_CAPTURA=80`) on an 8000-char budget.
+- **Proposed fix:** `total + len(linea) + (1 if recortado else 0) > LIMITE_CHARS_CAPTURA`.
 - **Test:** `tests/test_engine.py::TestContext::test_capture_limit_includes_line_separators`
+## Design issues — confirmed by measurement
 
-## Suspected issues — from code review, not yet covered by tests
+### [KNOWN-004] LLM clients keep SDK default retries and a 10-minute read timeout
+- **Where:** `llm.py:79-84` (`anthropic.Anthropic(api_key=...)` / `OpenAI(api_key=...)` with defaults) plus the manual retry loop `llm.py:192-221`.
+- **Measured (2026-10-28), anthropic 2.3.0 / openai 3.37.0:** defaults `max_retries=2`, `timeout=Timeout(connect=5.0, read=600, write=600, pool=600)` on both SDKs. Through `Coach.stream_response` with a mocked transport:
 
-### [KNOWN-001] Unsynchronized iteration over session history
-- **Status:** not deterministically testable; needs a lock or a snapshot under lock.
-- **Where:** `engine.py:531` (`list(self._history)` in the worker) vs `engine.py:340` (`append` from the turn timer / WebSocket thread).
-- **Risk:** `RuntimeError: deque mutated during iteration`, swallowed at `engine.py:496`; the suggestion for that turn is dropped.
-
-### [KNOWN-004] Anthropic client uses SDK default retries and timeout
-- **Where:** `llm.py:84` (`anthropic.Anthropic(api_key=...)`), plus the manual retry at `llm.py:192-217`.
-- **Effect:** SDK default `max_retries=2` (408/409/429/5xx/connection) and 10-minute timeout, stacked with the manual retry: up to 6 attempts per suggestion. Retry classification uses error-string matching instead of typed exceptions.
-
-### [KNOWN-005] No logging
-- **Where:** 44 broad `except` blocks across the codebase; no `logging` usage.
-- **Effect:** runtime failures leave no trace on disk.
-
+  | Server response | HTTP requests | Time until `on_error` |
+  |---|---|---|
+  | 503 | 6 | 3.1 s |
+  | 529 overloaded | 6 | 3.4 s |
+  | 401 | 1 | 0.0 s |
+- **Root cause:** the SDK retries 2× with backoff inside each attempt; `_reintentable` (string matching on the error text) adds one more attempt → 2 × 3 requests.
+- **Impact:** during an outage each suggestion takes ~3.4 s to fail instead of failing fast; a stalled stream can block the single worker thread for up to 600 s per attempt, queueing every later turn behind it.
+- **Proposed fix:** construct clients with `max_retries=0` (keep the single manual retry before the first token) and a request timeout sized for live use (e.g. `connect=5`, `read=20`); classify retryable errors with the SDK exception types (`RateLimitError`, `APIConnectionError`, `InternalServerError`, `APIStatusError.status_code`) instead of message text.
+- **Test:** none yet (needs a mocked-transport test in `tests/test_llm.py`).
+### [KNOWN-005] No logging; failures in background threads are discarded
+- **Where:** no module imports `logging`. Broad handlers that discard the exception with no signal/status: `audio.py:103-104` (`on_utterance` callback — offline utterance lost), `audio.py:278-280` (`on_system_pcm` → `StreamingSTT.feed` — cloud transcription stops silently), `engine.py:669-670` (metrics report and session transcript not written), `llm.py:255-256` (warm-up), `stt_stream.py:124-129, 230-231`, and 6 more `pass` branches in `audio.py`. Per module: `audio.py` 11, `engine.py` 8, `stt_stream.py` 7, `richtext.py` 3, `overlay.py` 3, `llm.py` 3, `hotkeys.py` 3, others ≤ 2.
+- **Impact:** field failures leave no trace on disk; the packaged exe runs with `--noconsole`, so stderr is also lost. The defects in this file were found by tests, not from logs.
+- **Proposed fix:** configure `logging` at startup with a `RotatingFileHandler` in `%APPDATA%\Armony\logs\armony.log` (never logging secrets); replace silent `pass` with `log.exception(...)` in the handlers above; install `sys.excepthook` / `threading.excepthook` and a Qt message handler.
+- **Test:** none (design change).
 ## Test infrastructure notes
 - `faster_whisper` is not installed in `.venv`; `tests/test_transcribe.py` injects a stub module. Offline mode cannot run from this venv as-is.
 - `--cov=contexts` measures the `contexts/` data directory instead of `contexts.py`. Use `--cov=. --cov-report=term-missing` and read the module rows.
+
+## Closed — not a defect
+
+### [KNOWN-001] Unsynchronized iteration over session history — not a defect on CPython 3.11
+- **Where:** `engine.py:531` (`list(self._history)` in the worker) vs `engine.py:340` (`append` from the turn timer / WebSocket thread).
+- **Measured (2026-10-28), Python 3.11.9:** `list(deque)` concurrently with a thread appending to a `deque(maxlen=120)`: 1,217,810 reads in 4 s, 0 `RuntimeError`. A Python-level `for x in deque` under the same load: 106 `RuntimeError` in 4 s.
+- **Conclusion:** `list(deque)` copies in C without releasing the GIL, so the code as written cannot raise. It would become a real race on a free-threaded (no-GIL) build or if the copy were rewritten as a Python loop. Keep `list(...)` (or add a lock) if this code changes.
 
 ## Resolved issues
 None yet.
