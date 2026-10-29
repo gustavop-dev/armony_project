@@ -1,4 +1,4 @@
-"""Motor de Meeting Coach: audio -> transcripcion -> Claude (streaming).
+"""Motor de Meeting Coach: audio -> transcripcion -> modelo de respuestas (streaming).
 
 Sin dependencias de interfaz: expone senales Qt y no sabe como se dibuja nada.
 
@@ -113,14 +113,14 @@ class CoachEngine(QtCore.QObject):
         # Agrupacion de turnos. AssemblyAI cierra un turno por
         # cada frase, asi que un "¿Como vais? ¿Llegamos el viernes?" llega en dos
         # trozos. Responder a cada uno seria atropellado: se acumulan y solo se
-        # llama a Claude cuando pasa _turn_gap sin que nadie hable.
+        # llama al modelo cuando pasa _turn_gap sin que nadie hable.
         self._turn_lock = threading.Lock()
         self._turn_parts = []
         self._turn_timer = None
         self._turn_gap = 0.7
 
     def start(self, cfg, test_mode=False):
-        """test_mode: solo audio + transcripcion (sin API key, sin llamar a Claude)."""
+        """test_mode: solo audio + transcripcion (sin llamar al modelo de respuestas)."""
         if self._running:
             return
         # Cola NUEVA en cada arranque: nada de la sesion anterior puede colarse.
@@ -140,11 +140,10 @@ class CoachEngine(QtCore.QObject):
         self._registro = []
 
         metricas.iniciar()
-        p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"
-        metricas.nota(f"proveedor: {p}")
+        metricas.nota("proveedor: openai")
         metricas.nota(f"transcripcion: {cfg.get('assemblyai_model')}")
-        metricas.nota(f"voz: {cfg.get(f'{p}_model_voice')} · "
-                      f"capturas: {cfg.get(f'{p}_model_vision')}")
+        metricas.nota(f"voz: {cfg.get('openai_model_voice')} · "
+                      f"capturas: {cfg.get('openai_model_vision')}")
         # La inicializacion (conectar, preparar el coach) puede tardar: en un hilo.
         threading.Thread(target=self._init_and_run, args=(cfg,), daemon=True).start()
 
@@ -184,20 +183,18 @@ class CoachEngine(QtCore.QObject):
                 extra = ctx_mod.active_text("auto")     # 'auto' = todos
                 if extra:
                     sys_prompt += "\n\n# Contexto de esta reunion\n" + extra
-                # Cada proveedor trae su clave y sus dos modelos: uno para las
-                # preguntas habladas y otro, mas capaz, para las capturas.
-                p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"
+                # Dos modelos: uno para las preguntas habladas y otro, mas
+                # capaz, para las capturas.
                 self._coach = Coach(
-                    api_key=cfg[f"{p}_api_key"],
+                    api_key=cfg["openai_api_key"],
                     system_prompt=sys_prompt,
-                    provider=p,
-                    model_voice=cfg[f"{p}_model_voice"],
-                    tokens_voice=int(cfg[f"{p}_tokens_voice"]),
-                    model_vision=cfg[f"{p}_model_vision"],
-                    tokens_vision=int(cfg[f"{p}_tokens_vision"]),
+                    model_voice=cfg["openai_model_voice"],
+                    tokens_voice=int(cfg["openai_tokens_voice"]),
+                    model_vision=cfg["openai_model_vision"],
+                    tokens_vision=int(cfg["openai_tokens_vision"]),
                 )
             except Exception as e:
-                self.error.emit(f"No se pudo iniciar Claude: {e}")
+                self.error.emit(f"No se pudo iniciar el modelo de respuestas: {e}")
                 self._running = False
                 return
 
@@ -230,7 +227,7 @@ class CoachEngine(QtCore.QObject):
         self._audio.start()
         if self._test_mode:
             self.status.emit(
-                "MODO PRUEBA: transcribe la reunion en vivo. No se llama a Claude.")
+                "MODO PRUEBA: transcribe la reunion en vivo. No se generan respuestas.")
         else:
             self.status.emit("Escuchando la reunion. Habla y aparecera la sugerencia.")
 
@@ -275,7 +272,7 @@ class CoachEngine(QtCore.QObject):
     def _flush_turn(self):
         """Cierra la intervencion y decide si merece respuesta.
 
-        Puerta 1: si no parece pregunta ni peticion, no se molesta a Claude. El
+        Puerta 1: si no parece pregunta ni peticion, no se molesta al modelo. El
         texto NO se pierde: queda en el historial y sera contexto de la proxima
         respuesta. Y si la transcripcion se comio los signos y aqui no se vio la
         pregunta, queda el atajo de responder ahora.
@@ -368,7 +365,7 @@ class CoachEngine(QtCore.QObject):
                 if item["type"] == "respond":
                     # Turno cerrado: ya se acumulo todo lo que dijeron.
                     # 'auto' distingue lo que dispara el filtro de lo que pides tu
-                    # a mano: si lo pides tu, Claude no puede callarse.
+                    # a mano: si lo pides tu, el modelo no puede callarse.
                     self._respond(item["text"], images=None,
                                   permitir_silencio=item.get("auto", False))
                 elif item["type"] == "screenshot":
@@ -429,7 +426,7 @@ class CoachEngine(QtCore.QObject):
         return "\n".join(lineas)
 
     def _respond(self, latest, images=None, note="", permitir_silencio=False):
-        # Contexto etiquetado por hablante: Claude ve quien dijo cada cosa y sabe
+        # Contexto etiquetado por hablante: el modelo ve quien dijo cada cosa y sabe
         # que respondiste tu, evitando sugerirte que repitas.
         self._last_question = latest
         # Ese turno queda saldado: si luego llegan capturas, no se le vuelven a

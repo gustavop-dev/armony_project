@@ -8,7 +8,7 @@ Dos tipos de resultado:
     final   (end_of_turn=true)  -> turno cerrado; AssemblyAI decidio que la
                                    persona termino de hablar
 
-Ese "final" es el que dispara la sugerencia de Claude. El fin de turno lo decide
+Ese "final" es el que dispara la sugerencia del coach. El fin de turno lo decide
 un modelo entrenado para eso y no un umbral de energia, asi que aguanta mucho
 mejor las pausas al pensar.
 

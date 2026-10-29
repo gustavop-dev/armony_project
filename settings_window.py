@@ -152,14 +152,14 @@ class BilingualPrompt(QtWidgets.QWidget):
         self._on_change(self._lang, self._texts[self._lang])
 
 
-# Modelos ofrecidos. Los tiempos de GPT son medianas de 5 llamadas medidas desde
-# este equipo, hasta la primera palabra en pantalla; de calidad no hay medida, asi
-# que no se ordenan por "listos".
-CLAUDE = [("claude-haiku-4-5", "Claude Haiku 4.5 — el más rápido"),
-          ("claude-sonnet-5", "Claude Sonnet 5 — equilibrado"),
-          ("claude-opus-4-8", "Claude Opus 4.8 — el más capaz")]
-
-GPT = [("gpt-5.4-mini", "GPT-5.4 mini — 0,7 s"),
+# Modelos ofrecidos. Los tiempos de la generacion 5.x son medianas de 5 llamadas
+# medidas desde este equipo, hasta la primera palabra en pantalla; los de la 6.x
+# se anotaran al medirlos (plan, fase 0.3). Los 5.x siguen en la lista para que
+# una configuracion guardada con ellos no cambie sola al abrir Ajustes.
+GPT = [("gpt-6-luna", "GPT-6 luna — el más eficiente"),
+       ("gpt-6.1-terra", "GPT-6.1 terra — rápido"),
+       ("gpt-6.1-sol", "GPT-6.1 sol — el más capaz"),
+       ("gpt-5.4-mini", "GPT-5.4 mini — 0,7 s"),
        ("gpt-5.6-terra", "GPT-5.6 terra — 0,8 s"),
        ("gpt-5.6-luna", "GPT-5.6 luna — 1,2 s"),
        ("gpt-5.6-sol", "GPT-5.6 sol — 1,3 s")]
@@ -170,55 +170,24 @@ def _schema():
     return [
         ("connection", "bolt", "Conexión",
          "Credenciales y modelos que alimentan la transcripción y las respuestas.", [
-            dict(key="llm_provider", label="Proveedor de respuestas", type="select",
-                 hint="Quién redacta las sugerencias. Cada proveedor usa su propia "
-                      "clave y su propio modelo, elegidos abajo.",
-                 options=[("anthropic", "Anthropic (Claude)"),
-                          ("openai", "OpenAI (GPT)")]),
-            # --- Anthropic (solo si es el proveedor elegido) ---
-            dict(key="anthropic_api_key", label="API key de Anthropic", type="text",
-                 secret=True, placeholder="sk-ant-…", visible_si=("llm_provider", "anthropic"),
-                 hint="Sin ella no arranca la reunión (salvo Modo prueba)."),
-            dict(key="anthropic_model_voice", label="Modelo · preguntas habladas",
-                 type="select", visible_si=("llm_provider", "anthropic"),
-                 hint="Para lo que te preguntan hablando. Aquí manda la rapidez: "
-                      "Haiku es el más rápido.",
-                 options=CLAUDE),
-            dict(key="anthropic_tokens_voice", label="Longitud máx. · habladas",
-                 type="number", min=100, max=1000, step=50, unit=" tok",
-                 visible_si=("llm_provider", "anthropic"),
-                 hint="Cuánto puede extenderse la respuesta hablada."),
-            dict(key="anthropic_model_vision", label="Modelo · capturas de pantalla",
-                 type="select", visible_si=("llm_provider", "anthropic"),
-                 hint="Para los pantallazos, donde suele haber código que resolver. "
-                      "Aquí compensa uno más capaz aunque tarde algo más.",
-                 options=CLAUDE),
-            dict(key="anthropic_tokens_vision", label="Longitud máx. · capturas",
-                 type="number", min=200, max=4000, step=100, unit=" tok",
-                 visible_si=("llm_provider", "anthropic"),
-                 hint="El código ocupa: quedarse corto lo deja cortado a medias."),
-
-            # --- OpenAI (solo si es el proveedor elegido) ---
             dict(key="openai_api_key", label="API key de OpenAI", type="text",
-                 secret=True, placeholder="sk-proj-…", visible_si=("llm_provider", "openai"),
+                 secret=True, placeholder="sk-proj-…",
                  hint="Sin ella no arranca la reunión (salvo Modo prueba)."),
             dict(key="openai_model_voice", label="Modelo · preguntas habladas",
-                 type="select", visible_si=("llm_provider", "openai"),
+                 type="select",
                  hint="Para lo que te preguntan hablando. El tiempo es hasta la "
                       "PRIMERA palabra en pantalla, medido desde este equipo.",
                  options=GPT),
             dict(key="openai_tokens_voice", label="Longitud máx. · habladas",
                  type="number", min=100, max=1000, step=50, unit=" tok",
-                 visible_si=("llm_provider", "openai"),
                  hint="Cuánto puede extenderse la respuesta hablada."),
             dict(key="openai_model_vision", label="Modelo · capturas de pantalla",
-                 type="select", visible_si=("llm_provider", "openai"),
+                 type="select",
                  hint="Para los pantallazos, donde suele haber código que resolver. "
                       "Aquí compensa uno más capaz aunque tarde algo más.",
                  options=GPT),
             dict(key="openai_tokens_vision", label="Longitud máx. · capturas",
                  type="number", min=200, max=4000, step=100, unit=" tok",
-                 visible_si=("llm_provider", "openai"),
                  hint="El código ocupa: quedarse corto lo deja cortado a medias."),
             dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
                  secret=True, placeholder="…",

@@ -1,19 +1,12 @@
-"""Cliente del coach con streaming: Anthropic o OpenAI, a elegir.
+"""Cliente del coach con streaming sobre la API Responses de OpenAI.
 
 Recibe el contexto de la reunion (ultimas frases) y, opcionalmente, capturas de
 pantalla, y devuelve token por token la respuesta sugerida.
-
-Los dos proveedores comparten exactamente el mismo prompt. Lo unico que cambia
-es como se empaqueta la peticion y de donde se sacan los trozos de texto, asi
-que el resto de la app no sabe cual esta configurado.
 """
 
 import time
 
 from metrics import LLM_PRIMERA, LLM_TOTAL, metricas
-
-ANTHROPIC = "anthropic"
-OPENAI = "openai"
 
 # Fallos que suelen arreglarse solos al repetir: limite de peticiones, cortes de
 # red, caidas momentaneas del proveedor. Una clave mal puesta o un modelo que no
@@ -48,7 +41,7 @@ _FORMATO_CODIGO = (
     "cubre. Extiendete lo que haga falta; aqui quedarse corto es el error.\n"
     "## Coste — tiempo y espacio en notacion O(), y POR QUE sale eso.\n\n")
 
-# Los modelos gpt-5 razonan antes de responder y ese razonamiento, aunque no se
+# Los modelos gpt-5/gpt-6 razonan antes de responder y ese razonamiento, aunque no se
 # vea, gasta del mismo presupuesto de tokens. Sin esta reserva un limite bajo se
 # lo comeria el razonamiento y la respuesta llegaria vacia. El ajuste del usuario
 # sigue significando lo que dice: longitud de la RESPUESTA.
@@ -64,10 +57,10 @@ class Coach:
     estas leyendo.
     """
 
-    def __init__(self, api_key, system_prompt="", provider=ANTHROPIC,
-                 model_voice="claude-haiku-4-5", tokens_voice=400,
-                 model_vision=None, tokens_vision=None):
-        self.provider = (provider or ANTHROPIC).lower()
+    def __init__(self, api_key, system_prompt="", model_voice="gpt-6.1-terra",
+                 tokens_voice=400, model_vision=None, tokens_vision=None):
+        from openai import OpenAI
+        self.client = OpenAI(api_key=api_key)
         self.system_prompt = system_prompt
         self.model_voice = model_voice
         self.tokens_voice = int(tokens_voice)
@@ -75,13 +68,6 @@ class Coach:
         # responder algo que fallar por configuracion incompleta.
         self.model_vision = model_vision or model_voice
         self.tokens_vision = int(tokens_vision or tokens_voice)
-        # Importe perezoso: solo se exige tener instalado el proveedor que se usa.
-        if self.provider == OPENAI:
-            from openai import OpenAI
-            self.client = OpenAI(api_key=api_key)
-        else:
-            import anthropic
-            self.client = anthropic.Anthropic(api_key=api_key)
 
     # ------------------------------------------------------------------ prompt
     def _prompt(self, context_text, latest, images, note, allow_silence):
@@ -201,10 +187,7 @@ class Coach:
                     on_delta(txt)
 
             try:
-                if self.provider == OPENAI:
-                    self._stream_openai(prompt, images, delta, modelo, tokens)
-                else:
-                    self._stream_anthropic(prompt, images, delta, modelo, tokens)
+                self._stream_openai(prompt, images, delta, modelo, tokens)
                 metricas.medir(LLM_TOTAL, (time.monotonic() - t0) * 1000)
                 metricas.contar("respuestas")
                 if on_done:
@@ -236,21 +219,15 @@ class Coach:
         """
         t0 = time.monotonic()
         try:
-            if self.provider == OPENAI:
-                kw = dict(model=self.model_voice, instructions=self.system_prompt,
-                          input="Responde solo: ok", max_output_tokens=16)
-                try:
-                    # Sin razonar: aqui no interesa la respuesta, solo abrir la
-                    # conexion y que el prompt pase una primera vez. Medido:
-                    # 4,5 s razonando por defecto contra 1,0 s asi.
-                    self.client.responses.create(reasoning={"effort": "none"}, **kw)
-                except Exception:
-                    self.client.responses.create(**kw)   # modelo sin ese ajuste
-            else:
-                self.client.messages.create(
-                    model=self.model_voice, max_tokens=8,
-                    system=self.system_prompt,
-                    messages=[{"role": "user", "content": "Responde solo: ok"}])
+            kw = dict(model=self.model_voice, instructions=self.system_prompt,
+                      input="Responde solo: ok", max_output_tokens=16)
+            try:
+                # Sin razonar: aqui no interesa la respuesta, solo abrir la
+                # conexion y que el prompt pase una primera vez. Medido:
+                # 4,5 s razonando por defecto contra 1,0 s asi.
+                self.client.responses.create(reasoning={"effort": "none"}, **kw)
+            except Exception:
+                self.client.responses.create(**kw)   # modelo sin ese ajuste
             return (time.monotonic() - t0) * 1000
         except Exception:
             return None
@@ -261,26 +238,7 @@ class Coach:
             return self.model_vision, self.tokens_vision
         return self.model_voice, self.tokens_voice
 
-    # ---------------------------------------------------------------- backends
-    def _stream_anthropic(self, prompt, images, on_delta, modelo, tokens):
-        content = []
-        for img in (images or []):
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/png", "data": img},
-            })
-        content.append({"type": "text", "text": prompt})
-
-        with self.client.messages.stream(
-            model=modelo,
-            max_tokens=tokens,
-            system=self.system_prompt,
-            messages=[{"role": "user", "content": content}],
-        ) as stream:
-            for text in stream.text_stream:
-                if on_delta:
-                    on_delta(text)
-
+    # ----------------------------------------------------------------- backend
     def _stream_openai(self, prompt, images, on_delta, modelo, tokens):
         content = []
         for img in (images or []):

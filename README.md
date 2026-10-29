@@ -2,7 +2,7 @@
 
 Asistente de reuniones para **practicar y entrenar** cómo responder en vivo. Escucha el
 audio de la reunión (salida del sistema) y tu micrófono, transcribe en vivo y te sugiere
-con Claude qué podrías responder — todo en una ventana que **tú ves pero que es invisible
+con un modelo de OpenAI qué podrías responder — todo en una ventana que **tú ves pero que es invisible
 al compartir pantalla** (privacidad total).
 
 > Proyecto personal. Úsalo de forma responsable y solo donde tengas permiso para hacerlo.
@@ -15,18 +15,16 @@ al compartir pantalla** (privacidad total).
 - **Transcribe en vivo** con AssemblyAI (Universal Streaming): el texto aparece palabra a
   palabra mientras la otra persona habla, y es el propio modelo quien detecta cuándo
   terminó de hablar.
-- **Sugiere respuestas** en streaming (aparecen token por token), con **Claude
-  (Anthropic) o GPT (OpenAI)** — se elige en *Configuración*, cada uno con su clave
-  y su modelo.
-- **Screenshot → Claude:** botón para mandar una captura de pantalla y preguntar (visión).
+- **Sugiere respuestas** en streaming (aparecen token por token) con **GPT (OpenAI)**,
+  un modelo para preguntas habladas y otro para capturas, elegidos en *Configuración*.
+- **Screenshot → GPT:** botón para mandar una captura de pantalla y preguntar (visión).
 - **Invisible al compartir pantalla:** `SetWindowDisplayAffinity` (Windows 10 2004+/11).
 
 ## Requisitos
 
 - Windows 10 (build 19041+) u 11.
 - Python 3.10 u 3.11 recomendado.
-- API key del proveedor de respuestas que elijas: **Anthropic** u **OpenAI**
-  (se pone en la interfaz, en *Configuración*).
+- API key de **OpenAI** (se pone en la interfaz, en *Configuración*).
 - API key de AssemblyAI para la transcripción en vivo (también en *Configuración*).
 
 ## Ejecutable (.exe)
@@ -70,7 +68,7 @@ python app.py
 
 ### Modo prueba (sin API key)
 
-Marca **Modo prueba** y pulsa *Iniciar*. No requiere API key ni llama a Claude: solo
+Marca **Modo prueba** y pulsa *Iniciar*. No requiere la API key de OpenAI ni genera respuestas: solo
 captura audio y transcribe **ambas** fuentes, etiquetadas, para verificar el montaje:
 
 - `[REUNION] ...` → audio del sistema (pon un vídeo hablado)
@@ -194,9 +192,9 @@ En una reunión la gente da mucho más contexto del que pregunta, así que respo
 cada frase llenaría el panel de ruido. Hay dos filtros antes de molestar a la IA:
 
 1. **En tu equipo, gratis:** si la intervención no parece pregunta ni petición, ni se
-   llama a Claude. El texto no se pierde — queda en el historial y será contexto de la
+   llama al modelo. El texto no se pierde — queda en el historial y será contexto de la
    próxima respuesta.
-2. **Claude:** lo que pasa el primer filtro puede seguir sin ser una pregunta ("y bueno,
+2. **El modelo:** lo que pasa el primer filtro puede seguir sin ser una pregunta ("y bueno,
    qué te digo…"). En ese caso el modelo se calla y no se pinta nada.
 
 Si preguntaron y la transcripción se comió los signos, **`Alt+5`** fuerza la respuesta.
@@ -247,20 +245,18 @@ resolver— no vuelve a preguntar: propone y deja sus suposiciones por escrito.
 **En vivo (AssemblyAI, por defecto).** El texto va apareciendo mientras la persona habla,
 así que no se espera a que termine la frase. Medido con audio real del sistema: **76–84 ms**
 desde la última palabra hasta el texto final. A eso se le suma la pausa de fin de turno
-(ajuste *Pausa de fin de turno*, 0.7 s por defecto) y ~0.5 s del primer token de Claude
-Haiku. Coste aproximado: **$0.45 por hora de reunión** — se factura el tiempo conectado,
+(ajuste *Pausa de fin de turno*, 0.7 s por defecto) y el primer token del modelo de voz. Coste aproximado: **$0.45 por hora de reunión** — se factura el tiempo conectado,
 no el audio enviado, y la conexión solo existe mientras la reunión está en marcha.
 
 ### Dos modelos, uno por cada uso
 
-En *Configuración → Conexión* solo aparece el proveedor que tengas elegido (o las
-opciones de Anthropic, o las de OpenAI, nunca las dos), y cada uno se configura con
-**dos modelos**, porque los dos usos no se parecen en nada:
+En *Configuración → Conexión* se eligen **dos modelos** de OpenAI, porque los dos usos
+no se parecen en nada:
 
 | Uso | Qué manda | Por defecto |
 |---|---|---|
-| **Preguntas habladas** | La latencia: la respuesta tiene que estar antes de que el silencio se note | `gpt-5.6-terra` · `claude-haiku-4-5` |
-| **Capturas de pantalla** | La capacidad: suele haber código que resolver, y unos segundos de más no se notan porque estás leyendo | `gpt-5.6-sol` · `claude-sonnet-5` |
+| **Preguntas habladas** | La latencia: la respuesta tiene que estar antes de que el silencio se note | `gpt-6.1-terra` |
+| **Capturas de pantalla** | La capacidad: suele haber código que resolver, y unos segundos de más no se notan porque estás leyendo | `gpt-6.1-sol` |
 
 Cada uno con su propia **longitud máxima de respuesta**, justo debajo del modelo:
 400 tokens bastan para una respuesta hablada, pero el código se queda corto ahí, así
@@ -356,7 +352,7 @@ Medido con proceso nuevo cada vez, tiempo hasta la primera palabra:
 - `secretstore.py` — cifra las API keys con DPAPI (atado a tu cuenta de Windows).
 - `make_icon.py` — genera el icono «Ar.» en todos los tamaños que pide Windows.
 - `llm.py` — cliente del coach con streaming y soporte de imagen (screenshot).
-  Anthropic y OpenAI tras la misma interfaz; solo se importa el que se use.
+  OpenAI, API Responses.
 - `overlay.py` — modo invisible a la captura de pantalla y click-through.
 - `wheelscroll.py` — desvía la rueda del ratón al overlay cuando el cursor está
   encima. Hace falta porque el click-through (`WS_EX_TRANSPARENT`) vuelve la
@@ -366,5 +362,4 @@ Medido con proceso nuevo cada vez, tiempo hasta la primera palabra:
 
 ## Ideas a futuro
 
-- Respuestas por proveedor (Claude/OpenAI) elegible.
 - El agente que se conecta a la videollamada y da soporte a clientes.

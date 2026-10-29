@@ -292,7 +292,7 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 
 ## Overview
 - Windows-only desktop app (Windows 10 build 19041+ / 11), Python 3.11 + PySide6. Spike that exercises a real-time pipeline for a larger IDE project.
-- Pipeline: WASAPI loopback + microphone capture → speech-to-text (AssemblyAI Universal Streaming over WebSocket) → turn aggregation and question detection → streaming completion from Anthropic or OpenAI → rendering in frameless Qt overlay windows. Overlay windows use `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, `WS_EX_TRANSPARENT` click-through and `WS_EX_NOACTIVATE`.
+- Pipeline: WASAPI loopback + microphone capture → speech-to-text (AssemblyAI Universal Streaming over WebSocket) → turn aggregation and question detection → streaming completion from OpenAI (Responses API) → rendering in frameless Qt overlay windows. Overlay windows use `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, `WS_EX_TRANSPARENT` click-through and `WS_EX_NOACTIVATE`.
 - Packaged as a single `dist\Armony.exe` with PyInstaller (`build_exe.py`). No backend, database, web frontend or server deployment.
 
 ## Module map
@@ -301,7 +301,7 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 - `audio.py` — `AudioEngine`: WASAPI loopback and mic capture threads, resampling to 16 kHz (`soxr`), RMS levels, continuous 16 kHz PCM feed to the streaming STT, default-device hot swap.
 - `stt_stream.py` — `StreamingSTT`: AssemblyAI v3 WebSocket client, 50 ms PCM chunking, bounded send queue, reconnection backoff, partial/final turn handling, latency estimation.
 - `intent.py` — `parece_pregunta(text, lang)`: lexical question/request detector (ES/EN/auto).
-- `llm.py` — `Coach`: prompt construction, voice vs. vision model selection, Anthropic/OpenAI streaming backends, single retry before first token, warm-up request.
+- `llm.py` — `Coach`: prompt construction, voice vs. vision model selection, OpenAI Responses streaming, single retry before first token, warm-up request.
 - `richtext.py` — model markdown → section/paragraph/list/code blocks; Pygments highlighting; inline HTML.
 - `metrics.py` — process-wide `metricas` singleton: timings, counters, notes; JSON + text report per session.
 - `config.py` — defaults, `config.json` load/save, legacy key migration; `secretstore.py` encrypts API keys with DPAPI (`dpapi:` prefix).
@@ -349,7 +349,7 @@ From WSL the Windows venv runs through interop (`.venv/Scripts/python.exe`); fro
 ## Testing constraints
 - Never run the full suite: only the files or tests for the change. Max 20 tests per batch and 3 test commands per cycle.
 - One behavior per test, no conjunctions in test names, no conditionals in test bodies (parametrize), AAA pattern, hand-verified literal expected values.
-- Mock only at system boundaries: Anthropic/OpenAI/AssemblyAI APIs, WASAPI/PyAudio, Win32 (`ctypes`), clock, and the `%APPDATA%` file system.
+- Mock only at system boundaries: OpenAI/AssemblyAI/TypeSafe APIs, WASAPI/PyAudio, Win32 (`ctypes`), clock, and the `%APPDATA%` file system.
 - Tests never call paid APIs, open real network connections or read the user's real configuration (`tests/conftest.py` enforces isolation).
 - A test that exposes a bug is marked `pytest.mark.xfail(strict=True, reason="[KNOWN-NNN] ...")` and the bug is recorded in `docs/methodology/error-documentation.md`; the fix lands in a separate `fix/...` branch.
 - Coverage priority: pure logic without Windows/Qt (`intent.py`, `richtext.py`, `metrics.py`, `config.py`, `contexts.py`, prompt building in `llm.py`), then `engine.py`, `llm.py` and `stt_stream.py` with boundaries mocked.
@@ -373,7 +373,7 @@ From WSL the Windows venv runs through interop (`.venv/Scripts/python.exe`); fro
 
 - **Name**: Armony (Meeting Coach)
 - **Platform**: Windows 10 (19041+) / 11 desktop app, distributed as `dist\Armony.exe`
-- **Stack**: Python 3.11 + PySide6 / PyAudioWPatch (WASAPI) / AssemblyAI streaming / Anthropic + OpenAI SDKs
+- **Stack**: Python 3.11 + PySide6 / PyAudioWPatch (WASAPI) / AssemblyAI streaming / OpenAI SDK / TypeSafe SDK (Jev)
 - **Repo path**: `C:\Users\devgu\armony_project` (WSL: `/mnt/c/Users/devgu/armony_project`)
 - **User data**: `%APPDATA%\Armony\` (`config.json` with DPAPI-encrypted keys, `contexts/`, `metricas/`)
 
@@ -394,7 +394,7 @@ These should be respected ALWAYS:
 ## Security Rules — Secrets / Untrusted Input / Dependencies
 
 ### Secrets
-- NEVER hardcode API keys (Anthropic, OpenAI, AssemblyAI). They are entered in the UI and stored DPAPI-encrypted through `secretstore.py`.
+- NEVER hardcode API keys (OpenAI, AssemblyAI, TypeSafe). They are entered in the UI and stored DPAPI-encrypted through `secretstore.py`.
 - NEVER log, print, persist in `metricas/` or include in exception messages any key or the decrypted config.
 - `config.json` and `contexts/*.md` stay gitignored. Verify `git status` before every commit.
 - Placeholders in docs/UI use the `sk-ant-...` form only.

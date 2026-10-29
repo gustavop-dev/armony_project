@@ -19,8 +19,9 @@ desarrollo).
 
 | Clave (`config.json`) | Etiqueta UI | Tipo | Valores / Rango | Default | Qué hace |
 |---|---|---|---|---|---|
-| `anthropic_api_key` | API key de Anthropic | Texto (oculto) | `sk-ant-...` | *(vacío)* | Credencial para llamar a Claude. Sin ella no arranca la reunión (salvo Modo prueba). |
-| `llm_model` | Modelo | Desplegable | `claude-haiku-4-5`, `claude-opus-4-8`, `claude-sonnet-5` | `claude-haiku-4-5` | Modelo que genera la respuesta. Haiku = más rápido; Opus = más inteligente. |
+| `openai_api_key` | API key de OpenAI | Texto (oculto) | `sk-proj-...` | *(vacío)* | Credencial del modelo de respuestas. Sin ella no arranca la reunión (salvo Modo prueba). |
+| `openai_model_voice` | Modelo · preguntas habladas | Desplegable | `gpt-6-luna`, `gpt-6.1-terra`, `gpt-6.1-sol` (y los 5.x) | `gpt-6.1-terra` | Modelo para lo que te preguntan hablando. Manda la latencia. |
+| `openai_model_vision` | Modelo · capturas de pantalla | Desplegable | igual que arriba | `gpt-6.1-sol` | Modelo para las capturas, donde suele haber código. Manda la capacidad. |
 | `language` | Idioma | Desplegable | `es`, `en`, `auto` | `es` | Idioma del reconocimiento de voz. `auto` = detección automática. |
 
 ## 🪟 Overlay
@@ -28,7 +29,7 @@ desarrollo).
 | Clave | Etiqueta UI | Tipo | Rango | Default | Qué hace |
 |---|---|---|---|---|---|
 | `invisible_on_share` | Invisible al compartir pantalla | Casilla | on/off | `on` | Excluye el overlay de cualquier captura o compartición de pantalla. |
-| `test_mode` | Modo prueba | Casilla | on/off | `off` | Arranca sin API key: solo audio + transcripción, sin llamar a Claude. |
+| `test_mode` | Modo prueba | Casilla | on/off | `off` | Arranca sin API key: solo audio + transcripción, sin generar respuestas. |
 | `window_opacity` | Opacidad | Numérico | 0.15 – 1.0 (paso 0.05) | `0.65` | Transparencia de las ventanas del overlay. Bajo = se ve más el fondo. |
 
 ## 🎙️ Sensibilidad de audio
@@ -115,7 +116,7 @@ Integraciones: Slack, Zapier, API REST...
 ## Mecánica de inyección en la IA
 
 Al pulsar **Start meeting**, se concatenan los contextos activos y se anteponen al
-system prompt de Claude:
+system prompt del coach:
 
 ```
 [Prompt del coach: cómo comportarse]
@@ -126,12 +127,12 @@ system prompt de Claude:
 [contenido de "Cliente Acme"]
 ```
 
-Esto se envía como `system` en la llamada a Claude.
+Esto se envía como `instructions` en la llamada a la API Responses de OpenAI.
 
 **Impacto en la latencia (<2 s):** como el contexto es estable durante toda la
-reunión, se aprovecha el *prompt caching* de Claude — solo la primera respuesta
-paga el costo completo; las siguientes leen el contexto cacheado y el primer token
-sigue llegando rápido. El contexto se **congela al iniciar** la reunión para no
+reunión, puede aprovecharse el *prompt caching* de OpenAI (automático a partir de 1.024
+tokens de prefijo estable). Cuánto se cachea de verdad se mide y se mejora en
+`docs/plan-live-turns-openai.md` (fase 4). El contexto se **congela al iniciar** la reunión para no
 romper el caché a media llamada.
 
 ## Requisitos de la UI (para diseño)

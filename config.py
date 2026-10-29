@@ -1,7 +1,7 @@
 """Carga y guarda la configuracion de la app en config.json (junto a este archivo).
 
-Guarda: API keys (Anthropic, OpenAI y AssemblyAI), proveedor y modelo, ajustes
-de transcripcion, idioma, prompt de coach y estado de "ventana invisible".
+Guarda: API keys (OpenAI y AssemblyAI), modelos, ajustes de transcripcion,
+idioma, prompt de coach y estado de "ventana invisible".
 
 config.json esta en .gitignore: las claves nunca salen del equipo.
 """
@@ -32,8 +32,10 @@ def data_dir():
 
 CONFIG_PATH = os.path.join(data_dir(), "config.json")
 
-# Campos que se guardan cifrados con DPAPI (ver secretstore).
-CLAVES_SECRETAS = ("anthropic_api_key", "openai_api_key", "assemblyai_api_key")
+# Campos que se guardan cifrados con DPAPI (ver secretstore). Los de Anthropic ya
+# no se leen, pero si estan en config.json se conservan tal cual (cifrados): la
+# integracion con Claude se quito "por ahora" y volver no debe exigir reescribirlos.
+CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key")
 
 # Prompts por defecto: uno por idioma (cada instruccion va en su idioma).
 DEFAULT_PROMPT_ES = (
@@ -77,32 +79,20 @@ DEFAULT_PROMPT_EN = (
 DEFAULT_SYSTEM_PROMPT = DEFAULT_PROMPT_ES   # compatibilidad
 
 DEFAULTS = {
-    # --- Proveedor de las respuestas ---
-    # 'anthropic' | 'openai'. Cada uno con su clave y sus modelos, para poder
-    # cambiar de uno a otro sin volver a escribir nada.
-    #
-    # Hay DOS modelos por proveedor porque los dos usos no se parecen:
+    # --- Modelo de las respuestas (OpenAI) ---
+    # Hay DOS modelos porque los dos usos no se parecen:
     #   voz     -> alguien pregunta hablando. Manda la latencia: la respuesta
     #              tiene que estar antes de que el silencio se note.
     #   captura -> hay un ejercicio o codigo en pantalla. Manda la capacidad, y
     #              un par de segundos de mas no se notan porque estas leyendo.
-    "llm_provider": "anthropic",
-
-    "anthropic_api_key": "",
-    "anthropic_model_voice": "claude-haiku-4-5",     # el mas rapido
-    "anthropic_tokens_voice": 400,
-    "anthropic_model_vision": "claude-sonnet-5",     # mas capaz para codigo
+    # Provisionales hasta medir luna/terra/sol (docs/plan-live-turns-openai.md,
+    # fase 0.3).
+    "openai_api_key": "",
+    "openai_model_voice": "gpt-6.1-terra",
+    "openai_tokens_voice": 400,
+    "openai_model_vision": "gpt-6.1-sol",
     # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
     # 1200 se quedaba a medias.
-    "anthropic_tokens_vision": 2500,
-
-    "openai_api_key": "",
-    # gpt-5.4-nano queda fuera a proposito: es el mas rapido, pero 1 de cada 5
-    # veces ignora la instruccion de callarse cuando no hay pregunta y escribe
-    # excusas en el panel. La velocidad no compensa ensuciar la pantalla.
-    "openai_model_voice": "gpt-5.6-terra",           # 0,8 s a la primera palabra
-    "openai_tokens_voice": 400,
-    "openai_model_vision": "gpt-5.6-sol",
     "openai_tokens_vision": 2500,
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
@@ -157,17 +147,15 @@ def load_config():
     if legacy and cfg.get("system_prompt_es") == DEFAULT_PROMPT_ES:
         cfg["system_prompt_es"] = legacy
 
-    # Migracion: antes habia UN modelo por proveedor y un unico max_tokens. Lo
-    # guardado se conserva como modelo de voz, para no cambiarle la configuracion
-    # a nadie por debajo; el de capturas se queda con el valor por defecto.
-    for viejo, nuevo in (("llm_model", "anthropic_model_voice"),
-                         ("openai_model", "openai_model_voice")):
-        anterior = cfg.pop(viejo, None)
-        if anterior:
-            cfg[nuevo] = anterior
+    # Migracion: antes habia UN modelo y un unico max_tokens. Lo guardado se
+    # conserva como modelo de voz, para no cambiarle la configuracion a nadie por
+    # debajo; el de capturas se queda con el valor por defecto.
+    anterior = cfg.pop("openai_model", None)
+    if anterior:
+        cfg["openai_model_voice"] = anterior
     tokens = cfg.pop("max_tokens", None)
     if tokens:
-        cfg["anthropic_tokens_voice"] = cfg["openai_tokens_voice"] = int(tokens)
+        cfg["openai_tokens_voice"] = int(tokens)
     for k in OBSOLETAS:
         cfg.pop(k, None)
     return cfg

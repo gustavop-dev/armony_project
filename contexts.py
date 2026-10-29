@@ -10,7 +10,7 @@ Cada contexto es un archivo contexts/<id>.md con cabecera (frontmatter):
     ...contenido markdown...
 
 - Se pueden crear varios; los marcados como active se concatenan y se inyectan
-  en el system prompt de Claude al iniciar la reunion.
+  en el system prompt del coach al iniciar la reunion.
 - El contenido se congela al iniciar (para no romper el cache a media llamada).
 """
 import os
