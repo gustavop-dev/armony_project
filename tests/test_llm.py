@@ -405,3 +405,22 @@ def test_error_log_does_not_contain_api_key(caplog):
     _run(c)
 
     assert secret not in caplog.text
+
+
+# ------------------------------------------------------- agents
+def test_agent_rules_replace_the_default_rules():
+    c = Coach(api_key="k", system_prompt="SYS", reglas="MIS REGLAS")
+
+    assert c._items[0]["content"][0]["text"] == "SYS\n\nMIS REGLAS"
+
+
+def test_switching_instructions_keeps_the_conversation(coach):
+    coach.client = FakeOpenAI(_text_stream("uno"), _text_stream("dos"))
+    _run(coach)
+    turnos = len(coach._items)
+
+    coach.cambiar_instrucciones("OTRO", "OTRAS REGLAS")
+    _run(coach)
+
+    assert _developer_text(coach) == "OTRO\n\nOTRAS REGLAS"
+    assert len(coach._items) == turnos + 2       # history kept, new turn added

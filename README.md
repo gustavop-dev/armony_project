@@ -115,8 +115,8 @@ cubierto de punta a punta:
   idioma fijado como en `Auto`.
 - **La respuesta sale en el idioma de la última pregunta**, aunque el prompt y el
   contexto estén en otro. Si te preguntan en inglés, lees en inglés.
-- **Al modelo se le manda todo**: las dos versiones del prompt del coach (ES y EN)
-  y *todos* los contextos activos, sin filtrar por idioma. El campo `Idioma` de
+- **Al modelo se le manda todo**: el agente en uso (el Coach lleva sus instrucciones
+  en ES y EN) y *todos* los contextos activos, sin filtrar por idioma. El campo `Idioma` de
   cada contexto queda solo para organizarlos. Filtrarlos dejaría al modelo sin la
   mitad de lo que necesita justo cuando la reunión cambia de idioma, que es cuando
   más falta hace.
@@ -284,10 +284,10 @@ Cada uno con su **longitud máxima**, al tope: 1000 tokens las habladas y 4000 l
 capturas. Es solo un techo —la longitud la marca el prompt y solo se paga lo que se
 escribe—, y uno justo dejaba el código cortado a medias.
 
-Nada de esto se configura: modelo, razonamiento, longitud, detección de turnos,
-audio y prompt del coach ya están decididos y medidos, y van fijos en el código
-(`config.FIJAS`). En *Configuración* solo quedan tus claves (OpenAI, AssemblyAI y,
-opcional, TypeSafe), el idioma, la opacidad y tus contextos.
+Nada de esto se configura: modelo, razonamiento, longitud, detección de turnos y
+audio ya están decididos y medidos, y van fijos en el código (`config.FIJAS`). En
+*Configuración* quedan tus claves (OpenAI, AssemblyAI y, opcional, TypeSafe), el
+idioma, la opacidad, tus agentes y tus contextos.
 
 Tiempos de GPT medidos desde este equipo (mediana de 5 llamadas, hasta la primera
 palabra en pantalla): `gpt-5.4-mini` 0,7 s · `gpt-5.6-terra` 0,8 s ·
@@ -297,6 +297,28 @@ las opciones no están ordenadas por «listas».
 Ojo con los modelos GPT-5: razonan antes de responder y ese razonamiento gasta del
 mismo presupuesto de tokens, así que `llm.py` reserva margen aparte para que el
 límite de longitud siga refiriéndose a la respuesta y no llegue vacía.
+
+## Agentes: quién te sopla
+
+Un agente es una personalidad del coach con su system prompt **entero y editable**,
+en *Configuración → Agentes*:
+
+- **Instrucciones**: personalidad, tono, longitud, humor. Lo que pongas manda.
+- **Reglas de funcionamiento**: cómo funciona la conversación (Ellos / Yo), el
+  formato con secciones `##`, el código y las capturas. También se pueden cambiar,
+  pero la app depende de ellas: tocarlas puede estropear cómo se pinta la respuesta.
+
+Vienen cuatro de ejemplo: **Coach** (el de siempre), **Directo**, **Grok**
+(ingenioso e irreverente, sin pasarse en una reunión) y **Senior técnico**. Uno
+nuevo empieza como copia del Coach, para ver lo que ya hay y decidir qué cambiar;
+*Restaurar* devuelve cada parte al texto de su agente de ejemplo. Se guardan como
+`agents/<id>.json` junto a `config.json`.
+
+El mismo agente responde en los dos paneles. Se elige en Configuración y, en plena
+reunión, desde el selector de la cabecera del panel hablado: la conversación sigue
+con todo lo hablado y la siguiente respuesta ya sale con el nuevo agente (esa
+respuesta pierde una vez la caché, así que tarda un poco más). Los avisos de cada
+turno ("responde a esto", "puedes callarte") los pone la app y no son del agente.
 
 ## Que suene a ti, no a documentación
 

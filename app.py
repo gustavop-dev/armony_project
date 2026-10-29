@@ -13,6 +13,7 @@ import sys
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import agents as agents_mod
 import applog
 import config as cfg_mod
 import theme as T
@@ -59,6 +60,7 @@ class OverlayApp(QtCore.QObject):
         self.top.show()
         self.panel.show()
         self.panel.set_status("Idle")
+        self._refresh_agents()
 
         # Click-through: la app es "de cristal" salvo en los controles (grip,
         # engranaje, boton de restaurar). Un temporizador comprueba donde esta el
@@ -212,6 +214,37 @@ class OverlayApp(QtCore.QObject):
         e.error.connect(self.on_error)
         self.screen.relaunchClicked.connect(self.relaunch_screen)
         self.screen.closeClicked.connect(lambda: self.set_screen_mode(False))
+        self.panel.agentChosen.connect(self.choose_agent)
+        # El menu de agentes es otra ventana: tan invisible al compartir como
+        # el resto del overlay.
+        self.panel.agent_chip.antes_de_mostrar = lambda menu: set_capture_protection(
+            menu.winId(), bool(self.cfg.get("invisible_on_share", True)))
+
+    # ------------------------------------------------ agentes
+    def _refresh_agents(self):
+        """El selector del panel, con los agentes del disco y el que esta en uso."""
+        try:
+            lista = agents_mod.list_agents()
+        except OSError as e:
+            log.warning("Agents not readable (%s)", type(e).__name__)
+            return
+        activo = agents_mod.get(self.cfg.get("agent"))["id"]
+        self.panel.set_agents([(a["id"], a["name"]) for a in lista], activo)
+
+    def choose_agent(self, agent_id):
+        """Elegido en el overlay: se guarda y, si hay reunion, la siguiente
+        respuesta ya sale con el (la conversacion sigue con todo lo hablado)."""
+        cfg = cfg_mod.load_config()
+        cfg["agent"] = agent_id
+        if not cfg_mod.save_config(cfg):
+            self.panel.set_status("Could not save the agent choice")
+        self.cfg = cfg
+        self._refresh_agents()
+        nombre = self.engine.set_agent(agent_id)
+        if nombre:
+            self.panel.set_status(f"Agent: {nombre} — next answer uses it")
+        else:
+            self.panel.set_status(f"Agent: {agents_mod.get(agent_id)['name']}")
 
     # ------------------------------------------------ acciones
     def toggle_meeting(self):
@@ -373,6 +406,7 @@ class OverlayApp(QtCore.QObject):
         self.cfg = cfg_mod.load_config()
         # La configuracion es una vista aparte: el overlay desaparece mientras esta.
         self.top.hide(); self.panel.hide(); self.collapsed.hide()
+        self.screen.hide()
         self._ct_timer.stop()
         self.settings = SettingsWindow(self.cfg)
         set_capture_protection(self.settings.winId(),
@@ -394,11 +428,14 @@ class OverlayApp(QtCore.QObject):
 
     def _on_settings_saved(self):
         self.cfg = cfg_mod.load_config()
+        self._refresh_agents()
 
     def _on_settings_closed(self):
         # Restaurar el overlay tal y como estaba.
         if self._visible:
             self.top.show(); self.panel.show()
+            if self._modo_pantalla:
+                self.screen.show()
         else:
             self.collapsed.show()
         self._protect()

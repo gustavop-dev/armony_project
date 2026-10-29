@@ -173,6 +173,35 @@ def _tracked(label, px, weight, color, spacing=1.0, upper=False):
     return lab
 
 
+class _TituloElastico(QtWidgets.QLabel):
+    """Titulo que cede ancho recortandose con "…" en vez de ensanchar su fila.
+
+    En la columna hablada la cabecera lleva titulo, estado, agarre y agente; con
+    letra grande o un nombre de agente largo, un titulo rigido la desbordaba.
+    """
+
+    def __init__(self, texto, fuente, color):
+        super().__init__(texto)
+        self._completo = texto
+        self.setFont(fuente)
+        self.setStyleSheet(f"color: {color}; background: transparent;")
+        self.setMinimumWidth(40)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+
+    def sizeHint(self):
+        fm = self.fontMetrics()
+        return QtCore.QSize(fm.horizontalAdvance(self._completo) + 2,
+                            super().sizeHint().height())
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(self.minimumWidth(), super().minimumSizeHint().height())
+
+    def resizeEvent(self, e):
+        self.setText(self.fontMetrics().elidedText(
+            self._completo, QtCore.Qt.ElideRight, self.width()))
+        super().resizeEvent(e)
+
+
 class _Draggable:
     """Permite arrastrar una ventana sin marco desde cualquier zona vacia."""
 
@@ -770,6 +799,91 @@ class NewBelowChip(QtWidgets.QPushButton):
         self.setVisible(False)
 
 
+class AgentChip(QtWidgets.QPushButton):
+    """'Coach ▾': el agente en uso. Al pulsarlo, un menu para cambiarlo, tambien
+    en plena reunion (la siguiente respuesta ya sale con el nuevo)."""
+    chosen = QtCore.Signal(str)
+    _ANCHO_MAX = 130        # del nombre; mas largo se recorta con "…"
+    _RELLENO = 22           # padding y borde del estilo
+    _FLECHA = " ▾"
+
+    def __init__(self):
+        super().__init__("")
+        f = self.font(); f.setPixelSize(11); self.setFont(f)
+        self.setToolTip("Agent answering — click to switch")
+        # Ancho justo para su nombre (topado): un nombre largo se recorta en vez
+        # de empujar la columna hablada fuera de su sitio.
+        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.nombre = ""
+        self.setStyleSheet(
+            "QPushButton {"
+            f"  color: {T.GOLD_LABEL};"
+            "   background: rgba(242,201,76,0.08);"
+            "   border: 1px solid rgba(242,201,76,0.30);"
+            "   border-radius: 9px;"
+            "   padding: 2px 9px;"
+            "}"
+            "QPushButton:hover { background: rgba(242,201,76,0.18); }")
+        self.menu = QtWidgets.QMenu(self)
+        self.menu.setStyleSheet(
+            f"QMenu {{ background: {T.PANEL_TOP}; border: 1px solid {T.PANEL_BORDER}; "
+            f"border-radius: 8px; padding: 4px; color: {T.TEXT}; font-size: 12px; }}"
+            "QMenu::item { padding: 5px 18px 5px 22px; border-radius: 5px; }"
+            "QMenu::item:selected { background: rgba(242,201,76,0.18); }")
+        # El menu es otra ventana: quien lo crea debe excluirlo de la captura
+        # de pantalla igual que el overlay (si no, se veria al compartir).
+        self.antes_de_mostrar = None
+        self._agentes = []
+        self.activo = ""
+        self.clicked.connect(self._abrir)
+        self.setVisible(False)
+
+    def set_agents(self, agentes, activo):
+        """agentes: [(id, nombre)]; activo: id del que se usa."""
+        self._agentes = list(agentes)
+        self.activo = activo
+        self.nombre = next((n for a, n in self._agentes if a == activo), "")
+        # Aun sin colocar no se sabe el ancho: se rotula con el maximo y el
+        # resizeEvent lo ajusta al que le toque.
+        self._rotular(self.sizeHint().width())
+        self.updateGeometry()
+        self.setVisible(bool(self._agentes))
+
+    def _rotular(self, ancho=None):
+        fm = self.fontMetrics()
+        ancho = self.width() if ancho is None else ancho
+        libre = min(self._ANCHO_MAX, ancho - self._RELLENO
+                    - fm.horizontalAdvance(self._FLECHA))
+        self.setText(fm.elidedText(self.nombre, QtCore.Qt.ElideRight, max(0, libre))
+                     + self._FLECHA)
+
+    def sizeHint(self):
+        fm = self.fontMetrics()
+        ancho = (min(self._ANCHO_MAX, fm.horizontalAdvance(self.nombre))
+                 + fm.horizontalAdvance(self._FLECHA) + self._RELLENO)
+        return QtCore.QSize(ancho, super().sizeHint().height())
+
+    def minimumSizeHint(self):
+        # Cede el titulo del panel, no el agente: es lo que se pulsa. Su ancho
+        # ya va topado (_ANCHO_MAX), asi que nunca se come la cabecera.
+        return self.sizeHint()
+
+    def resizeEvent(self, e):
+        self._rotular()
+        super().resizeEvent(e)
+
+    def _abrir(self):
+        self.menu.clear()
+        for aid, nombre in self._agentes:
+            accion = self.menu.addAction(nombre)
+            accion.setCheckable(True)
+            accion.setChecked(aid == self.activo)
+            accion.triggered.connect(lambda _c=False, a=aid: self.chosen.emit(a))
+        if self.antes_de_mostrar is not None:
+            self.antes_de_mostrar(self.menu)
+        self.menu.popup(self.mapToGlobal(QtCore.QPoint(0, self.height() + 4)))
+
+
 class SuggestionChip(QtWidgets.QPushButton):
     """'↻ Update with: «…» — Caps+F': relanzar la solucion en pantalla con lo
     que acaban de decir. Lo decide el tester; nunca pasa solo."""
@@ -1132,6 +1246,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
     """
     relaunchClicked = QtCore.Signal()
     closeClicked = QtCore.Signal()
+    agentChosen = QtCore.Signal(str)
 
     def __init__(self, modo="voz"):
         super().__init__()
@@ -1244,7 +1359,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
                   self.resize_grip] + self._copy_buttons)
         if self.nuevo_chip.isVisible():
             zonas.append(self.nuevo_chip)
-        for extra in (self.relanzar_chip, self.btn_close):
+        for extra in (self.relanzar_chip, self.btn_close, self.agent_chip):
             if extra.isVisible():
                 zonas.append(extra)
         # La horizontal solo esta cuando el codigo no cabe de ancho; si no se
@@ -1267,7 +1382,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         lay.addWidget(self.bars)
 
         nombre = "Screen" if self.modo == "pantalla" else "Live Transcription"
-        titulo = _tracked(nombre, 13, QtGui.QFont.DemiBold, T.TEXT_BRIGHT, 0)
+        base = _tracked(nombre, 13, QtGui.QFont.DemiBold, T.TEXT_BRIGHT, 0)
+        titulo = _TituloElastico(nombre, base.font(), T.TEXT_BRIGHT)
+        base.deleteLater()
         lay.addWidget(titulo)
 
         # Punto que se ilumina cuando llega audio de la reunion. Antes vivia
@@ -1316,6 +1433,11 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         # ("Listening") en cuanto la columna es estrecha.
         lay.insertWidget(lay.indexOf(self.btn_close), GripDots())
         lay.insertStretch(lay.indexOf(self.btn_close))
+
+        # Agente en uso (solo en el hablado: es el mismo para los dos paneles).
+        self.agent_chip = AgentChip()
+        self.agent_chip.chosen.connect(self.agentChosen.emit)
+        lay.insertWidget(lay.indexOf(self.btn_close), self.agent_chip)
 
         # Con selector: sin el, la linea de abajo la hereda cada hijo y sale
         # subrayado el titulo, el estado...
@@ -1390,6 +1512,11 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
             self.set_hint("Start the meeting to capture the participant "
                           "and draft a suggested answer.")
         return w
+
+    def set_agents(self, agentes, activo):
+        """Agentes para el selector de la cabecera (solo el panel hablado)."""
+        if self.modo == "voz":
+            self.agent_chip.set_agents(agentes, activo)
 
     def show_suggestion(self, texto):
         """Ofrece relanzar la solucion con lo que dijeron; "" la retira."""

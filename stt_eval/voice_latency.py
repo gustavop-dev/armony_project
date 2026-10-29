@@ -18,7 +18,7 @@ import sys
 import time
 
 import config
-from engine import _prompt_bilingue
+import agents
 from llm import Coach
 from stt_eval.keys import read_key
 
@@ -82,7 +82,7 @@ def main(argv=None):
         questions = json.load(f)
 
     cfg = dict(config.DEFAULTS)
-    prompt = _prompt_bilingue(cfg)
+    prompt = agents.preset(agents.DEFAULT_ID)["instrucciones"]
     coaches = {}
     for spec in args.configs:
         model, effort = spec.split(":")

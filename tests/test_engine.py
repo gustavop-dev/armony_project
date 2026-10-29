@@ -146,8 +146,7 @@ def scheduled(monkeypatch):
 def cfg():
     return dict(config.DEFAULTS, openai_api_key="fake-openai",
                 assemblyai_api_key="fake-stt", openai_tokens_voice=100,
-                openai_tokens_vision=300, system_prompt_es="Reglas",
-                system_prompt_en="Rules")
+                openai_tokens_vision=300, agent="coach")
 
 
 @pytest.fixture
@@ -162,19 +161,6 @@ def dependencies(monkeypatch, scheduled):
     return SimpleNamespace(llm=llm)
 
 
-class TestHelpers:
-    @pytest.mark.parametrize("options,expected", [
-        ({"system_prompt_es": " ES ", "system_prompt_en": " EN "},
-         "ES\n\n---\n\n(The same instructions in English; follow whichever matches "
-         "the language being spoken.)\n\nEN"),
-        ({"system_prompt_es": " ES ", "system_prompt": "old"}, "ES"),
-        ({"system_prompt_en": " EN "}, "EN"),
-        ({"system_prompt_es": " ", "system_prompt": "old"}, "old"),
-        ({}, ""),
-    ])
-    def test_prompt_preserves_available_languages(self, options, expected):
-        """Catch loss of a translated prompt or its legacy fallback."""
-        assert engine._prompt_bilingue(options) == expected
 
 class TestLifecycle:
     def test_start_discards_previous_session(self, subject, cfg, scheduled):
@@ -314,19 +300,33 @@ class TestLifecycle:
 
         assert subject.running is False
 
-    def test_coach_receives_bilingual_prompt(self, subject, cfg, dependencies):
-        """Catch initialization dropping English rules or model token limits."""
+    def test_coach_receives_the_chosen_agent(self, subject, cfg, dependencies):
+        """Catch initialization dropping the agent's prompt, rules or token limits."""
+        import agents
+        coach = agents.preset("coach")
+
         subject._init_and_run(cfg)
 
         options = dict(subject._coach.options)
         assert options.pop("cache_key").startswith("armony-")
         assert options == {
             "api_key": "fake-openai",
-            "system_prompt": "Reglas\n\n---\n\n(The same instructions in English; follow "
-                             "whichever matches the language being spoken.)\n\nRules",
+            "system_prompt": coach["instrucciones"],
+            "reglas": coach["reglas"],
             "model": "gpt-6.1-sol", "tokens_voice": 100, "tokens_vision": 300,
             "effort_voice": "low", "effort_vision": "medium",
         }
+
+    def test_both_lanes_start_with_the_same_agent(self, subject, cfg, dependencies):
+        import agents
+        cfg["agent"] = "grok"
+
+        subject._init_and_run(cfg)
+
+        grok = agents.preset("grok")
+        for coach in (subject._coach, subject._coach_pantalla):
+            assert (coach.options["system_prompt"], coach.options["reglas"]) == (
+                grok["instrucciones"], grok["reglas"])
 
     def test_warmup_reports_latency(self, subject, events):
         """Catch warmup latency disappearing from session metrics."""

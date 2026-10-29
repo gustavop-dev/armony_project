@@ -220,12 +220,20 @@ def test_save_config_returns_false_when_path_not_writable(isolated_data_dir,
 
 # --- legacy migrations -------------------------------------------------------------
 
-def test_legacy_system_prompt_key_is_removed():
-    _write_config({"system_prompt": "Old custom prompt"})
+@pytest.mark.parametrize("key", ["system_prompt", "system_prompt_es",
+                                 "system_prompt_en"])
+def test_legacy_prompt_keys_are_removed(key):
+    _write_config({key: "Old custom prompt"})
 
     cfg = config.load_config()
 
-    assert "system_prompt" not in cfg
+    assert key not in cfg
+
+
+def test_agent_choice_is_a_user_setting():
+    _write_config({"agent": "grok"})
+
+    assert config.load_config()["agent"] == "grok"
 
 
 # --- internal settings (FIJAS) -----------------------------------------------------
@@ -242,7 +250,6 @@ def test_internal_settings_have_a_default():
     ("silence_hang", 1.5),
     ("listen_mic", False),
     ("invisible_on_share", False),
-    ("system_prompt_es", "Old custom prompt"),
 ])
 def test_stored_internal_setting_is_replaced_by_default(key, stored):
     _write_config({key: stored})

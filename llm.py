@@ -183,7 +183,8 @@ class Coach:
 
     def __init__(self, api_key, system_prompt="", model="gpt-6.1-sol",
                  tokens_voice=400, tokens_vision=None,
-                 effort_voice="low", effort_vision="medium", cache_key=None):
+                 effort_voice="low", effort_vision="medium", cache_key=None,
+                 reglas=REGLAS):
         import openai
         self.client = openai.OpenAI(
             api_key=api_key, max_retries=_MAX_RETRIES_SDK,
@@ -191,6 +192,8 @@ class Coach:
         # Kept only to mask the key in logged error messages.
         self._secret = api_key
         self.system_prompt = system_prompt
+        # Las del agente (editables); por defecto, las de siempre.
+        self.reglas = reglas
         self.model = model
         self.tokens_voice = int(tokens_voice)
         self.tokens_vision = int(tokens_vision or tokens_voice)
@@ -220,9 +223,18 @@ class Coach:
 
     # ------------------------------------------------------------ conversacion
     def _developer(self):
-        texto = (self.system_prompt.strip() + "\n\n" + REGLAS).strip()
+        texto = (self.system_prompt.strip() + "\n\n" + (self.reglas or "")).strip()
         return {"role": "developer",
                 "content": [{"type": "input_text", "text": texto}]}
+
+    def cambiar_instrucciones(self, system_prompt, reglas):
+        """Otro agente a mitad de reunion: cambia el principio de la
+        conversacion y se queda con todo lo hablado. Como el principio es lo que
+        se cachea, la siguiente respuesta se procesa entera una vez."""
+        with self._lock:
+            self.system_prompt = system_prompt
+            self.reglas = reglas
+            self._items[0] = self._developer()
 
     def anotar(self, quien, texto):
         """Algo que se dijo en la reunion ('Ellos' o 'Yo'). Viaja en el proximo

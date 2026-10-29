@@ -8,6 +8,7 @@ import os
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import agents as agents_mod
 import config as cfg_mod
 import contexts as ctx_mod
 import icons
@@ -120,9 +121,9 @@ class Segmented(QtWidgets.QWidget):
 def _schema():
     """Definicion de secciones y campos (espeja el diseno).
 
-    Solo lo que es del usuario: sus claves, el idioma de la reunion, la opacidad
-    y sus contextos. El modelo, cuanto razona y cuanto escribe, la deteccion de
-    turnos, el audio y el prompt del coach van fijos en config.FIJAS.
+    Solo lo que es del usuario: sus claves, el idioma de la reunion, la
+    opacidad, sus agentes y sus contextos. El modelo, cuanto razona y cuanto
+    escribe, la deteccion de turnos y el audio van fijos en config.FIJAS.
     """
     return [
         ("connection", "bolt", "Conexión",
@@ -148,6 +149,10 @@ def _schema():
                  min=0.15, max=1.0, step=0.05, unit="",
                  hint="Transparencia de las ventanas. Bajo = se ve más el fondo."),
          ]),
+        ("agents", "chat", "Agentes",
+         "Quién te sopla las respuestas: su personalidad y sus reglas, enteras y "
+         "editables. Uno se usa en las reuniones; se cambia aquí o desde el overlay.",
+         None),
         ("contexts", "puzzle", "Contexts",
          "Documentos markdown que la IA lee al iniciar. Activa los que apliquen "
          "para cada reunión — QUÉ sabe, no cómo responde.", None),
@@ -201,6 +206,10 @@ class SettingsWindow(QtWidgets.QWidget):
         self.cfg = dict(cfg)
         self.values = dict(cfg)
         self.contexts = ctx_mod.list_contexts()
+        self.agents = agents_mod.list_agents()
+        if not any(a["id"] == self.values.get("agent") for a in self.agents):
+            self.values["agent"] = self.agents[0]["id"]
+        self.sel_agent = self.values["agent"]
         self.sel_id = self.contexts[0]["id"] if self.contexts else None
         self._ctx_filter = "all"      # all | es | en (filtro de la lista)
         self._dirty = False
@@ -308,7 +317,8 @@ class SettingsWindow(QtWidgets.QWidget):
             lay.addWidget(item)
         lay.addStretch()
         nota = QtWidgets.QLabel(
-            "El idioma se aplica al iniciar la próxima reunión.")
+            "Los cambios valen para la próxima reunión. En plena reunión, el "
+            "agente se cambia desde el overlay.")
         nota.setWordWrap(True)
         nota.setStyleSheet(
             f"color: {TXT_FA}; font-size: 11px; background: rgba(243,234,212,0.04); "
@@ -355,6 +365,8 @@ class SettingsWindow(QtWidgets.QWidget):
             if sid2 == sid:
                 if sid == "contexts":
                     self.content.setWidget(self._contexts_view(label, desc))
+                elif sid == "agents":
+                    self.content.setWidget(self._agents_view(label, desc))
                 else:
                     self.content.setWidget(self._fields_view(label, desc, fields))
                 break
@@ -495,6 +507,193 @@ class SettingsWindow(QtWidgets.QWidget):
         upd()
         lay.addWidget(s, 1); lay.addWidget(disp)
         return wrap
+
+    # ---------------------------------------------------- vista de agentes
+    def _agents_view(self, label, desc):
+        page = QtWidgets.QWidget(); page.setStyleSheet("background: transparent;")
+        v = QtWidgets.QVBoxLayout(page); v.setContentsMargins(30, 26, 30, 30); v.setSpacing(16)
+        v.addWidget(self._heading(label, desc))
+        grid = QtWidgets.QHBoxLayout(); grid.setSpacing(20)
+        grid.addWidget(self._ag_list(), 0, QtCore.Qt.AlignTop)
+        grid.addWidget(self._ag_editor(), 1)
+        v.addLayout(grid, 1)
+        return page
+
+    def _ag_list(self):
+        box = QtWidgets.QWidget(); box.setFixedWidth(250)
+        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
+        add = QtWidgets.QPushButton()
+        add.setFixedHeight(42)
+        al = QtWidgets.QHBoxLayout(add); al.setContentsMargins(11, 0, 11, 0); al.setSpacing(8)
+        al.addStretch(); al.addWidget(icons.label("plus", GOLD_LT, 15))
+        pl = QtWidgets.QLabel("Nuevo agente")
+        pl.setStyleSheet(f"color: {GOLD_LT}; font-weight: 600; font-size: 13px; background: transparent;")
+        al.addWidget(pl); al.addStretch()
+        add.setStyleSheet(
+            f"QPushButton {{ border: 1px dashed rgba(242,201,76,0.4); background: rgba(242,201,76,0.08); "
+            f"border-radius: 11px; }} QPushButton:hover {{ background: rgba(242,201,76,0.14); }} "
+            f"QLabel {{ border: none; }}")
+        add.setToolTip("Empieza como copia del Coach: verás todo lo que ya tiene "
+                       "y decides qué cambiar.")
+        add.clicked.connect(self._ag_add)
+        v.addWidget(add)
+        for a in self.agents:
+            v.addWidget(self._ag_card(a))
+        v.addStretch()
+        return box
+
+    def _ag_card(self, a):
+        seld = a["id"] == self.sel_agent
+        card = QtWidgets.QFrame()
+        card.setObjectName("agente")
+        card.setStyleSheet(
+            f"QFrame {{ border-radius: 12px; border: 1px solid "
+            f"{'rgba(242,201,76,0.45)' if seld else 'rgba(243,234,212,0.09)'}; "
+            f"background: {'rgba(242,201,76,0.09)' if seld else 'rgba(243,234,212,0.03)'}; }} "
+            f"QLabel {{ border: none; background: transparent; }}")
+        card.mousePressEvent = lambda e, aid=a["id"]: self._ag_select(aid)
+        lay = QtWidgets.QHBoxLayout(card); lay.setContentsMargins(14, 10, 10, 10); lay.setSpacing(8)
+        nm = QtWidgets.QLabel(a["name"])
+        nf = nm.font(); nf.setPixelSize(14); nf.setWeight(QtGui.QFont.DemiBold); nm.setFont(nf)
+        nm.setStyleSheet("color: #f0e8d6;")
+        lay.addWidget(nm, 1)
+        if a["id"] == self.values.get("agent"):
+            uso = QtWidgets.QLabel("En uso")
+            uso.setStyleSheet(
+                f"color: {INK}; background: {GOLD}; border-radius: 5px; "
+                f"padding: 1px 6px; font-size: 10px; font-weight: 700;")
+            lay.addWidget(uso)
+        lay.addWidget(self._mini_btn("duplicate", "#b8af9a",
+                                     lambda aid=a["id"]: self._ag_dup(aid)))
+        dele = self._mini_btn("trash", "#e39a90", lambda aid=a["id"]: self._ag_del(aid))
+        dele.setEnabled(len(self.agents) > 1)       # siempre queda al menos uno
+        lay.addWidget(dele)
+        return card
+
+    def _ag_editor(self):
+        box = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
+        a = next((x for x in self.agents if x["id"] == self.sel_agent), None)
+        if a is None:
+            return box
+        top = QtWidgets.QHBoxLayout(); top.setSpacing(12)
+        name = QtWidgets.QLineEdit(a["name"])
+        name.setStyleSheet(self._input_qss() + "font-weight: 600; font-size: 15px;")
+        name.textChanged.connect(lambda t, aid=a["id"]: self._ag_set(aid, "name", t))
+        top.addWidget(name, 1)
+        uso = QtWidgets.QLabel("Usar en las reuniones")
+        uso.setStyleSheet(f"color: {TXT_MU}; font-size: 12px;")
+        sw = ToggleSwitch(a["id"] == self.values.get("agent"))
+        # Siempre hay uno en uso: se cambia eligiendo otro, no apagando este.
+        sw.setEnabled(a["id"] != self.values.get("agent"))
+        sw.toggled.connect(lambda on, aid=a["id"]: on and self._ag_use(aid))
+        top.addWidget(uso); top.addWidget(sw)
+        v.addLayout(top)
+        v.addSpacing(6)
+        v.addLayout(self._ag_field_head(
+            a, "instrucciones", "Instrucciones",
+            "Personalidad, tono y cómo responde. Lo que pongas aquí manda."))
+        ins = QtWidgets.QPlainTextEdit(a["instrucciones"])
+        ins.setObjectName("instrucciones")
+        ins.setMinimumHeight(190)
+        ins.setStyleSheet(self._input_qss())
+        ins.textChanged.connect(
+            lambda aid=a["id"], w=ins: self._ag_set(aid, "instrucciones", w.toPlainText()))
+        v.addWidget(ins, 1)
+        v.addSpacing(6)
+        v.addLayout(self._ag_field_head(
+            a, "reglas", "Reglas de funcionamiento",
+            "Cómo funciona la conversación, el formato con secciones «##», el "
+            "código y las capturas. La app depende de ellas: si las cambias, "
+            "puede dejar de pintar bien las respuestas."))
+        reg = QtWidgets.QPlainTextEdit(a["reglas"])
+        reg.setObjectName("reglas")
+        reg.setMinimumHeight(190)
+        reg.setStyleSheet(self._input_qss(mono=True))
+        reg.textChanged.connect(
+            lambda aid=a["id"], w=reg: self._ag_set(aid, "reglas", w.toPlainText()))
+        v.addWidget(reg, 1)
+        return box
+
+    def _ag_field_head(self, a, campo, titulo, ayuda):
+        head = QtWidgets.QHBoxLayout(); head.setSpacing(10)
+        col = QtWidgets.QVBoxLayout(); col.setSpacing(2)
+        t = QtWidgets.QLabel(titulo)
+        tf = t.font(); tf.setPixelSize(13); tf.setWeight(QtGui.QFont.DemiBold); t.setFont(tf)
+        t.setStyleSheet(f"color: {TXT_LB}; background: transparent;")
+        h = QtWidgets.QLabel(ayuda); h.setWordWrap(True)
+        h.setStyleSheet(f"color: #948b78; font-size: 12px; background: transparent;")
+        col.addWidget(t); col.addWidget(h)
+        head.addLayout(col, 1)
+        cambiado = a[campo] != agents_mod.predeterminado(a)[campo]
+        rest = QtWidgets.QPushButton("Restaurar")
+        rest.setObjectName(f"restaurar-{campo}")
+        rest.setEnabled(cambiado)
+        rest.setToolTip(f"Vuelve al texto de «{agents_mod.predeterminado(a)['name']}»")
+        rest.setStyleSheet(
+            f"QPushButton {{ padding: 6px 12px; border-radius: 8px; border: 1px solid {INPUT_BD}; "
+            f"background: transparent; color: #cec5b0; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: rgba(243,234,212,0.06); }}"
+            f"QPushButton:disabled {{ color: #6f685a; }}")
+        rest.clicked.connect(lambda _c=False, aid=a["id"], f=campo: self._ag_restore(aid, f))
+        head.addWidget(rest, 0, QtCore.Qt.AlignTop)
+        return head
+
+    # ---------------------------------------------------- acciones agentes
+    def _ag_get(self, aid):
+        return next((a for a in self.agents if a["id"] == aid), None)
+
+    def _ag_select(self, aid):
+        self.sel_agent = aid
+        self._show_section("agents")
+
+    def _ag_use(self, aid):
+        self.values["agent"] = aid
+        self._dirty_mark()
+        self._show_section("agents")
+
+    def _ag_set(self, aid, campo, valor):
+        # Sin redibujar: se perderia el cursor del campo que se esta escribiendo.
+        a = self._ag_get(aid)
+        if a is not None:
+            a[campo] = valor
+            self._dirty_mark()
+
+    def _ag_restore(self, aid, campo):
+        a = self._ag_get(aid)
+        if a is not None:
+            a[campo] = agents_mod.predeterminado(a)[campo]
+            self._dirty_mark()
+            self._show_section("agents")
+
+    def _ag_add(self):
+        a = agents_mod.nuevo(self.agents)
+        self.agents.append(a)
+        self.sel_agent = a["id"]
+        self._dirty_mark()
+        self._show_section("agents")
+
+    def _ag_dup(self, aid):
+        src = self._ag_get(aid)
+        if src is None:
+            return
+        copia = dict(src, id=agents_mod.next_id(self.agents),
+                     name=src["name"] + " (copia)")
+        self.agents.insert(self.agents.index(src) + 1, copia)
+        self.sel_agent = copia["id"]
+        self._dirty_mark()
+        self._show_section("agents")
+
+    def _ag_del(self, aid):
+        if len(self.agents) <= 1:
+            return
+        self.agents = [a for a in self.agents if a["id"] != aid]
+        if self.values.get("agent") == aid:
+            self.values["agent"] = self.agents[0]["id"]
+        if self.sel_agent == aid:
+            self.sel_agent = self.values["agent"]
+        self._dirty_mark()
+        self._show_section("agents")
 
     # ---------------------------------------------------- vista de contextos
     def _contexts_view(self, label, desc):
@@ -746,7 +945,14 @@ class SettingsWindow(QtWidgets.QWidget):
         return (f"QLineEdit, QPlainTextEdit {{ background: {INPUT_BG}; border: 1px solid {INPUT_BD}; "
                 f"border-radius: 10px; padding: 10px 13px; color: #f0e8d6; font-family: {fam}; "
                 f"font-size: 13px; }} "
-                f"QLineEdit:focus, QPlainTextEdit:focus {{ border: 1px solid rgba(242,201,76,0.55); }}")
+                f"QLineEdit:focus, QPlainTextEdit:focus {{ border: 1px solid rgba(242,201,76,0.55); }}"
+                # Barra a juego: la de Windows salia blanca y cuadriculada.
+                f"QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px 2px; }}"
+                f"QScrollBar::handle:vertical {{ background: rgba(242,201,76,0.28); "
+                f"border-radius: 4px; min-height: 30px; }}"
+                f"QScrollBar::handle:vertical:hover {{ background: rgba(242,201,76,0.5); }}"
+                f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+                f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}")
 
     def _combo_qss(self):
         arrow = self._chevron.replace("\\", "/")
@@ -793,6 +999,7 @@ class SettingsWindow(QtWidgets.QWidget):
             if not cfg_mod.save_config(self.cfg):
                 raise IOError("no se pudo escribir config.json")
             ctx_mod.write_all(self.contexts)
+            agents_mod.write_all(self.agents)
         except Exception as e:
             # Fallo al guardar: se indica en rojo y NO se cierra la ventana.
             self._error = f"Error al guardar: {e}"

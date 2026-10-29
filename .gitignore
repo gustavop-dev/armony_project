@@ -12,6 +12,7 @@ config.json
 
 # Datos de contexto del usuario (pueden ser personales)
 contexts/*.md
+agents/*.json
 
 # Archivos generados en runtime
 assets/_chevron.png

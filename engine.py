@@ -42,21 +42,6 @@ SIN_PREGUNTA_CAPTURA = ("(no han dicho nada nuevo desde la ultima respuesta: lo 
                         "que hay que resolver esta en las capturas)")
 
 
-def _prompt_bilingue(cfg):
-    """Junta las dos versiones del prompt del coach, la española y la inglesa.
-
-    Son las mismas instrucciones escritas en cada idioma, y se mandan las dos a
-    proposito: asi el modelo tiene sus reglas en el idioma que toque cuando la
-    reunion cambia de uno a otro, sin tener que reiniciar nada.
-    """
-    es = (cfg.get("system_prompt_es") or "").strip()
-    en = (cfg.get("system_prompt_en") or "").strip()
-    if es and en:
-        return (f"{es}\n\n---\n\n(The same instructions in English; follow "
-                f"whichever matches the language being spoken.)\n\n{en}")
-    return es or en or (cfg.get("system_prompt") or "")
-
-
 class CoachEngine(QtCore.QObject):
     sysLevel = QtCore.Signal(int)
     micLevel = QtCore.Signal(int)
@@ -125,6 +110,7 @@ class CoachEngine(QtCore.QObject):
         # su cola y su worker, para que una solucion de codigo larga no deje
         # esperando a las preguntas habladas.
         self._coach_pantalla = None
+        self._contexto = ""             # contextos activos, congelados al empezar
         self._queue_pantalla = queue.Queue()
         self._worker_pantalla = None
         self._generando_pantalla = False
@@ -222,17 +208,17 @@ class CoachEngine(QtCore.QObject):
 
         if not self._test_mode:
             try:
-                # Se le da TODO: los dos prompts del coach y todos los contextos
-                # activos, sin filtrar por idioma. En una reunion real se cambia
-                # de idioma a media frase, y si el prompt o el contexto vinieran
-                # filtrados por el idioma configurado, justo al cambiar se
-                # quedaria sin la mitad de lo que necesita. Se congela AQUI para
-                # no romper el cache a media llamada.
+                # El agente elegido y TODOS los contextos activos, sin filtrar
+                # por idioma: en una reunion real se cambia de idioma a media
+                # frase, y filtrando se quedaria sin la mitad de lo que necesita
+                # justo al cambiar. Se congela AQUI para no romper el cache a
+                # media llamada.
+                import agents as agents_mod
                 import contexts as ctx_mod
-                sys_prompt = _prompt_bilingue(cfg)
-                extra = ctx_mod.active_text("auto")     # 'auto' = todos
-                if extra:
-                    sys_prompt += "\n\n# Contexto de esta reunion\n" + extra
+                agente = agents_mod.get(cfg.get("agent"))
+                self._contexto = ctx_mod.active_text("auto")     # 'auto' = todos
+                sys_prompt = agents_mod.system_prompt(agente, self._contexto)
+                metricas.nota(f"agente: {agente['name']}")
                 # Un modelo y dos conversaciones: la hablada razona poco y la de
                 # la pantalla mas. Empiezan igual (prompt + contextos), asi que
                 # ese principio se cachea una vez y lo aprovechan las dos.
@@ -247,6 +233,7 @@ class CoachEngine(QtCore.QObject):
                     effort_vision=cfg.get("openai_effort_vision", "medium"),
                     # Una clave por reunion: el gasto en cache se ve por sesion.
                     cache_key=cache_key,
+                    reglas=agente["reglas"],
                 )
                 esfuerzo_pantalla = cfg.get("openai_effort_vision", "medium")
                 self._coach_pantalla = Coach(
@@ -258,6 +245,7 @@ class CoachEngine(QtCore.QObject):
                     effort_voice=esfuerzo_pantalla,
                     effort_vision=esfuerzo_pantalla,
                     cache_key=cache_key,
+                    reglas=agente["reglas"],
                 )
             except Exception as e:
                 self._init_failed(f"No se pudo iniciar el modelo de respuestas: {e}")
@@ -552,6 +540,26 @@ class CoachEngine(QtCore.QObject):
                 self._turn_timer.cancel()
                 self._turn_timer = None
             self._turn_parts = []
+
+    def set_agent(self, agent_id):
+        """Cambia de agente a mitad de reunion. Las dos conversaciones siguen
+        con todo lo hablado; solo cambia su principio, asi que la siguiente
+        respuesta pierde una vez la cache. Una respuesta en curso termina con
+        el agente anterior. Devuelve el nombre del agente, o None si no hay
+        reunion con modelo en marcha (entonces vale para la proxima)."""
+        if not self._running or self._test_mode or self._coach is None:
+            return None
+        import agents as agents_mod
+        agente = agents_mod.get(agent_id)
+        sys_prompt = agents_mod.system_prompt(agente, self._contexto)
+        if (self._coach.system_prompt, self._coach.reglas) == (sys_prompt, agente["reglas"]):
+            return agente["name"]           # el mismo: no se tira la cache
+        for coach in (self._coach, self._coach_pantalla):
+            if coach is not None:
+                coach.cambiar_instrucciones(sys_prompt, agente["reglas"])
+        metricas.nota(f"agente: {agente['name']}")
+        threading.Thread(target=self._calentar, daemon=True).start()
+        return agente["name"]
 
     def request_screenshots(self, images):
         """Envia una o varias capturas juntas (util si el enunciado no cabe en una).

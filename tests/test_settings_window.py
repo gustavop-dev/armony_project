@@ -208,9 +208,9 @@ def test_language_select_offers_es_en_auto(qtbot, make_window):
     assert _combo_values(_combo(win, "language")) == ["es", "en", "auto"]
 
 
-def test_sections_are_keys_general_and_contexts():
+def test_sections_are_keys_general_agents_and_contexts():
     assert [label for _sid, _ic, label, _desc, _f in sw._schema()] == [
-        "Conexión", "General", "Contexts"]
+        "Conexión", "General", "Agentes", "Contexts"]
 
 
 def test_only_user_settings_have_a_field():
@@ -982,3 +982,137 @@ def test_rows_do_not_show_internal_config_keys(make_window):
     textos = [lab.text() for lab in _labels(_page(win))]
 
     assert not {"openai_api_key", "assemblyai_api_key", "typesafe_api_key"} & set(textos)
+
+
+# ================================================================== agents
+import agents  # noqa: E402
+
+
+def _agent_cards(win):
+    return [c for c in _page(win).findChildren(QtWidgets.QFrame, "agente")]
+
+
+def _agent_names(win):
+    return [_labels(c)[0].text() for c in _agent_cards(win)]
+
+
+def _editor_text(win, campo):
+    return _page(win).findChild(QtWidgets.QPlainTextEdit, campo)
+
+
+def test_agents_section_lists_the_presets(qtbot, make_window):
+    win = make_window()
+
+    _goto(qtbot, win, "Agentes")
+
+    assert _agent_names(win) == ["Coach", "Directo", "Grok", "Senior técnico"]
+
+
+def test_agent_in_use_is_marked_and_open(qtbot, make_window):
+    win = make_window(agent="grok")
+    _goto(qtbot, win, "Agentes")
+
+    marcadas = [_labels(c)[0].text() for c in _agent_cards(win)
+                if "En uso" in [lab.text() for lab in _labels(c)]]
+
+    assert marcadas == ["Grok"]
+    assert _editor_text(win, "instrucciones").toPlainText() == agents.preset("grok")["instrucciones"]
+
+
+def test_editor_shows_the_full_rules(qtbot, make_window):
+    win = make_window()
+    _goto(qtbot, win, "Agentes")
+
+    assert _editor_text(win, "reglas").toPlainText() == agents.preset("coach")["reglas"]
+
+
+def test_new_agent_comes_with_the_coach_text(qtbot, make_window):
+    win = make_window()
+    _goto(qtbot, win, "Agentes")
+
+    qtbot.mouseClick(_page(win).findChildren(QtWidgets.QPushButton)[0], LEFT)
+
+    assert _agent_names(win)[-1] == "Nuevo agente"
+    assert _editor_text(win, "instrucciones").toPlainText() == agents.preset("coach")["instrucciones"]
+    assert _editor_text(win, "reglas").toPlainText() == agents.preset("coach")["reglas"]
+
+
+def test_edited_agent_is_saved_to_disk(qtbot, make_window):
+    win = make_window(agent="grok")
+    _goto(qtbot, win, "Agentes")
+    _editor_text(win, "instrucciones").setPlainText("Sarcástico y breve.")
+
+    _save(qtbot, win)
+
+    assert agents.get("grok")["instrucciones"] == "Sarcástico y breve."
+
+
+def test_using_another_agent_is_saved(qtbot, make_window):
+    win = make_window(agent="coach")
+    _goto(qtbot, win, "Agentes")
+    win._ag_select("senior")
+    qtbot.mouseClick(_page(win).findChild(sw.ToggleSwitch), LEFT)
+
+    _save(qtbot, win)
+
+    assert config.load_config()["agent"] == "senior"
+
+
+def test_agent_in_use_cannot_be_switched_off(qtbot, make_window):
+    win = make_window(agent="coach")
+    _goto(qtbot, win, "Agentes")
+
+    assert _page(win).findChild(sw.ToggleSwitch).isEnabled() is False
+
+
+def test_restore_brings_back_the_preset_text(qtbot, make_window):
+    win = make_window(agent="grok")
+    _goto(qtbot, win, "Agentes")
+    _editor_text(win, "reglas").setPlainText("sin reglas")
+    win._show_section("agents")
+    boton = _page(win).findChild(QtWidgets.QPushButton, "restaurar-reglas")
+
+    qtbot.mouseClick(boton, LEFT)
+
+    assert _editor_text(win, "reglas").toPlainText() == agents.preset("grok")["reglas"]
+
+
+def test_restore_is_off_while_the_text_is_untouched(qtbot, make_window):
+    win = make_window()
+    _goto(qtbot, win, "Agentes")
+
+    boton = _page(win).findChild(QtWidgets.QPushButton, "restaurar-instrucciones")
+
+    assert boton.isEnabled() is False
+
+
+def test_deleting_the_agent_in_use_falls_back_to_the_first(qtbot, make_window):
+    win = make_window(agent="grok")
+    _goto(qtbot, win, "Agentes")
+
+    win._ag_del("grok")
+    _save(qtbot, win)
+
+    assert "grok" not in [a["id"] for a in agents.list_agents()]
+    assert config.load_config()["agent"] == "coach"
+
+
+def test_last_agent_cannot_be_deleted(qtbot, make_window):
+    agents.write_all([agents.preset("coach")])
+    win = make_window()
+    _goto(qtbot, win, "Agentes")
+
+    win._ag_del("coach")
+
+    assert _agent_names(win) == ["Coach"]
+
+
+def test_duplicate_keeps_the_text_and_the_preset(qtbot, make_window):
+    win = make_window()
+    _goto(qtbot, win, "Agentes")
+
+    win._ag_dup("grok")
+
+    copia = win.agents[3]
+    assert (copia["name"], copia["preset"], copia["instrucciones"]) == (
+        "Grok (copia)", "grok", agents.preset("grok")["instrucciones"])

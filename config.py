@@ -1,8 +1,9 @@
 """Carga y guarda la configuracion de la app en config.json (junto a este archivo).
 
-Guarda lo que es del usuario: API keys (OpenAI, AssemblyAI y TypeSafe), idioma
-y opacidad. El resto (modelo, razonamiento, longitud, deteccion de turnos, audio,
-prompt del coach) va fijo en el codigo: ver FIJAS.
+Guarda lo que es del usuario: API keys (OpenAI, AssemblyAI y TypeSafe), idioma,
+opacidad y que agente se usa (los agentes viven en agents/, ver agents.py). El
+resto (modelo, razonamiento, longitud, deteccion de turnos, audio) va fijo en el
+codigo: ver FIJAS.
 
 config.json esta en .gitignore: las claves nunca salen del equipo.
 """
@@ -43,7 +44,7 @@ CONFIG_PATH = os.path.join(data_dir(), "config.json")
 # Claude se quito "por ahora" y volver no debe exigir escribirla de nuevo.
 CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key", "typesafe_api_key")
 
-# Prompts por defecto: uno por idioma (cada instruccion va en su idioma).
+# Prompt del agente Coach (agents.py): uno por idioma, cada instruccion en el suyo.
 DEFAULT_PROMPT_ES = (
     "Eres mi coach de reuniones en tiempo real. Escuchas lo que dicen los demas "
     "y me soplas que responder. Yo lo voy a decir en voz alta TAL CUAL, asi que "
@@ -82,7 +83,6 @@ DEFAULT_PROMPT_EN = (
     "- Concrete beats abstract: what I did and why, not the definition.\n"
     "- If you lack context, give the best reasonable answer without making up facts."
 )
-DEFAULT_SYSTEM_PROMPT = DEFAULT_PROMPT_ES   # compatibilidad
 
 DEFAULTS = {
     # --- Modelo de las respuestas (OpenAI) ---
@@ -120,8 +120,8 @@ DEFAULTS = {
     "end_of_turn_threshold": 0.4,
     "language": "es",                  # es | en | auto (None)
     # Prompt del coach por idioma (Opcion B: el idioma solo afecta a coach + contexts).
-    "system_prompt_es": DEFAULT_PROMPT_ES,
-    "system_prompt_en": DEFAULT_PROMPT_EN,
+    # Agente (personalidad + reglas del coach) que se usa: ver agents.py.
+    "agent": "coach",
     "invisible_on_share": True,        # ocultar la ventana al compartir pantalla
     "window_opacity": 0.65,            # 0.15 (muy transparente) a 1.0 (opaco)
 
@@ -148,12 +148,13 @@ DEFAULTS = {
 #   - los del antiguo modo offline (Whisper local)
 #   - el modelo de voz y el de capturas por separado: ahora hay uno solo, y
 #     conservarlos dejaria a cada usuario con los modelos viejos que guardo.
-#   - system_prompt y max_tokens: versiones viejas del prompt y la longitud,
-#     que ahora son fijos.
+#   - system_prompt*: el prompt del coach ahora vive en cada agente
+#     (agents.py); max_tokens: la longitud ahora es fija.
 OBSOLETAS = ("offline_mode", "whisper_size", "whisper_device", "auto_normalize",
              "transcribe_mic", "speech_threshold", "mic_echo_gate",
              "max_utterance", "openai_model_voice", "openai_model_vision",
-             "system_prompt", "max_tokens")
+             "system_prompt", "max_tokens", "system_prompt_es",
+             "system_prompt_en")
 
 # Ajustes internos: ya decididos y medidos, no se configuran. Siempre valen lo
 # de DEFAULTS aunque config.json traiga otro valor de una version anterior, y no
@@ -162,8 +163,7 @@ OBSOLETAS = ("offline_mode", "whisper_size", "whisper_device", "auto_normalize",
 FIJAS = ("openai_model", "openai_effort_voice", "openai_tokens_voice",
          "openai_effort_vision", "openai_tokens_vision", "assemblyai_model",
          "end_of_turn_threshold", "invisible_on_share", "gain_system",
-         "gain_mic", "listen_mic", "silence_hang", "system_prompt_es",
-         "system_prompt_en")
+         "gain_mic", "listen_mic", "silence_hang")
 
 
 def read_user_text(path):

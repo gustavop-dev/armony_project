@@ -58,6 +58,10 @@ class FakeEngine(QtCore.QObject):
     def request_screenshots(self, images):
         self.screenshots.append(images)
 
+    def set_agent(self, agent_id):
+        self.agents = getattr(self, "agents", []) + [agent_id]
+        return None          # no meeting running
+
 
 class FakeWheel:
     def __init__(self, callback):
@@ -858,3 +862,57 @@ class TestDualOverlay:
         assert pant.right() <= 1920 - T.SIDE_MARGIN - 1
         assert "…" in ui.screen.relanzar_chip.text()
         assert ui.screen.relanzar_chip.toolTip().startswith("Hay un error en el bucle;")
+
+
+class TestAgents:
+    def test_panel_shows_the_agent_in_use(self, ui):
+        chip = ui.panel.agent_chip
+
+        assert (chip.activo, chip.isVisibleTo(ui.panel)) == ("coach", True)
+        assert chip.text().startswith("Coach")
+
+    def test_screen_panel_has_no_agent_selector(self, ui):
+        assert ui.screen.agent_chip.isVisibleTo(ui.screen) is False
+
+    def test_choosing_an_agent_saves_it(self, ui, isolated_data_dir):
+        import json
+
+        ui.choose_agent("grok")
+
+        stored = json.loads((isolated_data_dir / "config.json").read_text(encoding="utf-8"))
+        assert (stored["agent"], ui.cfg["agent"]) == ("grok", "grok")
+        assert ui.panel.agent_chip.activo == "grok"
+
+    def test_choosing_an_agent_without_meeting_only_selects_it(self, ui):
+        ui.choose_agent("grok")
+
+        assert ui.engine.agents == ["grok"]
+        assert ui.panel.badge._lbl.text() == "Agent: Grok"
+
+    def test_choosing_an_agent_mid_meeting_switches_the_engine(self, ui):
+        ui.engine.set_agent = lambda aid: {"grok": "Grok"}[aid]
+
+        ui.choose_agent("grok")
+
+        assert ui.panel.badge._lbl.text() == "Agent: Grok — next answer uses it"
+
+    def test_menu_lists_agents_and_emits_the_choice(self, ui, qtbot):
+        chip = ui.panel.agent_chip
+        protegidos = []
+        chip.antes_de_mostrar = protegidos.append
+        chip._abrir()
+        acciones = chip.menu.actions()
+        marcadas = [a.isChecked() for a in acciones]
+
+        with qtbot.waitSignal(ui.panel.agentChosen) as elegido:
+            acciones[2].trigger()
+
+        assert [a.text() for a in acciones] == ["Coach", "Directo", "Grok", "Senior técnico"]
+        assert marcadas == [True, False, False, False]
+        assert elegido.args == ["grok"] and protegidos == [chip.menu]
+        chip.menu.hide()
+
+    def test_long_agent_name_never_widens_the_spoken_panel(self, ui):
+        ui.panel.set_agents([("x", "Un agente con un nombre larguísimo de verdad")], "x")
+
+        assert ui.panel.minimumSizeHint().width() <= T.COLUMN_WIDTH
