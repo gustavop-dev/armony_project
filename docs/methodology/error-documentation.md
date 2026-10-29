@@ -19,7 +19,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P2 | ~~KNOWN-004~~ ERR-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
 | P2 | KNOWN-005 | No logging; background-thread failures discarded | `feat/…-file-logging` |
 | P2 | ~~KNOWN-103~~ ERR-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
-| P2 | KNOWN-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
+| P2 | ~~KNOWN-402~~ ERR-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
 | P3 | KNOWN-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
 | P3 | KNOWN-101, KNOWN-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
 | P3 | KNOWN-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
@@ -75,14 +75,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
 - **Proposed fix:** run the `_eaten` key-up check before the `if self._passthrough: return False` branch.
 - **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
-### [KNOWN-402] Negative partial wheel deltas round away from zero
-- **Where:** `wheelscroll.py:144` (`muescas = delta // RUEDA_POR_MUESCA`, `RUEDA_POR_MUESCA = 120`)
-- **Trigger:** wheel events with `|delta| < 120` or not a multiple of 120 — high-resolution wheels and precision touchpads. Standard notched wheels (±120) are unaffected.
-- **Reproduced (2026-10-28):** 8 events of `|delta|` 30 or 60 → scrolling down = 8 notches, scrolling up = 0 notches; with `|delta| = 120` both directions = 8 notches.
-- **Root cause:** Python floor division (`-60 // 120 == -1`, `60 // 120 == 0`).
-- **Impact:** over the overlay answer, touchpad scrolling down jumps one notch per event (too fast) and scrolling up does nothing.
-- **Proposed fix:** accumulate the remainder per direction (`self._acum += delta; n = int(self._acum / 120); self._acum -= n * 120`), which also fixes the "sub-notch movement is swallowed" behavior.
-- **Test:** `tests/test_wheelscroll.py::test_wheel_partial_notch_down_mirrors_up`
 ### [KNOWN-601] `speech_threshold` slider cannot represent its default value
 - **Where:** `settings_window.py:630-633` (`_number_control`: `steps = round((max-min)/step)`, `value = round((val-min)/step)`), field schema at `settings_window.py:272` (min 0.001, step 0.002, max 0.1).
 - **Reproduced (2026-10-28) in `SettingsWindow`**, config `speech_threshold=0.012` (default):
@@ -273,3 +265,12 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** code identifiers in suggestions are displayed incorrectly (dunder methods, `**kwargs`, `*args`, arithmetic) — the case the vision model is prompted to produce.
 - **Resolution (2026-10-28):** `inline_html` replaces code spans with `\x00<n>\x00` placeholders before the emphasis substitutions and restores them afterwards (input `\x00` is stripped first). Code span content is never formatted; emphasis around a code span (``**use `x` here**``) still applies. Verified: `__init__`, `**kwargs`, `a * b * c`, `x ** 2` render verbatim inside code spans.
 - **Regression tests:** `tests/test_richtext.py::test_inline_html_does_not_format_inside_inline_code`, `::test_inline_html_emphasis_around_inline_code`
+
+### [ERR-402] Negative partial wheel deltas round away from zero
+- **Where:** `wheelscroll.py:144` (`muescas = delta // RUEDA_POR_MUESCA`, `RUEDA_POR_MUESCA = 120`)
+- **Trigger:** wheel events with `|delta| < 120` or not a multiple of 120 — high-resolution wheels and precision touchpads. Standard notched wheels (±120) are unaffected.
+- **Reproduced (2026-10-28):** 8 events of `|delta|` 30 or 60 → scrolling down = 8 notches, scrolling up = 0 notches; with `|delta| = 120` both directions = 8 notches.
+- **Root cause:** Python floor division (`-60 // 120 == -1`, `60 // 120 == 0`).
+- **Impact:** over the overlay answer, touchpad scrolling down jumps one notch per event (too fast) and scrolling up does nothing.
+- **Resolution (2026-10-28):** `WheelForwarder._acumular` carries the sub-notch remainder between events, truncates toward zero (symmetric up/down) and drops the remainder on a direction change. Measured, 8 events per direction: |delta| 30 → -2/+2 notches (was -8/0), |delta| 60 → -4/+4 (was -8/0), |delta| 120 → -8/+8 (unchanged).
+- **Regression tests:** `tests/test_wheelscroll.py::test_wheel_partial_notch_down_mirrors_up`, `::test_partial_wheel_deltas_accumulate`, `::test_direction_change_drops_partial_remainder`

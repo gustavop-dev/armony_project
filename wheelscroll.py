@@ -77,6 +77,9 @@ class WheelForwarder:
         self._tid = 0
         self._ready = threading.Event()
         self._zonas = ()     # ((x, y, ancho, alto), nombre) en coords de pantalla
+        # Partial wheel delta not yet worth a full notch (hook thread only).
+        # High-resolution wheels and touchpads send deltas below 120.
+        self._resto = 0
 
     # -- zonas activas -------------------------------------------------------
     def set_zones(self, zonas):
@@ -132,6 +135,20 @@ class WheelForwarder:
         return bool(self._hook)
 
     # -- hook ----------------------------------------------------------------
+    def _acumular(self, delta):
+        """Whole notches for this delta plus the carried remainder.
+
+        Truncates toward zero, so up and down are symmetric (floor division
+        turned -60 into a full notch down). Reversing direction drops the
+        remainder so the new direction responds immediately.
+        """
+        if self._resto and (self._resto > 0) != (delta > 0):
+            self._resto = 0
+        total = self._resto + delta
+        muescas = int(total / RUEDA_POR_MUESCA)
+        self._resto = total - muescas * RUEDA_POR_MUESCA
+        return muescas
+
     def _on_mouse(self, nCode, wParam, lParam):
         # El hook de raton se llama para CADA movimiento: aqui no puede haber
         # nada lento o Windows lo descarta por LowLevelHooksTimeout.
@@ -141,7 +158,7 @@ class WheelForwarder:
                 nombre = self._zona_en(ms.pt.x, ms.pt.y)
                 if nombre is not None:
                     delta = ctypes.c_short((ms.mouseData >> 16) & 0xFFFF).value
-                    muescas = delta // RUEDA_POR_MUESCA
+                    muescas = self._acumular(delta)
                     if muescas:
                         self._bridge.wheeled.emit(nombre, muescas)
                     return 1        # tragada: lo de debajo no se mueve

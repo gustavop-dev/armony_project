@@ -232,8 +232,6 @@ def test_wheel_partial_notch_up_does_not_scroll(forwarder, scrolls):
     assert scrolls == []
 
 
-@pytest.mark.xfail(strict=True, reason="[KNOWN-402] floor division rounds negative "
-                   "partial wheel deltas away from zero, unlike positive ones")
 @pytest.mark.parametrize("delta, expected", [
     (-60, []),
     (-180, [("respuesta", -1)]),
@@ -245,6 +243,35 @@ def test_wheel_partial_notch_down_mirrors_up(forwarder, scrolls, delta, expected
     flush()
 
     assert scrolls == expected
+
+
+def _wheel_stream(fw, deltas):
+    for delta in deltas:
+        mouse(fw, 250, 400, delta=delta)
+    flush()
+
+
+@pytest.mark.parametrize("deltas, expected", [
+    ([60, 60], [("respuesta", 1)]),
+    ([-60, -60], [("respuesta", -1)]),
+    ([30] * 8, [("respuesta", 1), ("respuesta", 1)]),
+    ([-30] * 8, [("respuesta", -1), ("respuesta", -1)]),
+    ([-15] * 7, []),
+])
+def test_partial_wheel_deltas_accumulate(forwarder, scrolls, deltas, expected):
+    forwarder.set_zones([ANSWER_ZONE])
+
+    _wheel_stream(forwarder, deltas)
+
+    assert scrolls == expected
+
+
+def test_direction_change_drops_partial_remainder(forwarder, scrolls):
+    forwarder.set_zones([ANSWER_ZONE])
+
+    _wheel_stream(forwarder, [-100, 60, 60])
+
+    assert scrolls == [("respuesta", 1)]
 
 
 # -- events that must pass -------------------------------------------------
