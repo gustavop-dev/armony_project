@@ -21,7 +21,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P2 | ~~KNOWN-103~~ ERR-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
 | P2 | ~~KNOWN-402~~ ERR-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
 | P3 | KNOWN-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
-| P3 | KNOWN-101, KNOWN-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
+| P3 | ~~KNOWN-101~~ ERR-101, ~~KNOWN-102~~ ERR-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
 | P3 | KNOWN-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
 | P3 | KNOWN-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
 | P3 | KNOWN-503, KNOWN-504, KNOWN-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
@@ -31,27 +31,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 
 ## Known issues — confirmed by tests
 
-### [KNOWN-101] Interrogative or request token inside a statement is classified as a question
-- **Where:** `intent.py:92-97` (any interrogative within the first 4 tokens → `True`) and `intent.py:85-86` (request phrases matched as substrings anywhere).
-- **Reproduced (2026-10-28), phrases without `?`:**
-
-  | Phrase | Result | Expected |
-  |---|---|---|
-  | `no sé qué hacer con el despliegue` | `True` | `False` |
-  | `lo que sea que decidan está bien` | `True` | `False` |
-  | `que el equipo lo revise mañana` | `True` | `False` |
-  | `cuando terminemos lo subimos` | `True` | `False` |
-  | `las dimensiones del cluster son grandes` (`dime` ⊂ `dimensiones`) | `True` | `False` |
-  | `cómo lo harías tú` | `True` | `True` |
-- **Impact:** gate 1 is intentionally permissive; a false positive costs one LLM request with `allow_silence=True`, normally answered with `NO_RESPONSE` (gate 2) → extra latency/cost per statement and a "Not a question" pill. Only relevant when the transcript has no `?` (AssemblyAI `format_turns=true` usually adds it).
-- **Proposed fix:** match request phrases on word boundaries (`\b`); treat `que`/`cuando`/`como` as interrogative only at token 0 or after a conjunction, or require accent-bearing forms when the transcript keeps accents.
-- **Test:** `tests/test_intent.py` (KNOWN-101 xfail)
-### [KNOWN-102] English contractions with ASCII apostrophe are not detected
-- **Where:** `intent.py:74` (token regex `[a-z0-9']+` keeps `what's` as one token; `_INTERROGATIVAS_EN` contains `what`).
-- **Reproduced (2026-10-28), phrases without `?`:** `what's your take on this`, `how's the migration going`, `where's the bottleneck in your design` → `False` (expected `True`); `what is your take on this` → `True`.
-- **Impact:** false negative at gate 1: the turn is stored as context and no suggestion is requested; the user must press Alt+5. Only when the transcript lacks `?`.
-- **Proposed fix:** split contractions (`re.findall(r"[a-z0-9]+", ...)` or strip `'s`/`'re`/`'d`) before the interrogative lookup.
-- **Test:** `tests/test_intent.py` (KNOWN-102 xfail)
 ### [KNOWN-301] `preroll=0` keeps the whole silence history
 - **Where:** `audio.py:74` (`_Segmenter.process`, slice `[-self.preroll_samples:]`)
 - **Behavior:** with `preroll_samples == 0` the slice is `[-0:]`, which returns the full buffer; pre-roll grows during silence and is prepended to the utterance.
@@ -274,3 +253,26 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** over the overlay answer, touchpad scrolling down jumps one notch per event (too fast) and scrolling up does nothing.
 - **Resolution (2026-10-28):** `WheelForwarder._acumular` carries the sub-notch remainder between events, truncates toward zero (symmetric up/down) and drops the remainder on a direction change. Measured, 8 events per direction: |delta| 30 → -2/+2 notches (was -8/0), |delta| 60 → -4/+4 (was -8/0), |delta| 120 → -8/+8 (unchanged).
 - **Regression tests:** `tests/test_wheelscroll.py::test_wheel_partial_notch_down_mirrors_up`, `::test_partial_wheel_deltas_accumulate`, `::test_direction_change_drops_partial_remainder`
+
+### [ERR-101] Interrogative or request token inside a statement is classified as a question
+- **Where:** `intent.py:92-97` (any interrogative within the first 4 tokens → `True`) and `intent.py:85-86` (request phrases matched as substrings anywhere).
+- **Reproduced (2026-10-28), phrases without `?`:**
+
+  | Phrase | Result | Expected |
+  |---|---|---|
+  | `no sé qué hacer con el despliegue` | `True` | `False` |
+  | `lo que sea que decidan está bien` | `True` | `False` |
+  | `que el equipo lo revise mañana` | `True` | `False` |
+  | `cuando terminemos lo subimos` | `True` | `False` |
+  | `las dimensiones del cluster son grandes` (`dime` ⊂ `dimensiones`) | `True` | `False` |
+  | `cómo lo harías tú` | `True` | `True` |
+- **Impact:** gate 1 is intentionally permissive; a false positive costs one LLM request with `allow_silence=True`, normally answered with `NO_RESPONSE` (gate 2) → extra latency/cost per statement and a "Not a question" pill. Only relevant when the transcript has no `?` (AssemblyAI `format_turns=true` usually adds it).
+- **Resolution (2026-10-28):** Request phrases match as whole words with optional enclitic pronouns (`_patron_peticiones`: `dime` matches `dimelo`, not `dimensiones`). An interrogative in the first 4 tokens counts only when every preceding token is in `_ANTE_INTERROGATIVA` (connectors, prepositions, discourse adverbs: `y`, `pero`, `a`, `por`, `ahora`, `so`, ...). Analysis phrase set: 8/10 match human judgement (was 2/10). Accepted limitation: a sentence-initial interrogative used as a conjunction (`que el equipo lo revise`, `cuando terminemos lo subimos`) is still a false positive; gate 2 (`NO_RESPONSE`) handles it.
+- **Regression tests:** `tests/test_intent.py::test_mid_sentence_interrogative_is_not_a_question`, `::test_spanish_gate_regressions`
+
+### [ERR-102] English contractions with ASCII apostrophe are not detected
+- **Where:** `intent.py:74` (token regex `[a-z0-9']+` keeps `what's` as one token; `_INTERROGATIVAS_EN` contains `what`).
+- **Reproduced (2026-10-28), phrases without `?`:** `what's your take on this`, `how's the migration going`, `where's the bottleneck in your design` → `False` (expected `True`); `what is your take on this` → `True`.
+- **Impact:** false negative at gate 1: the turn is stored as context and no suggestion is requested; the user must press Alt+5. Only when the transcript lacks `?`.
+- **Resolution (2026-10-28):** Tokens are `[a-z0-9]+` (apostrophe splits), so `what's` yields `what`.
+- **Regression tests:** `tests/test_intent.py::test_english_contracted_interrogative_is_a_question`, `::test_english_gate_regressions`

@@ -128,11 +128,6 @@ def test_separated_por_que_is_a_question():
     assert resultado is True
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="[KNOWN-101] mid-sentence interrogative inside the first 4 words is "
-    "flagged as a question, contradicting the module's own examples",
-)
 @pytest.mark.parametrize("texto", ["no se que hacer", "lo que sea"])
 def test_mid_sentence_interrogative_is_not_a_question(texto):
     """The module comment names these exact phrases as non-questions."""
@@ -293,11 +288,6 @@ def test_english_interrogative_with_typographic_apostrophe_is_a_question():
     assert resultado is True
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="[KNOWN-102] English contractions with an ASCII apostrophe "
-    "(what's, how's) are not recognised as interrogatives",
-)
 @pytest.mark.parametrize("texto", ["what's the plan", "how's it going", "where's the file"])
 def test_english_contracted_interrogative_is_a_question(texto):
     """Transcripts often drop '?'; the gate must err on letting questions through."""
@@ -306,3 +296,32 @@ def test_english_contracted_interrogative_is_a_question(texto):
 
     # Assert
     assert resultado is True
+
+
+# --- ERR-101 / ERR-102 regressions ---------------------------------------------------
+
+@pytest.mark.parametrize("texto, esperado", [
+    ("no sé qué hacer con el despliegue", False),
+    ("lo que sea que decidan está bien", False),
+    ("las dimensiones del cluster son grandes", False),
+    ("la explicacion fue clara", False),
+    ("dímelo cuando puedas", True),
+    ("explícamelo otra vez", True),
+    ("cuéntamelo todo", True),
+    ("a qué hora empezamos", True),
+    ("por qué no lo probamos", True),
+    ("y ahora cómo seguimos", True),
+])
+def test_spanish_gate_regressions(texto, esperado):
+    assert parece_pregunta(texto, "es") is esperado
+
+
+@pytest.mark.parametrize("texto, esperado", [
+    ("what's your take on this", True),
+    ("how's the migration going", True),
+    ("so what's next", True),
+    ("I don't know what to do", False),
+    ("we're not sure where it fails", False),
+])
+def test_english_gate_regressions(texto, esperado):
+    assert parece_pregunta(texto, "en") is esperado

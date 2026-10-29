@@ -52,6 +52,33 @@ _PETICIONES_EN = (
 )
 
 
+# Words that may stand before an interrogative that opens a clause or a question
+# ("y cuando entregamos", "a que hora", "por que no", "so what's next"). Any other
+# word before it means mid-sentence use ("no se que hacer", "lo que sea").
+_ANTE_INTERROGATIVA = {
+    "y", "e", "o", "pero", "entonces", "pues", "bueno", "vale", "oye",
+    "ahora", "luego", "despues", "ya", "tambien", "now", "also", "just",
+    "a", "de", "en", "con", "por", "para", "desde", "hasta",
+    "and", "or", "but", "so", "then", "ok", "okay", "well", "hey",
+    "to", "from", "with", "for", "in", "on", "at",
+}
+# Enclitic pronouns allowed after a request verb: "dimelo", "explicamelo".
+_ENCLITICOS = r"(?:me|te|se|lo|la|le|nos|los|las|les)*"
+
+
+def _patron_peticiones(peticiones):
+    """Request phrases as whole words (so "dime" does not match "dimensiones")."""
+    return re.compile(r"(?<![a-z0-9'])(?:" + "|".join(map(re.escape, peticiones))
+                      + r")" + _ENCLITICOS + r"(?![a-z0-9])")
+
+
+_PATRONES = {
+    "es": _patron_peticiones(_PETICIONES_ES),
+    "en": _patron_peticiones(_PETICIONES_EN),
+    "auto": _patron_peticiones(_PETICIONES_ES + _PETICIONES_EN),
+}
+
+
 def _normaliza(texto):
     """Minusculas y sin tildes: la transcripcion no siempre acentua igual."""
     t = unicodedata.normalize("NFD", texto.lower())
@@ -71,28 +98,27 @@ def parece_pregunta(texto, idioma="es"):
         return True
 
     plano = _normaliza(texto)
-    palabras = re.findall(r"[a-z0-9']+", plano)
+    # Apostrophes split tokens: "what's" -> "what", "s".
+    palabras = re.findall(r"[a-z0-9]+", plano)
     if not palabras:
         return False
 
-    peticiones = ()
     interrogativas = set()
     if idioma in ("es", "auto"):
-        peticiones += _PETICIONES_ES
         interrogativas |= _INTERROGATIVAS_ES
     if idioma in ("en", "auto"):
-        peticiones += _PETICIONES_EN
         interrogativas |= _INTERROGATIVAS_EN
     if idioma not in ("es", "en", "auto"):     # idioma desconocido: no filtrar
         return True
 
-    if any(p in plano for p in peticiones):
+    if _PATRONES[idioma].search(plano):
         return True
 
     # Una interrogativa suelta a mitad de frase casi nunca es pregunta
     # ("no se que hacer", "lo que sea"), pero al principio de la frase o de una
     # subordinada si suele serlo ("como lo ves", "y cuando entregamos").
-    for palabra in palabras[:4]:
-        if palabra in interrogativas:
+    for i, palabra in enumerate(palabras[:4]):
+        if palabra in interrogativas and all(p in _ANTE_INTERROGATIVA
+                                             for p in palabras[:i]):
             return True
     return False
