@@ -290,8 +290,6 @@ def test_digit_without_alt_passes(interceptor, fired):
     assert (results, fired) == ([PASSED, PASSED], [])
 
 
-@pytest.mark.xfail(strict=True, reason="[KNOWN-401] digit held across Alt+other "
-                   "key stays in _eaten, so the next Alt+digit is swallowed silently")
 def test_alt_digit_triggers_after_hold_interrupted_by_other_key(interceptor, fired):
     interrupted = [(VK_LMENU, WM_SYSKEYDOWN), (VK_1, WM_SYSKEYDOWN),
                    (VK_TAB, WM_SYSKEYDOWN), (VK_1, WM_SYSKEYUP),
@@ -300,6 +298,21 @@ def test_alt_digit_triggers_after_hold_interrupted_by_other_key(interceptor, fir
     flush()
 
     assert fired == ["one", "one"]
+
+
+def test_digit_keyup_after_interrupted_combo_is_swallowed(interceptor):
+    results = feed(interceptor, [(VK_LMENU, WM_SYSKEYDOWN), (VK_1, WM_SYSKEYDOWN),
+                                 (VK_TAB, WM_SYSKEYDOWN), (VK_1, WM_SYSKEYUP)])
+
+    assert results == [SWALLOWED, SWALLOWED, SWALLOWED, SWALLOWED]
+
+
+def test_interrupted_combo_leaves_nothing_eaten(interceptor):
+    feed(interceptor, [(VK_LMENU, WM_SYSKEYDOWN), (VK_1, WM_SYSKEYDOWN),
+                       (VK_TAB, WM_SYSKEYDOWN), (VK_1, WM_SYSKEYUP),
+                       (VK_TAB, WM_SYSKEYUP), (VK_LMENU, WM_KEYUP)])
+
+    assert interceptor._eaten == set()
 
 
 # -- Alt + any other key ---------------------------------------------------

@@ -23,7 +23,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P3 | ~~KNOWN-002~~ ERR-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
 | P3 | ~~KNOWN-101~~ ERR-101, ~~KNOWN-102~~ ERR-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
 | P3 | ~~KNOWN-601~~ ERR-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
-| P3 | KNOWN-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
+| P3 | ~~KNOWN-401~~ ERR-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
 | P3 | ~~KNOWN-503~~ ERR-503, ~~KNOWN-504~~ ERR-504, ~~KNOWN-502~~ ERR-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
 | P3 | ~~KNOWN-701~~ ERR-701 | Capture context can exceed 8000 chars by ≤ 79 | any engine branch |
 | P4 | KNOWN-301, KNOWN-302 | Segmenter pre-roll edge cases; unreachable with fixed `preroll=0.3` | drop with offline removal |
@@ -47,13 +47,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** none in the current app.
 - **Proposed fix:** append the trigger block to `_buf` separately from the pre-roll (`self._buf = [preroll_before_block, block]`). Drop if offline mode is removed.
 - **Test:** `tests/test_audio.py::test_segmenter_keeps_whole_trigger_block_longer_than_preroll`
-### [KNOWN-401] Digit held across an Alt+other-key combo stays in `_eaten`
-- **Where:** `hotkeys.py:322` with `:332` / `:344` (`AltInterceptor._handle`): in passthrough mode (`self._passthrough`) the handler returns before the `_eaten` key-up check.
-- **Trigger:** Alt held, a bound digit pressed (action fires), another key pressed while the digit is still down (e.g. Tab), then the digit released.
-- **Reproduced (2026-10-28)** (`user32` faked): hook results for `Alt↓ 1↓ Tab↓ 1↑ Tab↑ Alt↑` = swallowed, swallowed, swallowed, passed, passed, passed; `_eaten = {VK_1}` afterwards. Next Alt+1: no action, `_eaten` cleared; following Alt+1 presses work.
-- **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
-- **Proposed fix:** run the `_eaten` key-up check before the `if self._passthrough: return False` branch.
-- **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
 ## Test infrastructure notes
 - `faster_whisper` is not installed in `.venv`; `tests/test_transcribe.py` injects a stub module. Offline mode cannot run from this venv as-is.
 - `--cov=contexts` measures the `contexts/` data directory instead of `contexts.py`. Use `--cov=. --cov-report=term-missing` and read the module rows.
@@ -289,3 +282,11 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** negligible: the overshoot is at most `lines - 1` characters (≤ 79 with `CONTEXTO_CAPTURA=80`) on an 8000-char budget.
 - **Resolution (2026-10-28):** `_contexto` counts the `\n` joiner (`len(linea) + 1` after the first kept line) against `LIMITE_CHARS_CAPTURA`.
 - **Regression tests:** `tests/test_engine.py::TestContext::test_capture_limit_includes_line_separators`
+
+### [ERR-401] Digit held across an Alt+other-key combo stays in `_eaten`
+- **Where:** `hotkeys.py:322` with `:332` / `:344` (`AltInterceptor._handle`): in passthrough mode (`self._passthrough`) the handler returns before the `_eaten` key-up check.
+- **Trigger:** Alt held, a bound digit pressed (action fires), another key pressed while the digit is still down (e.g. Tab), then the digit released.
+- **Reproduced (2026-10-28)** (`user32` faked): hook results for `Alt↓ 1↓ Tab↓ 1↑ Tab↑ Alt↑` = swallowed, swallowed, swallowed, passed, passed, passed; `_eaten = {VK_1}` afterwards. Next Alt+1: no action, `_eaten` cleared; following Alt+1 presses work.
+- **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
+- **Resolution (2026-10-28):** The `_eaten` key-up check runs before the passthrough branch in `AltInterceptor._handle`: the digit key-up is swallowed (no leak to the focused app) and the digit leaves `_eaten`, so the next Alt+digit fires.
+- **Regression tests:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`, `::test_digit_keyup_after_interrupted_combo_is_swallowed`, `::test_interrupted_combo_leaves_nothing_eaten`

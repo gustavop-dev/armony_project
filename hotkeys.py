@@ -325,6 +325,14 @@ class AltInterceptor:
                 return False    # cierra el Alt que reinyectamos
             return True         # Alt tragado de principio a fin: nadie lo vio
 
+        # Before the passthrough branch: a bound digit whose key-down was
+        # swallowed must lose its key-up too, even if the combo was handed back
+        # to the system in between (Alt, 1, Tab, release 1). Otherwise it stays
+        # in _eaten and the next Alt+digit is swallowed without firing.
+        if not down and vk in self._eaten:
+            self._eaten.discard(vk)
+            return True         # el keyup del numero tampoco sale de aqui
+
         if self._passthrough:
             return False        # combinacion cedida al sistema
 
@@ -346,10 +354,6 @@ class AltInterceptor:
             self._passthrough = True
             _send_keys((self._alt_vk, False), (vk, False))
             return True
-
-        if not down and vk in self._eaten:
-            self._eaten.discard(vk)
-            return True         # el keyup del numero tampoco sale de aqui
 
         return False
 
