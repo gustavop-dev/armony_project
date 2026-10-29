@@ -192,6 +192,8 @@ class CoachEngine(QtCore.QObject):
                     tokens_voice=int(cfg["openai_tokens_voice"]),
                     model_vision=cfg["openai_model_vision"],
                     tokens_vision=int(cfg["openai_tokens_vision"]),
+                    effort_voice=cfg.get("openai_effort_voice", "low"),
+                    effort_vision=cfg.get("openai_effort_vision", "medium"),
                 )
             except Exception as e:
                 self.error.emit(f"No se pudo iniciar el modelo de respuestas: {e}")

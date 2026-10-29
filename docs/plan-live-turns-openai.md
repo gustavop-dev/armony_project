@@ -77,16 +77,15 @@ Local facts:
 - Tests: config defaults and migration (`llm_provider` ignored, anthropic keys
   preserved).
 
-0.3 **Model benchmark (decides the defaults).**
-- Script `stt_eval/llm_bench.py`: 20 Spanish interview questions with a ~2K-token
-  context, measuring time to first token (TTFT) and total time with a warm
-  cache.
-- Candidates:
-  - `gpt-6-luna` at effort none / low
-  - `gpt-6.1-terra` at effort none / low
-  - screenshots: `gpt-6.1-sol` at effort low vs `gpt-6.1-terra` at medium
-- Quality: blind side-by-side review by the product owner on 10 answers.
-- Output: a table in the spike doc and the chosen defaults.
+0.3 **Models (decided, no benchmark; latest models, quality and speed first).**
+- Voice: `gpt-6.1-terra`, `reasoning.effort = "low"`. The provider's default
+  (`medium`) gave a 3.4 s first token; `low` gives ~1.5 s on a warm
+  connection (smoke check, 2026-10-28).
+- Screenshots: `gpt-6.1-sol`, `reasoning.effort = "medium"`. Stronger model,
+  and the tester is reading anyway.
+- Both are configurable (`openai_effort_voice`, `openai_effort_vision`).
+- Users who saved older models in `config.json` keep them until they change
+  them in Settings.
 
 Acceptance:
 - Tests are green.
@@ -197,9 +196,30 @@ Acceptance:
   - one `prewarm: true` request at meeting start, after contexts load
   - `prompt_cache_key = "armony:<session-id>"`
   - Effort changes go through `configuration_update` items, never top-level.
-- One model for the whole conversation. Screenshots use the same model at
-  higher effort through `configuration_update`, unless the 0.3 benchmark shows
-  that a separate vision model is worth losing the cache.
+- **The prompt cache is per model.** A cached prefix is the model's internal
+  state over those tokens, computed with that model's weights, so another
+  model cannot read it. OpenAI's guide lists `model` among the settings that
+  shape the cached prefix: "A different model can use different weights and
+  caching behavior".
+  - Switching model mid-session keeps the *conversation* (the same `input`
+    list is sent), but the first request on the other model reprocesses the
+    whole prefix. After that it has its own cache.
+  - Returning to the first model hits its cache if it is still alive.
+  - This is what ChatGPT does when you switch models in a chat: the history
+    carries over, the cache does not.
+- **Effort changes do keep the cache** if they are made with a
+  `configuration_update` item and the top-level `reasoning.effort` stays
+  unchanged (GPT-6+).
+- Design with two models:
+  - Voice (`gpt-6.1-terra`) owns the hot cache: every spoken answer reads it.
+  - A screenshot sends the same conversation to `gpt-6.1-sol`. The first one
+    in a while pays a cold prefill (~10–15K tokens at $2/M ≈ $0.02–0.03 and
+    some extra latency). Later screenshots within the TTL read sol's own
+    cache.
+  - The screenshot result is appended to the shared conversation, so the voice
+    model sees it on its next turn.
+  - Optional optimisation: start a `prewarm` request on sol the moment a
+    screenshot hotkey is pressed, in parallel with the capture.
 - Size:
   - A 1-hour meeting is ~10–15K tokens, so no compaction is needed.
   - Guard: past ~200K tokens, start a new conversation seeded with a summary,

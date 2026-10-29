@@ -58,12 +58,18 @@ class Coach:
     """
 
     def __init__(self, api_key, system_prompt="", model_voice="gpt-6.1-terra",
-                 tokens_voice=400, model_vision=None, tokens_vision=None):
+                 tokens_voice=400, model_vision=None, tokens_vision=None,
+                 effort_voice="low", effort_vision="medium"):
         from openai import OpenAI
         self.client = OpenAI(api_key=api_key)
         self.system_prompt = system_prompt
         self.model_voice = model_voice
         self.tokens_voice = int(tokens_voice)
+        # Razonamiento explicito: sin el, los gpt-6 usan 'medium' y la primera
+        # palabra de una respuesta hablada tardaba 3,4 s. 'low' en voz aun piensa
+        # lo justo para no decir tonterias; en capturas compensa pensar mas.
+        self.effort_voice = effort_voice
+        self.effort_vision = effort_vision
         # Sin modelo de capturas configurado se usa el mismo que para voz: mejor
         # responder algo que fallar por configuracion incompleta.
         self.model_vision = model_vision or model_voice
@@ -170,7 +176,7 @@ class Coach:
             quiere una sugerencia si o si.
         """
         prompt = self._prompt(context_text, latest, images, note, allow_silence)
-        modelo, tokens = self.elegir_modelo(images)
+        modelo, tokens, esfuerzo = self.elegir_modelo(images)
         # Un 429 o un corte de red no puede costarte la sugerencia: en una
         # reunion no hay tiempo de pedirla otra vez a mano. Se reintenta una vez,
         # y solo si no habia empezado a llegar texto (si ya se pinto algo,
@@ -187,7 +193,7 @@ class Coach:
                     on_delta(txt)
 
             try:
-                self._stream_openai(prompt, images, delta, modelo, tokens)
+                self._stream_openai(prompt, images, delta, modelo, tokens, esfuerzo)
                 metricas.medir(LLM_TOTAL, (time.monotonic() - t0) * 1000)
                 metricas.contar("respuestas")
                 if on_done:
@@ -233,13 +239,13 @@ class Coach:
             return None
 
     def elegir_modelo(self, images):
-        """(modelo, tokens) segun haya captura de pantalla o no."""
+        """(modelo, tokens, esfuerzo) segun haya captura de pantalla o no."""
         if images:
-            return self.model_vision, self.tokens_vision
-        return self.model_voice, self.tokens_voice
+            return self.model_vision, self.tokens_vision, self.effort_vision
+        return self.model_voice, self.tokens_voice, self.effort_voice
 
     # ----------------------------------------------------------------- backend
-    def _stream_openai(self, prompt, images, on_delta, modelo, tokens):
+    def _stream_openai(self, prompt, images, on_delta, modelo, tokens, esfuerzo):
         content = []
         for img in (images or []):
             content.append({"type": "input_image",
@@ -251,6 +257,7 @@ class Coach:
             instructions=self.system_prompt,
             input=[{"role": "user", "content": content}],
             max_output_tokens=tokens + _RESERVA_RAZONAMIENTO,
+            reasoning={"effort": esfuerzo},
         ) as stream:
             for ev in stream:
                 if ev.type == "response.output_text.delta" and on_delta:

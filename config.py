@@ -85,12 +85,14 @@ DEFAULTS = {
     #              tiene que estar antes de que el silencio se note.
     #   captura -> hay un ejercicio o codigo en pantalla. Manda la capacidad, y
     #              un par de segundos de mas no se notan porque estas leyendo.
-    # Provisionales hasta medir luna/terra/sol (docs/plan-live-turns-openai.md,
-    # fase 0.3).
+    # Los ultimos de OpenAI, priorizando calidad y rapidez: terra para hablar
+    # (el rapido de la 6.1) y sol para capturas (el fuerte de la 6.1).
     "openai_api_key": "",
     "openai_model_voice": "gpt-6.1-terra",
+    "openai_effort_voice": "low",
     "openai_tokens_voice": 400,
     "openai_model_vision": "gpt-6.1-sol",
+    "openai_effort_vision": "medium",
     # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
     # 1200 se quedaba a medias.
     "openai_tokens_vision": 2500,
