@@ -124,7 +124,9 @@ def pixmap(nombre, color, px=16, grosor=1.5):
     pm.setDevicePixelRatio(dpr)
     pm.fill(QtCore.Qt.transparent)
     p = QtGui.QPainter(pm)
-    r.render(p)
+    # Destino explicito en px logicos: sin el, el SVG ocupa el pixmap en px
+    # FISICOS y con escalado (125 %, 150 %...) sale mas grande y recortado.
+    r.render(p, QtCore.QRectF(0, 0, px, px))
     p.end()
     return pm
 

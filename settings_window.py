@@ -372,6 +372,9 @@ class SettingsWindow(QtWidgets.QWidget):
         h.setStyleSheet(f"color: {TXT_BR}; background: transparent;")
         d = QtWidgets.QLabel(desc); d.setWordWrap(True); d.setMaximumWidth(560)
         d.setStyleSheet(f"color: #a89f8a; font-size: 13px; background: transparent;")
+        # Un QLabel con salto de linea no reserva su alto: en una pagina llena
+        # (Contexts) el layout lo aplastaba y se cortaba la segunda linea.
+        d.setMinimumHeight(d.heightForWidth(560))
         v.addWidget(h); v.addWidget(d)
         return w
 
@@ -401,20 +404,19 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _field_row(self, f):
         row = QtWidgets.QWidget()
-        row.setStyleSheet(f"border-bottom: 1px solid {DIV};")
+        # Con selector: sin el, cada etiqueta de la fila hereda la linea.
+        row.setObjectName("fila")
+        row.setProperty("clave", f["key"])
+        row.setStyleSheet(f"#fila {{ border-bottom: 1px solid {DIV}; }}")
         lay = QtWidgets.QHBoxLayout(row); lay.setContentsMargins(0, 16, 0, 16); lay.setSpacing(24)
-        # izquierda: label + key + hint
+        # izquierda: label + hint (la clave interna de config no se ensena)
         left = QtWidgets.QWidget(); left.setMaximumWidth(340)
         lv = QtWidgets.QVBoxLayout(left); lv.setContentsMargins(0, 0, 0, 0); lv.setSpacing(3)
         top = QtWidgets.QHBoxLayout(); top.setSpacing(8)
         name = QtWidgets.QLabel(f["label"])
         nf = name.font(); nf.setPixelSize(14); nf.setWeight(QtGui.QFont.DemiBold); name.setFont(nf)
         name.setStyleSheet(f"color: {TXT_LB}; background: transparent;")
-        key = QtWidgets.QLabel(f["key"])
-        key.setStyleSheet(
-            f"color: #8a826f; background: rgba(243,234,212,0.05); border-radius: 5px; "
-            f"padding: 1px 6px; font-family: {MONO}; font-size: 10px;")
-        top.addWidget(name); top.addWidget(key); top.addStretch()
+        top.addWidget(name); top.addStretch()
         lv.addLayout(top)
         hint = QtWidgets.QLabel(f["hint"]); hint.setWordWrap(True)
         hint.setStyleSheet(f"color: #948b78; font-size: 12px; background: transparent;")
@@ -619,8 +621,10 @@ class SettingsWindow(QtWidgets.QWidget):
         cl = QtWidgets.QLabel(f"{n} contexts loaded")
         cl.setStyleSheet(f"color: {TXT_LB}; font-size: 11px;")
         ch.addWidget(cl)
+        chip.setObjectName("chip")
         chip.setStyleSheet(
-            "background: rgba(24,22,16,0.55); border: 1px solid rgba(242,201,76,0.3); border-radius: 12px;")
+            "#chip { background: rgba(24,22,16,0.55); border: 1px solid rgba(242,201,76,0.3); "
+            "border-radius: 12px; }")
         row = QtWidgets.QHBoxLayout(); row.addWidget(chip); row.addStretch()
         v.addLayout(row)
         note = QtWidgets.QLabel("Chip que verás en el overlay al iniciar.")

@@ -202,22 +202,11 @@ class DragBar(QtWidgets.QWidget):
     cualquier ventana de Windows.
     """
 
-    _center_child = None
-
     def __init__(self):
         super().__init__()
         # Sin cambio de cursor: la senal de que se puede arrastrar son los
         # punticos (GripDots), no el puntero.
         self._off = None
-
-    def resizeEvent(self, e):
-        # Centra un hijo (los punticos) en el ancho REAL de la barra, no en el
-        # espacio que sobra a un lado.
-        if self._center_child is not None:
-            c = self._center_child
-            c.move((self.width() - c.width()) // 2, (self.height() - c.height()) // 2)
-            c.raise_()
-        super().resizeEvent(e)
 
     def mousePressEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton:
@@ -1322,13 +1311,17 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         else:
             self.btn_close.setVisible(False)
 
-        # Punticos de agarre: hijo flotante centrado en el ancho real de la barra.
-        grip = GripDots()
-        grip.setParent(w)
-        w._center_child = grip
-        grip.raise_()
+        # Punticos de agarre: centrados en el hueco libre de la cabecera, no en
+        # su ancho total. Flotando en el centro se montaban encima del estado
+        # ("Listening") en cuanto la columna es estrecha.
+        lay.insertWidget(lay.indexOf(self.btn_close), GripDots())
+        lay.insertStretch(lay.indexOf(self.btn_close))
 
-        w.setStyleSheet(f"border-bottom: 1px solid {T.DIVIDER_SOFT};")
+        # Con selector: sin el, la linea de abajo la hereda cada hijo y sale
+        # subrayado el titulo, el estado...
+        w.setObjectName("cabecera")
+        w.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        w.setStyleSheet(f"#cabecera {{ border-bottom: 1px solid {T.DIVIDER_SOFT}; }}")
         return w
 
     # ---------------- cuerpo: el hilo de la conversacion
@@ -1378,7 +1371,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.skip_pill = SkipPill()
         pie = QtWidgets.QWidget()
         pl = QtWidgets.QHBoxLayout(pie)
-        pl.setContentsMargins(18, 0, 18, 10)
+        # A la derecha, hueco para el agarre de redimension de la esquina.
+        pl.setContentsMargins(18, 0, 28, 10)
         pl.addWidget(self.skip_pill)
         # Pantalla: lo que dijeron parece ir para la solucion; el tester decide
         # si relanzarla con ello (nunca se relanza sola).

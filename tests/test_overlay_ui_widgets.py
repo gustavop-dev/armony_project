@@ -513,20 +513,6 @@ def test_panel_card_set_borde_ignores_same_value(qtbot):
 
 # --------------------------------------------------------------- drag bar
 
-def test_drag_bar_centers_child(qtbot):
-    bar = overlay_ui.DragBar()
-    qtbot.addWidget(bar)
-    dots = overlay_ui.GripDots()
-    dots.setParent(bar)
-    bar._center_child = dots
-    bar.show()
-    qtbot.waitExposed(bar)
-
-    bar.resize(200, 40)
-
-    assert dots.pos() == QtCore.QPoint(85, 15)
-
-
 def test_drag_bar_ignores_right_button(qtbot):
     win = QtWidgets.QWidget()
     qtbot.addWidget(win)

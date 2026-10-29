@@ -100,6 +100,23 @@ def test_pixmap_renders_at_physical_screen_resolution(qapp, monkeypatch):
     assert (pm.width(), pm.height(), pm.devicePixelRatio()) == (24, 24, 1.5)
 
 
+@pytest.mark.parametrize("dpr", [1.0, 1.25, 1.5, 2.0])
+def test_pixmap_draws_the_whole_icon_inside_its_box(qapp, monkeypatch, dpr):
+    # The "x" spans 6..18 of the 24-unit box: drawn right it never reaches the
+    # edges. Drawn at physical size (the 150 % bug) it overflowed and was cut.
+    monkeypatch.setattr(icons, "_screen_dpr", lambda: dpr)
+    img = icons.pixmap("x", "#ffffff", 24).toImage()
+    lado = img.width()
+
+    borde = [img.pixelColor(i, j).alpha()
+             for i in range(lado) for j in (0, lado - 1)]
+    borde += [img.pixelColor(j, i).alpha()
+              for i in range(lado) for j in (0, lado - 1)]
+    centro = img.pixelColor(lado // 2, lado // 2).alpha()
+
+    assert (max(borde), centro > 0) == (0, True)
+
+
 def test_pixmap_has_alpha_channel(qapp):
     assert icons.pixmap("x", "#ffffff", 16).hasAlphaChannel() is True
 

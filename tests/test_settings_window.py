@@ -70,9 +70,9 @@ def _heading(win):
 
 
 def _row(win, key):
-    """Field row whose key chip shows ``key`` in the current section."""
-    chip = next(lab for lab in _labels(_page(win)) if lab.text() == key)
-    return chip.parentWidget().parentWidget()
+    """Field row of config key ``key`` in the current section."""
+    return next(fila for fila in _page(win).findChildren(QtWidgets.QWidget, "fila")
+                if fila.property("clave") == key)
 
 
 def _nav(win, label):
@@ -974,3 +974,11 @@ def test_dot_paints(qtbot):
     qtbot.addWidget(dot)
 
     assert dot.grab().isNull() is False
+
+
+def test_rows_do_not_show_internal_config_keys(make_window):
+    win = make_window()
+
+    textos = [lab.text() for lab in _labels(_page(win))]
+
+    assert not {"openai_api_key", "assemblyai_api_key", "typesafe_api_key"} & set(textos)
