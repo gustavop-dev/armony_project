@@ -301,6 +301,42 @@ Acceptance:
 - Answers reference earlier parts of the call (spot-checked on a scripted
   60-minute transcript).
 
+Status (2026-10-28): **done**.
+- `llm.Coach` owns one append-only Responses conversation per meeting:
+  - A single developer message at the start: coach prompt, contexts and the
+    answering rules that used to be resent inside every question.
+  - Then, per answer: a user turn with only what is new
+    (`Coach.anotar('Ellos'|'Yo', text)` buffers it) plus the question.
+  - Then the assistant answer as given.
+- The effort switch voice ↔ screenshot is a `configuration_update` item. The
+  top-level `reasoning.effort` never changes.
+- Every request uses `prompt_cache_options: {ttl: "30m"}` and a per-meeting
+  `prompt_cache_key`. `calentar()` prewarms the developer prefix.
+- Error handling:
+  - A failed request appends nothing, and its transcript lines ride on the
+    next turn.
+  - A partial answer that was shown is kept.
+  - If the model rejected `configuration_update`, the coach would fall back to
+    top-level effort.
+- The engine no longer builds a sliding context window, and "Yo (sugerido)"
+  summaries are gone: the conversation already holds the answers.
+- Live check (`gpt-6.1-sol`, 6 questions with a screenshot in the middle):
+  - Prewarm accepted. The developer prefix is ~1.6K tokens, above the 1,024
+    minimum.
+  - **88–93% of input tokens cached on every turn, from the first question
+    on**: 12,687 of 13,972 overall.
+  - `configuration_update` accepted. The voice turn after the screenshot was
+    still 93% cached.
+  - First word on voice turns 1.0–1.8 s. The screenshot turn (effort medium,
+    image) 6.5 s.
+- Tests: `tests/test_llm_single_model.py`, 12 tests covering:
+  - the byte-for-byte prefix invariant
+  - fixed request settings
+  - configuration_update switching
+  - failure and retry handling
+  - prewarm
+  - trimming
+
 ## Order and size
 
 | Phase | Size | Depends on |

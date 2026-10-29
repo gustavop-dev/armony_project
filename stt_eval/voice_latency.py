@@ -3,9 +3,10 @@
     python -m stt_eval.voice_latency                       # default configs
     python -m stt_eval.voice_latency --configs gpt-6.1-sol:low gpt-6.1-terra:none
 
-Each question goes through llm.Coach.stream_response exactly as the engine
-sends it (coach prompt from config.DEFAULTS, a line of meeting context, the
-question). Configurations are interleaved per question so network drift does
+Each question goes through llm.Coach exactly as the engine sends it (coach
+prompt from config.DEFAULTS, a line of meeting context, the question), and the
+questions of one config share one conversation, as in a real meeting, so the
+prompt cache is exercised too. Configurations are interleaved per question so network drift does
 not favour one of them. Reports time to first token, time to the full answer
 and length, and saves every answer for a side-by-side quality read.
 """
@@ -34,8 +35,14 @@ def ask(coach, context, question, clock=time.monotonic):
             first.append(clock() - t0)
         out.append(text)
 
-    coach.stream_response(context, question, on_delta=delta, on_error=errors.append)
+    quien, _, dicho = context.partition(": ")
+    coach.anotar(quien or "Ellos", dicho or context)
+    coach.anotar("Ellos", question)
+    coach.stream_response(question, on_delta=delta, on_error=errors.append)
+    entrada, cacheados = coach.ultimo_uso or (None, None)
     return {
+        "input_tokens": entrada,
+        "cached_tokens": cacheados,
         "ttft_s": round(first[0], 3) if first else None,
         "total_s": round(clock() - t0, 3),
         "answer": "".join(out),

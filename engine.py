@@ -11,7 +11,6 @@ contestaste (hilo.py), y con eso lo que anada el entrevistador mientras lees o
 contestas queda como contexto en vez de abrir otra respuesta encima.
 """
 import os
-import re
 import time
 import queue
 import threading
@@ -27,43 +26,16 @@ from metrics import E2E, LLM_CALENTAMIENTO, STT_LATENCIA, metricas
 # llega a pintarse: se usa solo para decidir que no hay nada que sugerir.
 SENTINEL = "NO_RESPONSE"
 
-# Cuanta reunion se recuerda y cuanta se manda en cada respuesta.
-#
-# Una pregunta hablada se responde con lo justo: manda la latencia y lo que
-# acaban de decir explica casi siempre lo que preguntan. Una captura es otra
-# cosa: el pantallazo suele ser solo una PARTE del problema, y el resto esta en
-# lo que llevan un rato contando. Ahi compensa mandar el hilo largo, que ademas
-# se paga una vez y no en cada frase.
-# Ojo al contar: cada turno respondido deja DOS entradas (lo que dijeron y lo
-# que se sugirio), asi que estos numeros son entradas, no turnos. Se doblaron al
-# empezar a guardar las sugerencias para que el hilo real siguiera siendo el
-# mismo que antes.
-MEMORIA = 120             # entradas en memoria (~60 turnos)
-CONTEXTO_VOZ = 36         # las que acompañan a una pregunta hablada (~18 turnos)
-CONTEXTO_CAPTURA = 80     # las que acompañan a un pantallazo (~40 turnos)
-LIMITE_CHARS_CAPTURA = 8000   # tope por si alguien se explaya de verdad
-
-# De cada sugerencia se guarda un resumen corto, no la respuesta entera: sirve
-# para que no te repita lo mismo, no para reconstruirla.
-RESUMEN_SUGERENCIA = 240
+# La memoria de la reunion vive en la conversacion del coach (llm.Coach): todo
+# lo que se oye se le va anotando y viaja, solo lo nuevo, en cada respuesta.
+# Antes se mandaba una ventana con las ultimas ~18 intervenciones reconstruida
+# en cada pregunta: se olvidaba lo anterior y nunca aprovechaba la cache.
 
 # Lo que se le pasa como "ultimo turno" cuando mandas capturas y no hay ninguna
 # pregunta hablada esperando. Se dice explicito para que no se ponga a rebuscar
 # en la transcripcion algo a lo que responder: lo que importa esta en pantalla.
 SIN_PREGUNTA_CAPTURA = ("(no han dicho nada nuevo desde la ultima respuesta: lo "
                         "que hay que resolver esta en las capturas)")
-
-
-def _resumen(texto, limite=RESUMEN_SUGERENCIA):
-    """Version corta de una sugerencia, para guardarla como contexto.
-
-    Fuera los bloques de codigo y los encabezados: ocupan muchisimo y no son lo
-    que tu dirias en voz alta, que es lo unico que hace falta recordar.
-    """
-    sin_codigo = re.sub(r"```.*?```", " [código] ", texto or "", flags=re.S)
-    sin_titulos = re.sub(r"^#+ .*$", "", sin_codigo, flags=re.M)
-    limpio = " ".join(sin_titulos.split())
-    return limpio[:limite] + ("…" if len(limpio) > limite else "")
 
 
 def _prompt_bilingue(cfg):
@@ -99,9 +71,9 @@ class CoachEngine(QtCore.QObject):
         super().__init__()
         self._running = False
         self._queue = queue.Queue()
-        # Se guarda bastante mas de lo que se manda en cada respuesta: asi una
-        # captura puede llevarse el hilo largo de la conversacion (ver _contexto).
-        self._history = deque(maxlen=MEMORIA)
+        # Todo lo oido en la reunion, por quien lo dijo. Lo que viaja al modelo
+        # lo lleva su conversacion (llm.Coach.anotar); esto es la copia local.
+        self._history = []
         self._audio = None
         self._stt = None
         self._coach = None
@@ -224,6 +196,8 @@ class CoachEngine(QtCore.QObject):
                     tokens_vision=int(cfg["openai_tokens_vision"]),
                     effort_voice=cfg.get("openai_effort_voice", "low"),
                     effort_vision=cfg.get("openai_effort_vision", "medium"),
+                    # Una clave por reunion: el gasto en cache se ve por sesion.
+                    cache_key=f"armony-{time.strftime('%Y%m%d-%H%M%S')}",
                 )
             except Exception as e:
                 self.error.emit(f"No se pudo iniciar el modelo de respuestas: {e}")
@@ -316,8 +290,7 @@ class CoachEngine(QtCore.QObject):
             self._turn_timer = None
         if not texto or not self._running:
             return
-        self._history.append(("Ellos", texto))
-        self._registro.append(("Ellos", texto))
+        self._oir("Ellos", texto)
         self.transcript.emit("system", texto)
         self._anotar_oido(texto)
         metricas.contar("intervenciones")
@@ -367,7 +340,7 @@ class CoachEngine(QtCore.QObject):
             return
         if pendiente:
             # Estaban hablando ahora mismo: se cierra el turno aqui.
-            self._history.append(("Ellos", texto))
+            self._oir("Ellos", texto)
             self.transcript.emit("system", texto)
             self._anotar_oido(texto)
         # Pedirla a mano manda: es una pregunta nueva aunque hubiera otra abierta.
@@ -390,11 +363,18 @@ class CoachEngine(QtCore.QObject):
                                  "para que no se confunda tu voz con la reunion.")
             return
         metricas.contar("intervenciones_tuyas")
-        self._history.append(("Yo", texto))
-        self._registro.append(("Yo", texto))
+        self._oir("Yo", texto)
         with self._hilo_lock:
             if self._hilo is not None:
                 self._hilo.tester(texto, ahora)
+
+    def _oir(self, quien, texto):
+        """Todo lo que se oye pasa por aqui: copia local, acta y conversacion
+        del coach (viaja, solo lo nuevo, en la siguiente respuesta)."""
+        self._history.append((quien, texto))
+        self._registro.append((quien, texto))
+        if self._coach is not None:
+            self._coach.anotar(quien, texto)
 
     def _anotar_oido(self, texto):
         """Guarda el ultimo turno oido y lo marca como pendiente de respuesta."""
@@ -473,39 +453,14 @@ class CoachEngine(QtCore.QObject):
             if self._running:
                 self.status.emit(f"Modelo listo ({ms / 1000:.1f} s de calentamiento).")
 
-    def _contexto(self, con_captura, latest=None):
-        """Transcripcion reciente, etiquetada por hablante.
-
-        Con captura se manda mucho mas hilo: el pantallazo suele ser una parte
-        del problema y el resto esta en lo que llevan rato contando. Se recorta
-        por el final, que es lo que mas pesa en lo que estan preguntando ahora.
-        """
-        previas = list(self._history)
-        # Lo que se responde ahora va aparte, en 'latest': si estuviera tambien
-        # aqui, el modelo lo veria dos veces.
-        if previas and latest is not None and previas[-1][1] == latest:
-            previas = previas[:-1]
-        cuantas = CONTEXTO_CAPTURA if con_captura else CONTEXTO_VOZ
-        lineas = [f"{quien}: {texto}" for quien, texto in previas[-cuantas:]]
-        if con_captura:
-            recortado, total = [], 0
-            for linea in reversed(lineas):
-                if total + len(linea) > LIMITE_CHARS_CAPTURA:
-                    break
-                recortado.append(linea)
-                total += len(linea)
-            lineas = list(reversed(recortado))
-        return "\n".join(lineas)
-
     def _respond(self, latest, images=None, note="", permitir_silencio=False):
-        # Contexto etiquetado por hablante: el modelo ve quien dijo cada cosa y sabe
-        # que respondiste tu, evitando sugerirte que repitas.
+        # El contexto ya lo lleva la conversacion del coach (todo lo oido,
+        # etiquetado por quien lo dijo, y las sugerencias anteriores).
         self._last_question = latest
         # Ese turno queda saldado: si luego llegan capturas, no se le vuelven a
         # emparejar (ver la rama de 'screenshot' en el bucle).
         if latest and latest == self._last_heard:
             self._heard_respondido = True
-        context = self._contexto(bool(images), latest)
 
         # Puerta 2: la respuesta puede empezar por el centinela, asi que no se
         # pinta nada hasta tener letras suficientes para descartarlo. Son once
@@ -557,20 +512,14 @@ class CoachEngine(QtCore.QObject):
                     self._cerrar_hilo()
                     return                  # respuesta vacia: no hay nada que pintar
                 abrir()                     # respuesta mas corta que el centinela
-            # La sugerencia entregada pasa a ser contexto. No se transcribe tu
-            # voz (seria un segundo stream), pero lo normal es que hayas dicho
-            # algo parecido a esto, y con ello el modelo deja de repetirse y
-            # puede continuar en vez de volver a empezar.
-            resumen = _resumen(estado["todo"])
-            if resumen:
-                self._history.append(("Yo (sugerido)", resumen))
+            # La sugerencia ya queda en la conversacion del coach: el modelo la
+            # da por dicha y continua desde ahi en vez de repetirse.
             # En el acta va la sugerencia ENTERA, con su codigo: es lo que luego
             # quieres releer para ver si la respuesta te sirvio de verdad.
             self._registro.append(("Sugerido", estado["todo"]))
             self.respDone.emit()
 
         self._coach.stream_response(
-            context_text=context,
             latest=latest,
             images=images,
             note=note,
