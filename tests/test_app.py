@@ -17,6 +17,7 @@ class FakeEngine(QtCore.QObject):
     partial = QtCore.Signal(str)
     noAnswer = QtCore.Signal(str)
     respStart = QtCore.Signal()
+    respRevise = QtCore.Signal()
     respDelta = QtCore.Signal(str)
     respDone = QtCore.Signal()
     status = QtCore.Signal(str)
@@ -79,8 +80,8 @@ class FakeScreen:
 
 @pytest.fixture
 def cfg():
-    return dict(config.DEFAULTS, anthropic_api_key="fake-anthropic",
-                openai_api_key="fake-openai", assemblyai_api_key="fake-stt")
+    return dict(config.DEFAULTS, openai_api_key="fake-openai",
+                assemblyai_api_key="fake-stt")
 
 
 @pytest.fixture
@@ -135,14 +136,10 @@ def badge(ui):
 
 
 class TestMeeting:
-    @pytest.mark.parametrize("provider,key,expected", [
-        ("anthropic", "anthropic_api_key", "Add your Anthropic API key in Settings (⚙) to start"),
-        ("openai", "openai_api_key", "Add your OpenAI API key in Settings (⚙) to start"),
-    ])
-    def test_missing_provider_key_blocks_start(self, ui, cfg, provider, key, expected):
-        """Catch provider validation using the other provider's credentials."""
-        cfg.update(llm_provider=provider)
-        cfg[key] = ""
+    def test_missing_openai_key_blocks_start(self, ui, cfg):
+        """Catch a live session starting without the LLM credential."""
+        cfg["openai_api_key"] = ""
+        expected = "Add your OpenAI API key in Settings (⚙) to start"
 
         ui.start_meeting()
 
@@ -152,26 +149,24 @@ class TestMeeting:
         assert ui._timer.isActive() is False
 
     @pytest.mark.parametrize("test_mode", [False, True])
-    def test_cloud_requires_stream_key(self, ui, cfg, test_mode):
-        """Catch cloud test mode bypassing the required STT credential."""
+    def test_start_requires_stream_key(self, ui, cfg, test_mode):
+        """Catch test mode bypassing the required STT credential."""
         cfg.update(assemblyai_api_key="", test_mode=test_mode)
 
         ui.start_meeting()
 
-        assert badge(ui) == "Add your AssemblyAI key in Settings (⚙), or turn on Offline mode"
+        assert badge(ui) == "Add your AssemblyAI key in Settings (⚙) to start"
         assert ui.engine.starts == []
         assert ui._running is False
 
-    @pytest.mark.parametrize("test_mode,offline,key,stt_key", [
-        (False, False, "fake-key", "fake-stt"),
-        (True, False, "", "fake-stt"),
-        (False, True, "fake-key", ""),
-        (True, True, "", ""),
+    @pytest.mark.parametrize("test_mode,key", [
+        (False, "fake-key"),
+        (True, ""),
     ])
-    def test_start_uses_reloaded_configuration(self, ui, cfg, test_mode, offline, key, stt_key):
-        """Catch cached settings or key checks blocking valid offline/test sessions."""
-        cfg.update(test_mode=test_mode, offline_mode=offline, anthropic_api_key=key,
-                   assemblyai_api_key=stt_key, language="en")
+    def test_start_uses_reloaded_configuration(self, ui, cfg, test_mode, key):
+        """Catch cached settings or key checks blocking valid live/test sessions."""
+        cfg.update(test_mode=test_mode, openai_api_key=key,
+                   assemblyai_api_key="fake-stt", language="en")
 
         ui.start_meeting()
 
@@ -229,7 +224,7 @@ class TestMeeting:
 
     def test_initialization_error_restores_idle(self, ui):
         """Catch a failed engine initialization leaving a false running UI."""
-        ui.engine.start_error = "No se pudo cargar Whisper: load failed"
+        ui.engine.start_error = "No se pudo conectar con AssemblyAI: connect failed"
 
         ui.start_meeting()
 
@@ -239,16 +234,16 @@ class TestMeeting:
 
     def test_initialization_error_stays_visible(self, ui):
         """Catch the idle reset hiding the start-up error from the user."""
-        ui.engine.start_error = "No se pudo iniciar Claude: bad key"
+        ui.engine.start_error = "No se pudo iniciar OpenAI: bad key"
 
         ui.start_meeting()
 
         assert (badge(ui), ui.panel.skip_pill.text()) == (
-            "Error", "Error: No se pudo iniciar Claude: bad key")
+            "Error", "Error: No se pudo iniciar OpenAI: bad key")
 
     def test_start_after_initialization_error_starts_engine(self, ui):
         """Catch the first Start press after a failure only stopping the UI."""
-        ui.engine.start_error = "No se pudo iniciar Claude: bad key"
+        ui.engine.start_error = "No se pudo iniciar OpenAI: bad key"
         ui.start_meeting()
         ui.engine.start_error = None
 
@@ -370,6 +365,7 @@ class TestEvents:
     @pytest.mark.parametrize("reason,expected", [
         ("model_declined", "Not a question — Alt+5 to answer"),
         ("no_question", "No question yet — Alt+5 to answer"),
+        ("follow_up", "Added to the current question — Alt+5 for a new answer"),
     ])
     def test_no_answer_explains_reason(self, ui, reason, expected):
         """Catch model refusal being indistinguishable from the lexical filter."""
@@ -437,6 +433,29 @@ class TestEvents:
         assert ui.panel._state == "listening"
         assert badge(ui) == "Listening"
 
+    def test_response_revise_rewrites_last_answer(self, ui):
+        """Catch a follow-up revision stacking a second suggestion instead of rewriting."""
+        ui.start_meeting()
+        ui.engine.respStart.emit()
+        ui.engine.respDelta.emit("First draft.")
+        ui.engine.respDone.emit()
+        first = ui.panel._burbujas[-1]
+        count = len(ui.panel._burbujas)
+        ui.engine.noAnswer.emit("follow_up")
+
+        ui.engine.respRevise.emit()
+        ui.engine.respDelta.emit("Revised draft.")
+
+        assert ui._responding is True
+        assert ui.panel._state == "generating"
+        assert badge(ui) == "Updating…"
+        assert ui.panel.skip_pill.isHidden() is True
+        assert ui.panel._burbuja_resp is first
+        assert first.actualizada is True
+        ui.engine.respDone.emit()
+        assert len(ui.panel._burbujas) == count
+        assert first._raw == "Revised draft."
+
     def test_latency_signal_updates_label(self, ui):
         """Catch STT latency signals disconnected from their displayed value."""
         ui.start_meeting()
@@ -474,6 +493,7 @@ class TestLateEvents:
         ("transcript", ("system", "late transcript")),
         ("noAnswer", ("model_declined",)),
         ("respStart", ()),
+        ("respRevise", ()),
         ("sttLatency", (500,)),
         ("e2eLatency", (800,)),
     ])
@@ -650,3 +670,13 @@ class TestWindows:
         assert ui.engine.stops == 1
         ui.engine.status.emit("Escuchando la reunion")
         assert badge(ui) == "Loading…"
+
+    def test_shutdown_disconnects_revise(self, ui):
+        """Catch a late revision repainting the panel after shutdown."""
+        ui.start_meeting()
+
+        ui.shutdown()
+        ui.engine.respRevise.emit()
+
+        assert badge(ui) == "Loading…"
+        assert ui._responding is False

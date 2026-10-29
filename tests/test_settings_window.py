@@ -155,7 +155,24 @@ def test_text_field_shows_configured_value(make_window):
     assert edit.text() == "aai-123"
 
 
-@pytest.mark.parametrize("key", ["anthropic_api_key", "openai_api_key", "assemblyai_api_key"])
+SECRET_KEYS = ["openai_api_key", "assemblyai_api_key", "typesafe_api_key"]
+EFFORT_KEYS = ["openai_effort_voice", "openai_effort_vision"]
+
+
+def _combo(win, key):
+    return _row(win, key).findChild(QtWidgets.QComboBox)
+
+
+def _combo_values(combo):
+    return [combo.itemData(i) for i in range(combo.count())]
+
+
+def _all_field_keys():
+    return [f["key"] for _sid, _ic, _label, _desc, fields in sw._schema() if fields
+            for f in fields]
+
+
+@pytest.mark.parametrize("key", SECRET_KEYS)
 def test_secret_field_masks_its_text(make_window, key):
     win = make_window()
 
@@ -165,8 +182,8 @@ def test_secret_field_masks_its_text(make_window, key):
 
 
 @pytest.mark.parametrize("key, placeholder", [
-    ("anthropic_api_key", "sk-ant-…"),
     ("openai_api_key", "sk-proj-…"),
+    ("typesafe_api_key", "apikey_…"),
 ])
 def test_secret_field_shows_placeholder(make_window, key, placeholder):
     win = make_window()
@@ -176,21 +193,40 @@ def test_secret_field_shows_placeholder(make_window, key, placeholder):
     assert edit.placeholderText() == placeholder
 
 
-def test_select_shows_label_of_configured_value(make_window):
-    win = make_window(anthropic_model_voice="claude-opus-4-8")
+@pytest.mark.parametrize("key, value, label", [
+    ("openai_effort_voice", "high", "high — el más profundo, tarda más"),
+    ("openai_effort_vision", "low", "low — el más rápido"),
+])
+def test_select_shows_label_of_configured_value(make_window, key, value, label):
+    win = make_window(**{key: value})
 
-    combo = _row(win, "anthropic_model_voice").findChild(QtWidgets.QComboBox)
+    assert _combo(win, key).currentText() == label
 
-    assert combo.currentText() == "Claude Opus 4.8 — el más capaz"
+
+@pytest.mark.parametrize("key", EFFORT_KEYS)
+def test_effort_select_offers_low_medium_high(make_window, key):
+    win = make_window()
+
+    assert _combo_values(_combo(win, key)) == ["low", "medium", "high"]
+
+
+@pytest.mark.parametrize("key", ["openai_model", "openai_model_voice", "openai_model_vision"])
+def test_no_model_selector(key):
+    assert key not in _all_field_keys()
+
+
+def test_no_provider_selector():
+    assert not any(k == "llm_provider" or k.startswith("anthropic_")
+                   for k in _all_field_keys())
 
 
 @pytest.mark.parametrize("section, key, value, expected", [
-    ("Conexión", "anthropic_tokens_voice", 400, "400 tok"),
+    ("Conexión", "openai_tokens_voice", 400, "400 tok"),
+    ("Conexión", "openai_tokens_vision", 2500, "2500 tok"),
     ("Conexión", "end_of_turn_threshold", 0.4, "0.40"),
     ("Overlay", "window_opacity", 0.65, "0.65"),
     ("Sensibilidad de audio", "gain_mic", 2.5, "2.5x"),
     ("Detección de frases", "silence_hang", 0.7, "0.7 s"),
-    ("Detección de frases", "max_utterance", 8.0, "8 s"),
 ])
 def test_number_field_displays_formatted_value(qtbot, make_window, section, key, value,
                                                expected):
@@ -202,93 +238,63 @@ def test_number_field_displays_formatted_value(qtbot, make_window, section, key,
     assert shown == expected
 
 
-def test_speech_threshold_displays_default_value(qtbot, make_window):
-    win = make_window(speech_threshold=0.012)
-    _goto(qtbot, win, "Sensibilidad de audio")
-
-    shown = [lab.text() for lab in _labels(_row(win, "speech_threshold"))][-1]
-
-    assert shown == "0.012"
-
-
-def _threshold_slider(qtbot, win):
-    _goto(qtbot, win, "Sensibilidad de audio")
-    return _row(win, "speech_threshold").findChild(QtWidgets.QSlider)
-
-
-@pytest.mark.parametrize("end, expected", [("minimum", 0.002), ("maximum", 0.1)])
-def test_speech_threshold_slider_ends_stay_in_declared_range(qtbot, make_window,
-                                                             end, expected):
-    win = make_window(speech_threshold=0.012)
-    slider = _threshold_slider(qtbot, win)
-
-    slider.setValue(getattr(slider, end)())
-
-    assert round(win.values["speech_threshold"], 6) == expected
-
-
-def test_speech_threshold_nudge_round_trip_keeps_default(qtbot, make_window):
-    win = make_window(speech_threshold=0.012)
-    slider = _threshold_slider(qtbot, win)
-
-    slider.setValue(slider.value() + 1)
-    slider.setValue(slider.value() - 1)
-
-    assert round(win.values["speech_threshold"], 6) == 0.012
-
-
 @pytest.mark.parametrize("value", [True, False])
 def test_toggle_field_reflects_configured_value(qtbot, make_window, value):
-    win = make_window(offline_mode=value)
-    _goto(qtbot, win, "Modo offline")
+    win = make_window(listen_mic=value)
+    _goto(qtbot, win, "Sensibilidad de audio")
 
-    switch = _row(win, "offline_mode").findChild(sw.ToggleSwitch)
+    switch = _row(win, "listen_mic").findChild(sw.ToggleSwitch)
 
     assert switch.isChecked() is value
 
 
-# ================================================================== provider visibility
-@pytest.mark.parametrize("provider, key, expected", [
-    ("anthropic", "anthropic_api_key", True),
-    ("anthropic", "anthropic_model_vision", True),
-    ("anthropic", "openai_api_key", False),
-    ("anthropic", "openai_tokens_voice", False),
-    ("openai", "openai_api_key", True),
-    ("openai", "openai_model_vision", True),
-    ("openai", "anthropic_api_key", False),
-    ("openai", "anthropic_tokens_vision", False),
-])
-def test_provider_rows_follow_configured_provider(make_window, provider, key, expected):
-    win = make_window(llm_provider=provider)
+# ================================================================== conditional rows
+@pytest.fixture
+def conditional_row(monkeypatch):
+    """Make ``gain_mic`` visible only while ``listen_mic`` is on.
 
-    assert _row(win, key).isVisibleTo(win) is expected
+    No current field uses ``visible_si``; the generic mechanism is exercised
+    by adding the condition to a copy of the real schema.
+    """
+    real_schema = sw._schema
+
+    def schema():
+        sections = real_schema()
+        for _sid, _ic, _label, _desc, fields in sections:
+            for f in fields or []:
+                if f["key"] == "gain_mic":
+                    f["visible_si"] = ("listen_mic", True)
+        return sections
+
+    monkeypatch.setattr(sw, "_schema", schema)
 
 
-@pytest.mark.parametrize("key, expected", [
-    ("anthropic_api_key", False),
-    ("anthropic_model_voice", False),
-    ("openai_api_key", True),
-    ("openai_tokens_vision", True),
-    ("assemblyai_api_key", True),
-    ("language", True),
-])
-def test_switching_provider_updates_row_visibility(make_window, key, expected):
-    win = make_window(llm_provider="anthropic")
-    combo = _row(win, "llm_provider").findChild(QtWidgets.QComboBox)
+@pytest.mark.parametrize("listen, expected", [(True, True), (False, False)])
+def test_conditional_row_follows_configured_value(qtbot, make_window, conditional_row,
+                                                  listen, expected):
+    win = make_window(listen_mic=listen)
+    _goto(qtbot, win, "Sensibilidad de audio")
 
-    combo.setCurrentIndex(combo.findData("openai"))
+    assert _row(win, "gain_mic").isVisibleTo(win) is expected
 
-    assert _row(win, key).isVisibleTo(win) is expected
+
+def test_conditional_row_hides_when_condition_changes(qtbot, make_window, conditional_row):
+    win = make_window(listen_mic=True)
+    _goto(qtbot, win, "Sensibilidad de audio")
+
+    qtbot.mouseClick(_row(win, "listen_mic").findChild(sw.ToggleSwitch), LEFT)
+
+    assert _row(win, "gain_mic").isVisibleTo(win) is False
 
 
 # ================================================================== saving
-@pytest.mark.parametrize("provider, key, value", [
-    ("anthropic", "anthropic_api_key", "sk-ant-typed"),
-    ("openai", "openai_api_key", "sk-proj-typed"),
-    ("anthropic", "assemblyai_api_key", "aai-typed"),
+@pytest.mark.parametrize("key, value", [
+    ("openai_api_key", "sk-proj-typed"),
+    ("assemblyai_api_key", "aai-typed"),
+    ("typesafe_api_key", "apikey_typed"),
 ])
-def test_saved_secret_round_trips_through_config(qtbot, make_window, provider, key, value):
-    win = make_window(llm_provider=provider)
+def test_saved_secret_round_trips_through_config(qtbot, make_window, key, value):
+    win = make_window()
     _row(win, key).findChild(QtWidgets.QLineEdit).setText(value)
 
     _save(qtbot, win)
@@ -296,13 +302,18 @@ def test_saved_secret_round_trips_through_config(qtbot, make_window, provider, k
     assert config.load_config()[key] == value
 
 
-def test_saved_secret_is_not_written_in_plaintext(qtbot, make_window, isolated_data_dir):
+@pytest.mark.parametrize("key, value", [
+    ("openai_api_key", "sk-proj-typed"),
+    ("typesafe_api_key", "apikey_typed"),
+])
+def test_saved_secret_is_not_written_in_plaintext(qtbot, make_window, isolated_data_dir,
+                                                  key, value):
     win = make_window()
-    _row(win, "anthropic_api_key").findChild(QtWidgets.QLineEdit).setText("sk-ant-typed")
+    _row(win, key).findChild(QtWidgets.QLineEdit).setText(value)
 
     _save(qtbot, win)
 
-    assert "sk-ant-typed" not in (isolated_data_dir / "config.json").read_text(encoding="utf-8")
+    assert value not in (isolated_data_dir / "config.json").read_text(encoding="utf-8")
 
 
 def test_text_field_saves_stripped_value(qtbot, make_window):
@@ -314,35 +325,34 @@ def test_text_field_saves_stripped_value(qtbot, make_window):
     assert config.load_config()["assemblyai_api_key"] == "aai-1"
 
 
-def test_select_change_is_saved(qtbot, make_window):
+@pytest.mark.parametrize("key", EFFORT_KEYS)
+def test_select_change_is_saved(qtbot, make_window, key):
+    win = make_window(**{key: "low"})
+    combo = _combo(win, key)
+    combo.setCurrentIndex(combo.findData("high"))
+
+    _save(qtbot, win)
+
+    assert config.load_config()[key] == "high"
+
+
+def test_fixed_model_is_kept_on_save(qtbot, make_window):
     win = make_window()
-    _goto(qtbot, win, "Modo offline")
-    combo = _row(win, "whisper_size").findChild(QtWidgets.QComboBox)
-    combo.setCurrentIndex(combo.findData("small"))
 
     _save(qtbot, win)
 
-    assert config.load_config()["whisper_size"] == "small"
+    assert config.load_config()["openai_model"] == "gpt-6.1-sol"
 
 
-def test_provider_change_is_saved(qtbot, make_window):
-    win = make_window(llm_provider="anthropic")
-    combo = _row(win, "llm_provider").findChild(QtWidgets.QComboBox)
-    combo.setCurrentIndex(combo.findData("openai"))
-
-    _save(qtbot, win)
-
-    assert config.load_config()["llm_provider"] == "openai"
-
-
-def test_toggle_click_is_saved(qtbot, make_window):
-    win = make_window(offline_mode=False)
-    _goto(qtbot, win, "Modo offline")
-    qtbot.mouseClick(_row(win, "offline_mode").findChild(sw.ToggleSwitch), LEFT)
+@pytest.mark.parametrize("start", [True, False])
+def test_toggle_click_is_saved(qtbot, make_window, start):
+    win = make_window(listen_mic=start)
+    _goto(qtbot, win, "Sensibilidad de audio")
+    qtbot.mouseClick(_row(win, "listen_mic").findChild(sw.ToggleSwitch), LEFT)
 
     _save(qtbot, win)
 
-    assert config.load_config()["offline_mode"] is True
+    assert config.load_config()["listen_mic"] is (not start)
 
 
 @pytest.mark.parametrize("position, expected", [(0, 0.15), (17, 1.0), (7, 0.5)])
@@ -559,8 +569,8 @@ def test_title_bar_drag_moves_window(make_window):
 
 # ================================================================== navigation
 @pytest.mark.parametrize("label", [
-    "Modo offline", "Overlay", "Sensibilidad de audio", "Detección de frases", "Coach",
-    "Contexts", "Conexión",
+    "Overlay", "Sensibilidad de audio", "Detección de frases", "Coach", "Contexts",
+    "Conexión",
 ])
 def test_nav_click_shows_section(qtbot, make_window, label):
     win = make_window()

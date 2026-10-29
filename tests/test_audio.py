@@ -1,190 +1,18 @@
-"""Tests for audio: the energy segmenter, WASAPI device picking and AudioEngine.
+"""Tests for audio: WASAPI device picking and AudioEngine capture.
 
-PyAudio/WASAPI and the clock are the only boundaries replaced. Capture loops
-run in the test thread (``_capture`` called directly) with a fake stream that
-yields scripted int16 blocks and then raises, which ends the loop.
+PyAudio/WASAPI and the clock are the only boundaries replaced; resampling runs
+through the real soxr. Capture loops run in the test thread (``_capture``
+called directly) with a fake stream that yields scripted int16 blocks and then
+raises, which ends the loop.
 """
 import threading
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import soxr
 
 import audio
-
-# ---------------------------------------------------------------------------
-# Segmenter helpers. Blocks of 1600 samples = 0.1 s at 16 kHz.
-# Parameters chosen so every threshold is an exact sample count:
-#   silence_hang 0.5 s -> 8000 samples (5 blocks)
-#   min_speech  0.25 s -> 4000 samples (3 speech blocks pass, 2 do not)
-#   max_utt      1.0 s -> 16000 samples (10 blocks)
-#   preroll     0.25 s -> 4000 samples
-# ---------------------------------------------------------------------------
-BLOCK = 1600
-SEG_PARAMS = dict(speech_thresh=0.012, silence_hang=0.5, min_speech=0.25,
-                  max_utt=1.0, preroll=0.25)
-
-
-def speech(n=BLOCK):
-    """Constant-amplitude block, RMS 0.5 (well above the threshold)."""
-    return np.full(n, 0.5, dtype=np.float32)
-
-
-def silence(n=BLOCK):
-    return np.zeros(n, dtype=np.float32)
-
-
-def feed(segmenter, *blocks):
-    for block in blocks:
-        segmenter.process(block)
-
-
-def blocks(factory, count):
-    return [factory() for _ in range(count)]
-
-
-class UtteranceSink:
-    def __init__(self):
-        self.calls = []
-
-    def __call__(self, utt, reason):
-        self.calls.append((utt, reason))
-
-
-@pytest.fixture
-def sink():
-    return UtteranceSink()
-
-
-@pytest.fixture
-def seg(sink):
-    return audio._Segmenter(sink, **SEG_PARAMS)
-
-
-# --- _Segmenter -------------------------------------------------------------
-
-def test_segmenter_emits_after_silence_hang(seg, sink):
-    feed(seg, *blocks(speech, 3), *blocks(silence, 5))
-
-    assert [reason for _, reason in sink.calls] == ["silence"]
-
-
-def test_segmenter_waits_for_full_silence_hang(seg, sink):
-    feed(seg, *blocks(speech, 3), *blocks(silence, 4))
-
-    assert sink.calls == []
-
-
-def test_segmenter_utterance_contains_speech_plus_trailing_silence(seg, sink):
-    # 3 x 1600 speech + 5 x 1600 silence = 12800 samples
-    feed(seg, *blocks(speech, 3), *blocks(silence, 5))
-
-    assert [utt.size for utt, _ in sink.calls] == [12800]
-
-
-def test_segmenter_utterance_is_float32(seg, sink):
-    feed(seg, *blocks(speech, 3), *blocks(silence, 5))
-
-    assert sink.calls[0][0].dtype == np.float32
-
-
-def test_segmenter_cuts_at_max_utt_with_maxlen_reason(seg, sink):
-    feed(seg, *blocks(speech, 10))
-
-    assert [(utt.size, reason) for utt, reason in sink.calls] == [(16000, "maxlen")]
-
-
-def test_segmenter_does_not_cut_before_max_utt(seg, sink):
-    feed(seg, *blocks(speech, 9))
-
-    assert sink.calls == []
-
-
-def test_segmenter_discards_utterance_shorter_than_min_speech(seg, sink):
-    # 2 x 1600 = 3200 speech samples < 4000
-    feed(seg, *blocks(speech, 2), *blocks(silence, 5))
-
-    assert sink.calls == []
-
-
-def test_segmenter_ignores_audio_below_threshold(seg, sink):
-    quiet = np.full(BLOCK, 0.01, dtype=np.float32)  # RMS 0.01 < 0.012
-
-    feed(seg, *[quiet] * 20)
-
-    assert sink.calls == []
-
-
-def test_segmenter_prepends_preroll_before_speech_onset(seg, sink):
-    # Preroll keeps the last 4000 samples including the triggering block:
-    # 2400 zeros of prior silence + 1600 speech. Total 4000 + 3200 + 8000.
-    feed(seg, *blocks(silence, 3), *blocks(speech, 3), *blocks(silence, 5))
-
-    assert int(np.flatnonzero(sink.calls[0][0])[0]) == 2400
-
-
-def test_segmenter_preroll_counts_toward_utterance_length(seg, sink):
-    feed(seg, *blocks(silence, 3), *blocks(speech, 3), *blocks(silence, 5))
-
-    assert sink.calls[0][0].size == 15200
-
-
-def test_segmenter_resets_after_emitting(seg, sink):
-    utterance = [*blocks(speech, 3), *blocks(silence, 5)]
-
-    feed(seg, *utterance, *utterance)
-
-    assert [utt.size for utt, _ in sink.calls] == [12800, 12800]
-
-
-def test_segmenter_resets_after_discarding_short_utterance(seg, sink):
-    feed(seg, *blocks(speech, 2), *blocks(silence, 5),
-         *blocks(speech, 3), *blocks(silence, 5))
-
-    assert [utt.size for utt, _ in sink.calls] == [12800]
-
-
-def test_segmenter_starts_new_utterance_after_maxlen_cut(seg, sink):
-    feed(seg, *blocks(speech, 10), *blocks(speech, 3), *blocks(silence, 5))
-
-    assert [reason for _, reason in sink.calls] == ["maxlen", "silence"]
-
-
-def test_segmenter_swallows_callback_exception():
-    attempts = []
-
-    def failing(utt, reason):
-        attempts.append(reason)
-        raise ValueError("consumer failed")
-
-    seg = audio._Segmenter(failing, **SEG_PARAMS)
-    utterance = [*blocks(speech, 3), *blocks(silence, 5)]
-
-    feed(seg, *utterance, *utterance)
-
-    assert attempts == ["silence", "silence"]
-
-
-@pytest.mark.xfail(strict=True, reason="[KNOWN-301] preroll=0 keeps the whole "
-                   "silence history ([-0:] slice) instead of no pre-roll")
-def test_segmenter_without_preroll_starts_at_speech_onset(sink):
-    seg = audio._Segmenter(sink, **{**SEG_PARAMS, "preroll": 0.0})
-
-    feed(seg, *blocks(silence, 3), *blocks(speech, 3), *blocks(silence, 5))
-
-    assert int(np.flatnonzero(sink.calls[0][0])[0]) == 0
-
-
-@pytest.mark.xfail(strict=True, reason="[KNOWN-302] a block longer than the "
-                   "pre-roll window loses its start: speech onset is cut")
-def test_segmenter_keeps_whole_trigger_block_longer_than_preroll(sink):
-    # preroll 0.05 s = 800 samples, trigger block 1600 samples of speech.
-    seg = audio._Segmenter(sink, **{**SEG_PARAMS, "preroll": 0.05})
-
-    feed(seg, *blocks(speech, 3), *blocks(silence, 5))
-
-    assert int(np.count_nonzero(sink.calls[0][0])) == 4800
-
 
 # ---------------------------------------------------------------------------
 # Fake PyAudio (WASAPI boundary)
@@ -280,6 +108,17 @@ def pcm(value, frames=1024):
     return np.full(frames, value, dtype=np.int16).tobytes()
 
 
+def sine_int16(rate, reads, freq=440.0, amplitude=0.25, frames=1024):
+    """Mono int16 sine spanning ``reads`` blocks of ``frames`` at ``rate``."""
+    t = np.arange(reads * frames) / rate
+    return np.round(amplitude * np.sin(2 * np.pi * freq * t) * 32767).astype(np.int16)
+
+
+def split_reads(samples, frames=1024):
+    """Split an int16 signal into the byte blocks one stream.read() returns."""
+    return [samples[i:i + frames].tobytes() for i in range(0, samples.size, frames)]
+
+
 def stereo_pcm(left, right, frames=1024):
     """Interleaved 2-channel int16 block."""
     data = np.empty(frames * 2, dtype=np.int16)
@@ -334,12 +173,9 @@ class EngineSink:
     def __init__(self):
         self.sys_levels = []
         self.mic_levels = []
-        self.utterances = []
         self.statuses = []
         self.pcm = []
-
-    def utterance(self, audio_block, source, reason):
-        self.utterances.append((source, reason, audio_block.size))
+        self.mic_pcm = []
 
 
 class Clock:
@@ -367,9 +203,15 @@ def es():
     return EngineSink()
 
 
-def make_engine(es, **kwargs):
+def make_engine(es, on_system_pcm=None, **kwargs):
+    """Engine wired to ``es``; system PCM goes to ``es.pcm`` unless overridden.
+
+    The mic is level-only unless the test passes ``on_mic_pcm``.
+    """
+    if on_system_pcm is None:
+        on_system_pcm = es.pcm.append
     return audio.AudioEngine(es.sys_levels.append, es.mic_levels.append,
-                             es.utterance, es.statuses.append, **kwargs)
+                             es.statuses.append, on_system_pcm, **kwargs)
 
 
 def run_capture(engine, p, device, is_loopback):
@@ -438,17 +280,81 @@ def test_stereo_input_is_downmixed_to_mono(clock, es):
     assert es.sys_levels == [37]
 
 
-# --- system audio routing ---------------------------------------------------
+# --- PCM forwarding at 16 kHz ----------------------------------------------
+# One soxr.ResampleStream per capture holds back its filter delay (~35 ms of
+# output) and may return an empty block for a read; only non-empty blocks are
+# forwarded. Totals are therefore checked against the ideal length minus at
+# most FILTER_DELAY output samples.
+FILTER_DELAY = 1024     # 16 kHz samples (64 ms): generous bound on held-back audio
 
-def test_system_pcm_forwarded_at_16k(clock, es):
-    # 1024 frames at 32 kHz -> 512 samples at 16 kHz
-    engine = make_engine(es, on_system_pcm=es.pcm.append)
-    device = {**SPEAKERS_LB, "defaultSampleRate": 32000.0}
+
+def forwarded(blocks):
+    return np.concatenate(blocks) if blocks else np.zeros(0, dtype=np.float32)
+
+
+@pytest.mark.parametrize("rate", [32000, 44100, 48000])
+def test_system_pcm_forwarded_at_16k(clock, es, rate):
+    reads = 20
+    engine = make_engine(es)
+    device = {**SPEAKERS_LB, "defaultSampleRate": float(rate)}
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * reads)])
+
+    run_capture(engine, p, device, True)
+
+    expected = reads * 1024 * 16000 / rate
+    assert expected - FILTER_DELAY <= forwarded(es.pcm).size <= expected
+
+
+def test_system_pcm_blocks_are_non_empty_float32(clock, es):
+    engine = make_engine(es)
+    device = {**SPEAKERS_LB, "defaultSampleRate": 48000.0}
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 20)])
+
+    run_capture(engine, p, device, True)
+
+    assert es.pcm and all(b.dtype == np.float32 and b.size > 0 for b in es.pcm)
+
+
+def test_empty_resampler_output_is_not_forwarded(clock, es):
+    # The first read only fills the resampler's filter delay: nothing to send.
+    engine = make_engine(es)
+    device = {**SPEAKERS_LB, "defaultSampleRate": 48000.0}
     p = FakePyAudio(streams=[FakeStream([pcm(8192)])])
 
     run_capture(engine, p, device, True)
 
-    assert [(b.dtype, b.shape) for b in es.pcm] == [(np.float32, (512,))]
+    assert (es.sys_levels, es.pcm) == ([75], [])
+
+
+def test_system_pcm_matches_one_shot_resampling(clock, es):
+    # Many 1024-frame reads through one stream must equal resampling the whole
+    # signal at once: no seams at read boundaries, no drift.
+    rate = 48000
+    samples = sine_int16(rate, reads=60)
+    engine = make_engine(es)
+    device = {**SPEAKERS_LB, "defaultSampleRate": float(rate)}
+    p = FakePyAudio(streams=[FakeStream(split_reads(samples))])
+
+    run_capture(engine, p, device, True)
+
+    reference = soxr.resample(samples.astype(np.float32) / 32768.0, rate, 16000)
+    got = forwarded(es.pcm)
+    edge = 256
+    assert got.size > reference.size - FILTER_DELAY
+    assert np.max(np.abs(got[edge:-edge] - reference[edge:got.size - edge])) < 1e-3
+
+
+def test_system_pcm_gain_applied_before_forwarding(clock, es):
+    rate = 48000
+    samples = sine_int16(rate, reads=20, amplitude=0.1)
+    engine = make_engine(es, gain_system=2.0)
+    device = {**SPEAKERS_LB, "defaultSampleRate": float(rate)}
+    p = FakePyAudio(streams=[FakeStream(split_reads(samples))])
+
+    run_capture(engine, p, device, True)
+
+    peak = float(np.max(np.abs(forwarded(es.pcm))))
+    assert peak == pytest.approx(0.2, abs=0.01)
 
 
 def test_system_pcm_callback_exception_is_swallowed(clock, es):
@@ -456,86 +362,87 @@ def test_system_pcm_callback_exception_is_swallowed(clock, es):
         raise ValueError("stream consumer failed")
 
     engine = make_engine(es, on_system_pcm=failing)
-    p = FakePyAudio(streams=[FakeStream([pcm(8192), pcm(8192)])])
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 3)])
 
     run_capture(engine, p, SPEAKERS_LB, True)
 
-    assert es.sys_levels == [75, 75]
+    assert es.sys_levels == [75, 75, 75]
 
 
-def speech_then_silence():
-    """8 loud blocks (8192 speech samples >= 6400) then 11 silent blocks
-    (11264 >= 0.7 s * 16000 = 11200): one utterance of 19456 samples."""
-    return [pcm(8192)] * 8 + [pcm(0)] * 11
-
-
-def test_system_audio_segmented_into_utterance(clock, es):
-    engine = make_engine(es)
-    p = FakePyAudio(streams=[FakeStream(speech_then_silence())])
+def test_loopback_audio_not_sent_to_mic_feed(clock, es):
+    engine = make_engine(es, on_mic_pcm=es.mic_pcm.append)
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 5)])
 
     run_capture(engine, p, SPEAKERS_LB, True)
 
-    assert es.utterances == [("system", "silence", 19456)]
+    assert es.pcm and es.mic_pcm == []
 
 
-def test_system_segmentation_disabled_emits_nothing(clock, es):
-    engine = make_engine(es, segment_system=False)
-    p = FakePyAudio(streams=[FakeStream(speech_then_silence())])
+# --- mic feed ----------------------------------------------------------------
 
-    run_capture(engine, p, SPEAKERS_LB, True)
+@pytest.mark.parametrize("rate", [16000, 48000])
+def test_mic_pcm_forwarded_at_16k_when_requested(clock, es, rate):
+    reads = 20
+    engine = make_engine(es, on_mic_pcm=es.mic_pcm.append)
+    device = {**MIC, "defaultSampleRate": float(rate)}
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * reads)])
 
-    assert es.utterances == []
+    run_capture(engine, p, device, False)
+
+    expected = reads * 1024 * 16000 / rate
+    assert expected - FILTER_DELAY <= forwarded(es.mic_pcm).size <= expected
 
 
-def test_mic_not_segmented_by_default(clock, es):
-    engine = make_engine(es)
-    p = FakePyAudio(streams=[FakeStream(speech_then_silence())])
+def test_mic_pcm_matches_one_shot_resampling(clock, es):
+    rate = 48000
+    samples = sine_int16(rate, reads=60, freq=300.0)
+    engine = make_engine(es, on_mic_pcm=es.mic_pcm.append)
+    device = {**MIC, "defaultSampleRate": float(rate)}
+    p = FakePyAudio(streams=[FakeStream(split_reads(samples))])
+
+    run_capture(engine, p, device, False)
+
+    reference = soxr.resample(samples.astype(np.float32) / 32768.0, rate, 16000)
+    got = forwarded(es.mic_pcm)
+    edge = 256
+    assert got.size > reference.size - FILTER_DELAY
+    assert np.max(np.abs(got[edge:-edge] - reference[edge:got.size - edge])) < 1e-3
+
+
+def test_mic_level_reported_while_forwarding(clock, es):
+    engine = make_engine(es, on_mic_pcm=es.mic_pcm.append)
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 3)])
 
     run_capture(engine, p, MIC, False)
 
-    assert es.utterances == []
+    assert es.mic_levels == [75, 75, 75]
 
 
-# --- mic echo gate ----------------------------------------------------------
+def test_mic_audio_not_sent_to_system_feed(clock, es):
+    engine = make_engine(es, on_mic_pcm=es.mic_pcm.append)
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 5)])
 
-def run_system_then_mic(engine, clock, mic_time):
-    """Loud system block at t=100.0 (echo window until 100.25), then the mic."""
-    clock.now = 100.0
-    run_capture(engine, FakePyAudio(streams=[FakeStream([pcm(8192)])]),
-                SPEAKERS_LB, True)
-    clock.now = mic_time
-    run_capture(engine, FakePyAudio(streams=[FakeStream(speech_then_silence())]),
-                MIC, False)
+    run_capture(engine, p, MIC, False)
+
+    assert es.mic_pcm and es.pcm == []
 
 
-def test_mic_segmentation_suppressed_while_system_active(clock, es):
-    engine = make_engine(es, capture_mic_utterances=True, segment_system=False)
+def test_mic_level_only_without_mic_feed(clock, es):
+    engine = make_engine(es)
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 5)])
 
-    run_system_then_mic(engine, clock, mic_time=100.1)
+    run_capture(engine, p, MIC, False)
 
-    assert es.utterances == []
-
-
-@pytest.mark.parametrize("mic_echo_gate, mic_time", [
-    (True, 100.5),    # echo window already expired
-    (False, 100.1),   # gate disabled
-])
-def test_mic_segmentation_runs_outside_echo_gate(clock, es, mic_echo_gate,
-                                                  mic_time):
-    engine = make_engine(es, capture_mic_utterances=True, segment_system=False,
-                         mic_echo_gate=mic_echo_gate)
-
-    run_system_then_mic(engine, clock, mic_time)
-
-    assert es.utterances == [("mic", "silence", 19456)]
+    assert (es.mic_levels, es.pcm) == ([75] * 5, [])
 
 
-def test_mic_level_reported_while_echo_gated(clock, es):
-    engine = make_engine(es, capture_mic_utterances=True, segment_system=False)
+def test_mic_pcm_callback_exception_is_swallowed(clock, es):
+    engine = make_engine(es, on_mic_pcm=failing_pcm)
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 3)])
 
-    run_system_then_mic(engine, clock, mic_time=100.1)
+    run_capture(engine, p, MIC, False)
 
-    assert len(es.mic_levels) == 19
+    assert es.mic_levels == [75, 75, 75]
 
 
 # --- stream open / status ---------------------------------------------------
@@ -718,8 +625,9 @@ def test_stop_warns_while_thread_blocked(clock, es, pyaudio_factory, release):
 
 # --- logging of swallowed failures (ERR-005) ---------------------------------
 
-PCM_FEED_LOG = ("Live transcription feed failed; further failures in this "
-                "session are not logged")
+def pcm_feed_log(feed):
+    return (f"Live transcription feed failed ({feed}); further failures of this "
+            "feed in this session are not logged")
 
 
 def failing_pcm(block):
@@ -730,36 +638,50 @@ def messages(caplog):
     return [record.getMessage() for record in caplog.records]
 
 
-def test_segmenter_callback_failure_is_logged(caplog):
-    def failing(utt, reason):
-        raise ValueError("consumer failed")
-
-    seg = audio._Segmenter(failing, **SEG_PARAMS)
-
-    feed(seg, *blocks(speech, 3), *blocks(silence, 5))
-
-    assert [(r.name, r.levelname, r.exc_info[0]) for r in caplog.records] == [
-        ("armony.audio", "ERROR", ValueError)]
-
-
 def test_system_pcm_failure_is_logged_once_per_session(clock, es, caplog):
     engine = make_engine(es, on_system_pcm=failing_pcm)
     p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 3)])
 
     run_capture(engine, p, SPEAKERS_LB, True)
 
-    assert messages(caplog).count(PCM_FEED_LOG) == 1
+    assert messages(caplog).count(pcm_feed_log("sistema")) == 1
+
+
+def test_mic_pcm_failure_is_logged_once_per_session(clock, es, caplog):
+    # 48 kHz mic: several reads return resampled audio, each one fails.
+    engine = make_engine(es, on_mic_pcm=failing_pcm)
+    device = {**MIC, "defaultSampleRate": 48000.0}
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 10)])
+
+    run_capture(engine, p, device, False)
+
+    assert [(r.getMessage(), r.levelname) for r in caplog.records] == [
+        (pcm_feed_log("microfono"), "ERROR"),
+        ("Capture read failed on microfono device; capture stopped", "WARNING")]
+
+
+def test_a_failing_meeting_feed_does_not_hide_a_failing_mic_feed(clock, es, caplog):
+    engine = make_engine(es, on_system_pcm=failing_pcm, on_mic_pcm=failing_pcm)
+    run_capture(engine, FakePyAudio(streams=[FakeStream([pcm(8192)] * 3)]),
+                SPEAKERS_LB, True)
+    device = {**MIC, "defaultSampleRate": 48000.0}
+    run_capture(engine, FakePyAudio(streams=[FakeStream([pcm(8192)] * 10)]),
+                device, False)
+
+    logged = messages(caplog)
+    assert logged.count(pcm_feed_log("sistema")) == 1
+    assert logged.count(pcm_feed_log("microfono")) == 1
 
 
 def test_start_rearms_system_pcm_failure_log(clock, es, pyaudio_factory):
     pyaudio_factory.next = FakePyAudio(loopbacks=())
     engine = make_engine(es, on_system_pcm=failing_pcm)
-    engine._pcm_error_logged = True
+    engine._pcm_error_logged = {"sistema", "microfono"}
 
     engine.start()
     engine.stop()
 
-    assert engine._pcm_error_logged is False
+    assert engine._pcm_error_logged == set()
 
 
 def test_capture_read_failure_is_logged(clock, es, caplog):

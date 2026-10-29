@@ -29,12 +29,14 @@ def _read_raw_config():
 # --- load_config: defaults, merge, corruption ------------------------------------
 
 @pytest.mark.parametrize("key, expected", [
-    ("llm_provider", "anthropic"),
-    ("anthropic_api_key", ""),
-    ("anthropic_tokens_voice", 400),
-    ("openai_model_voice", "gpt-5.6-terra"),
+    ("openai_api_key", ""),
+    ("openai_model", "gpt-6.1-sol"),
+    ("openai_effort_voice", "low"),
+    ("openai_effort_vision", "medium"),
+    ("openai_tokens_voice", 400),
+    ("typesafe_api_key", ""),
+    ("listen_mic", True),
     ("language", "es"),
-    ("offline_mode", False),
     ("window_opacity", 0.65),
 ])
 def test_load_config_without_file_returns_defaults(key, expected):
@@ -59,8 +61,8 @@ def test_load_config_returns_independent_copy_of_defaults():
 @pytest.mark.parametrize("key, expected", [
     ("language", "en"),           # overridden by the file
     ("window_opacity", 0.9),      # overridden by the file
-    ("llm_provider", "anthropic"),  # missing from the file: default kept
-    ("anthropic_tokens_vision", 2500),
+    ("openai_model", "gpt-6.1-sol"),   # missing from the file: default kept
+    ("openai_tokens_vision", 2500),
 ])
 def test_load_config_merges_partial_file_over_defaults(key, expected):
     _write_config({"language": "en", "window_opacity": 0.9})
@@ -107,15 +109,15 @@ def test_load_config_with_non_object_json_falls_back_to_defaults(content):
 # --- load_config: secrets ----------------------------------------------------------
 
 def test_load_config_decrypts_protected_key():
-    _write_config({"anthropic_api_key": secretstore.proteger("sk-ant-123")})
+    _write_config({"openai_api_key": secretstore.proteger("sk-openai-123")})
 
     cfg = config.load_config()
 
-    assert cfg["anthropic_api_key"] == "sk-ant-123"
+    assert cfg["openai_api_key"] == "sk-openai-123"
 
 
-@pytest.mark.parametrize("key", ["anthropic_api_key", "openai_api_key",
-                                 "assemblyai_api_key"])
+@pytest.mark.parametrize("key", ["openai_api_key", "assemblyai_api_key",
+                                 "typesafe_api_key"])
 def test_load_config_decrypts_every_secret_key(key):
     _write_config({key: secretstore.proteger("secret-value")})
 
@@ -133,11 +135,11 @@ def test_load_config_keeps_legacy_plaintext_key():
 
 
 def test_load_config_blanks_undecryptable_key():
-    _write_config({"anthropic_api_key": "dpapi:Z2FyYmFnZSBieXRlcyBoZXJl"})
+    _write_config({"openai_api_key": "dpapi:Z2FyYmFnZSBieXRlcyBoZXJl"})
 
     cfg = config.load_config()
 
-    assert cfg["anthropic_api_key"] == ""
+    assert cfg["openai_api_key"] == ""
 
 
 # --- save_config -------------------------------------------------------------------
@@ -149,15 +151,15 @@ def test_save_config_returns_true_on_success():
 
 
 def test_save_config_writes_secret_with_dpapi_prefix():
-    config.save_config({"anthropic_api_key": "sk-ant-secret"})
+    config.save_config({"openai_api_key": "sk-openai-secret"})
 
-    assert '"anthropic_api_key": "dpapi:' in _read_raw_config()
+    assert '"openai_api_key": "dpapi:' in _read_raw_config()
 
 
 def test_save_config_does_not_write_plaintext_secret():
-    config.save_config({"anthropic_api_key": "sk-ant-secret"})
+    config.save_config({"typesafe_api_key": "apikey_secret"})
 
-    assert "sk-ant-secret" not in _read_raw_config()
+    assert "apikey_secret" not in _read_raw_config()
 
 
 def test_save_config_writes_empty_secret_as_empty_string():
@@ -167,11 +169,11 @@ def test_save_config_writes_empty_secret_as_empty_string():
 
 
 def test_save_config_does_not_mutate_caller_dict():
-    cfg = {"anthropic_api_key": "sk-ant-secret"}
+    cfg = {"openai_api_key": "sk-openai-secret"}
 
     config.save_config(cfg)
 
-    assert cfg["anthropic_api_key"] == "sk-ant-secret"
+    assert cfg["openai_api_key"] == "sk-openai-secret"
 
 
 def test_save_config_writes_non_ascii_text_verbatim():
@@ -181,7 +183,7 @@ def test_save_config_writes_non_ascii_text_verbatim():
 
 
 @pytest.mark.parametrize("key, value", [
-    ("anthropic_api_key", "sk-ant-secret"),
+    ("typesafe_api_key", "apikey_secret"),
     ("openai_api_key", "sk-openai-secret"),
     ("assemblyai_api_key", "aai-secret"),
     ("language", "en"),
@@ -251,55 +253,51 @@ def test_legacy_system_prompt_leaves_en_prompt_untouched():
     assert cfg["system_prompt_en"].startswith("You are my real-time meeting coach.")
 
 
-@pytest.mark.parametrize("legacy_key, new_key", [
-    ("llm_model", "anthropic_model_voice"),
-    ("openai_model", "openai_model_voice"),
-])
-def test_legacy_model_becomes_voice_model(legacy_key, new_key):
-    _write_config({legacy_key: "legacy-model-1"})
+# Claude was removed "for now" and the per-use models were replaced by a single
+# model: stored Anthropic settings survive untouched, per-use models do not.
+
+def test_stored_anthropic_settings_are_kept_but_not_decrypted():
+    stored = secretstore.PREFIJO + "opaque"
+    _write_config({"anthropic_api_key": stored, "llm_provider": "anthropic"})
 
     cfg = config.load_config()
 
-    assert cfg[new_key] == "legacy-model-1"
+    assert cfg["anthropic_api_key"] == stored
+    assert cfg["llm_provider"] == "anthropic"
 
 
-@pytest.mark.parametrize("legacy_key", ["llm_model", "openai_model"])
-def test_legacy_model_key_is_removed(legacy_key):
-    _write_config({legacy_key: "legacy-model-1"})
-
-    cfg = config.load_config()
-
-    assert legacy_key not in cfg
-
-
-@pytest.mark.parametrize("key, expected", [
-    ("anthropic_model_vision", "claude-sonnet-5"),
-    ("openai_model_vision", "gpt-5.6-sol"),
-])
-def test_legacy_model_leaves_vision_model_at_default(key, expected):
-    _write_config({"llm_model": "legacy-a", "openai_model": "legacy-o"})
+@pytest.mark.parametrize("key", ["openai_model_voice", "openai_model_vision"])
+def test_per_use_model_keys_are_purged(key):
+    _write_config({key: "gpt-5.4-mini"})
 
     cfg = config.load_config()
 
-    assert cfg[key] == expected
+    assert key not in cfg
+    assert cfg["openai_model"] == "gpt-6.1-sol"
 
 
-@pytest.mark.parametrize("key", ["anthropic_tokens_voice", "openai_tokens_voice"])
-def test_legacy_max_tokens_becomes_voice_tokens(key):
+@pytest.mark.parametrize("key", ["offline_mode", "whisper_size", "speech_threshold",
+                                 "transcribe_mic", "max_utterance"])
+def test_offline_mode_keys_are_purged(key):
+    _write_config({key: "legacy"})
+
+    assert key not in config.load_config()
+
+
+def test_legacy_max_tokens_becomes_voice_tokens():
     _write_config({"max_tokens": "800"})
 
     cfg = config.load_config()
 
-    assert cfg[key] == 800
+    assert cfg["openai_tokens_voice"] == 800
 
 
-@pytest.mark.parametrize("key", ["anthropic_tokens_vision", "openai_tokens_vision"])
-def test_legacy_max_tokens_leaves_vision_tokens_at_default(key):
+def test_legacy_max_tokens_leaves_vision_tokens_at_default():
     _write_config({"max_tokens": 800})
 
     cfg = config.load_config()
 
-    assert cfg[key] == 2500
+    assert cfg["openai_tokens_vision"] == 2500
 
 
 def test_legacy_max_tokens_key_is_removed():
@@ -352,12 +350,12 @@ def test_data_dir_frozen_without_appdata_uses_program_folder(monkeypatch, tmp_pa
 
 def test_load_config_reads_utf8_file_with_bom():
     payload = json.dumps({"language": "en",
-                          "anthropic_api_key": secretstore.proteger("sk-ant-test")})
+                          "openai_api_key": secretstore.proteger("sk-openai-test")})
     Path(config.CONFIG_PATH).write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
 
     cfg = config.load_config()
 
-    assert (cfg["language"], cfg["anthropic_api_key"]) == ("en", "sk-ant-test")
+    assert (cfg["language"], cfg["openai_api_key"]) == ("en", "sk-openai-test")
 
 
 def test_failed_save_keeps_previous_config_file():

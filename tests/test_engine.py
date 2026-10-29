@@ -1,12 +1,13 @@
-"""CoachEngine behavior with synchronous audio, STT, clock and LLM boundaries."""
-import importlib
+"""CoachEngine behavior with synchronous audio, STT, clock and LLM boundaries.
+
+Turn states and the Jev arbiter are covered in test_engine_turns.py and
+test_engine_arbiter.py.
+"""
 import json
 import queue
-import sys
 import threading
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
-import numpy as np
 import pytest
 
 import config
@@ -68,6 +69,12 @@ class FakeCoach:
     def calentar(self):
         return self.warmup_ms
 
+    def anotar(self, quien, texto):
+        self.heard = getattr(self, "heard", []) + [(quien, texto)]
+
+    def cancelar(self):
+        self.cancelled = getattr(self, "cancelled", 0) + 1
+
 
 class FakeDevice:
     def __init__(self, **kwargs):
@@ -86,18 +93,6 @@ class FakeDevice:
         self.frames.append(pcm)
 
 
-class FakeTranscriber:
-    def __init__(self, text="", **kwargs):
-        self.text = text
-        self.options = kwargs
-        self.device = "cpu"
-        self.samples = []
-
-    def transcribe(self, samples):
-        self.samples.append(samples)
-        return self.text
-
-
 def fail_load(**_kwargs):
     raise RuntimeError("load failed")
 
@@ -109,11 +104,6 @@ def run_items(subject, *items):
         work.put(item)
     work.put(None)
     subject._process_loop(work, threading.Event())
-
-
-def utterance(source="system", reason="silence"):
-    return {"type": "utterance", "audio": np.array([0.2, -0.1], np.float32),
-            "source": source, "reason": reason}
 
 
 @pytest.fixture
@@ -153,49 +143,25 @@ def scheduled(monkeypatch):
 
 @pytest.fixture
 def cfg():
-    return dict(config.DEFAULTS, anthropic_api_key="fake-anthropic",
-                openai_api_key="fake-openai", assemblyai_api_key="fake-stt",
-                anthropic_model_voice="voice", anthropic_model_vision="vision",
-                anthropic_tokens_voice=100, anthropic_tokens_vision=300,
-                openai_model_voice="o-voice", openai_model_vision="o-vision",
-                system_prompt_es="Reglas", system_prompt_en="Rules",
-                whisper_device="cpu")
+    return dict(config.DEFAULTS, openai_api_key="fake-openai",
+                assemblyai_api_key="fake-stt", openai_tokens_voice=100,
+                openai_tokens_vision=300, system_prompt_es="Reglas",
+                system_prompt_en="Rules")
 
 
 @pytest.fixture
 def dependencies(monkeypatch, scheduled):
     import audio
-    import cuda_setup
     import llm
     import stt_stream
 
-    stub = ModuleType("faster_whisper")
-    stub.WhisperModel = fail_load
-    monkeypatch.setitem(sys.modules, "faster_whisper", stub)
-    monkeypatch.setattr(cuda_setup, "register_cuda_dlls", lambda: [])
-    # Record both absent and previously imported modules for teardown restoration.
-    monkeypatch.setitem(sys.modules, "transcribe", None)
-    monkeypatch.delitem(sys.modules, "transcribe")
-    transcribe = importlib.import_module("transcribe")
-    monkeypatch.setattr(transcribe, "Transcriber", FakeTranscriber)
     monkeypatch.setattr(audio, "AudioEngine", FakeDevice)
     monkeypatch.setattr(stt_stream, "StreamingSTT", FakeDevice)
     monkeypatch.setattr(llm, "Coach", FakeCoach)
-    return SimpleNamespace(transcribe=transcribe, llm=llm)
+    return SimpleNamespace(llm=llm)
 
 
 class TestHelpers:
-    @pytest.mark.parametrize("text,limit,expected", [
-        ("# Title\nHello  world\n```py\nprint(1)\n```\nBye", 240,
-         "Hello world [código] Bye"),
-        ("abcdefgh", 5, "abcde…"),
-        ("abcde", 5, "abcde"),
-        (None, 240, ""),
-    ])
-    def test_summary_removes_nonspoken_content(self, text, limit, expected):
-        """Catch code or headings leaking into the spoken context summary."""
-        assert engine._resumen(text, limit) == expected
-
     @pytest.mark.parametrize("options,expected", [
         ({"system_prompt_es": " ES ", "system_prompt_en": " EN "},
          "ES\n\n---\n\n(The same instructions in English; follow whichever matches "
@@ -208,19 +174,6 @@ class TestHelpers:
     def test_prompt_preserves_available_languages(self, options, expected):
         """Catch loss of a translated prompt or its legacy fallback."""
         assert engine._prompt_bilingue(options) == expected
-
-    @pytest.mark.parametrize("samples,expected", [
-        ([0.2, -0.4], [0.475, -0.95]),
-        ([0.0, 0.00001], [0.0, 0.00001]),
-        ([], []),
-    ])
-    def test_normalize_preserves_signal_shape(self, samples, expected):
-        """Catch clipping, noise amplification or empty-array failures."""
-        result = engine.CoachEngine._normalize(np.array(samples, np.float32))
-
-        np.testing.assert_allclose(result, expected, rtol=1e-6)
-        assert result.dtype == np.float32
-
 
 class TestLifecycle:
     def test_start_discards_previous_session(self, subject, cfg, scheduled):
@@ -258,41 +211,47 @@ class TestLifecycle:
         assert list(subject._history) == [("Ellos", "keep")]
         assert scheduled == []
 
-    @pytest.mark.parametrize("provider,offline,expected", [
-        ("anthropic", False, ["proveedor: anthropic", "transcripcion: universal-3-5-pro",
-                              "voz: voice · capturas: vision"]),
-        ("openai", False, ["proveedor: openai", "transcripcion: universal-3-5-pro",
-                           "voz: o-voice · capturas: o-vision"]),
-        ("anthropic", True, ["proveedor: anthropic", "transcripcion: whisper base (cpu)"]),
-    ])
-    def test_start_records_configuration(self, subject, cfg, scheduled, provider, offline, expected):
-        """Catch metrics attributing a session to the wrong provider or STT."""
+    def test_start_records_configuration(self, subject, cfg, scheduled):
+        """Catch metrics attributing a session to the wrong model or STT."""
         subject._running = False
-        cfg.update(llm_provider=provider, offline_mode=offline)
 
         subject.start(cfg)
 
-        assert metricas.resumen()["notas"] == expected
+        assert metricas.resumen()["notas"] == [
+            "proveedor: openai", "transcripcion: universal-3-5-pro",
+            "modelo: gpt-6.1-sol · esfuerzo voz low · capturas medium"]
 
-    @pytest.mark.parametrize("offline,test_mode,status,capture_mic", [
-        (False, False, "Escuchando la reunion. Habla y aparecera la sugerencia.", False),
-        (False, True, "MODO PRUEBA: transcribe la reunion en vivo. No se llama a Claude.", False),
-        (True, True, "MODO PRUEBA: transcribe reunion y microfono. No se llama a Claude.", True),
-        (True, False, "Escuchando la reunion. Habla y aparecera la sugerencia.", True),
+    @pytest.mark.parametrize("test_mode,status", [
+        (False, "Escuchando la reunion. Habla y aparecera la sugerencia."),
+        (True, "MODO PRUEBA: transcribe la reunion en vivo. No se generan respuestas."),
     ])
-    def test_init_selects_capture_path(self, subject, cfg, dependencies, events,
-                                      offline, test_mode, status, capture_mic):
-        """Catch cloud/offline capture wiring or test mode starting the wrong path."""
-        subject._offline, subject._test_mode = offline, test_mode
+    def test_init_starts_capture_and_worker(self, subject, cfg, dependencies, events,
+                                            test_mode, status):
+        """Catch test mode starting the wrong path or the worker never running."""
+        subject._test_mode = test_mode
 
         subject._init_and_run(cfg)
 
         assert events[-1] == ("status", status)
         assert subject._audio.started is True
-        assert subject._audio.options["capture_mic_utterances"] is capture_mic
-        assert subject._audio.options["segment_system"] is offline
+        assert subject._audio.options["on_system_pcm"] == subject._stt.feed
         assert subject._worker.args == (subject._queue, subject._stop_event)
         assert subject._worker.started is True
+
+    @pytest.mark.parametrize("listen_mic", [True, False])
+    def test_mic_stream_follows_listen_mic(self, subject, cfg, dependencies, listen_mic):
+        """Catch the tester's mic being transcribed when disabled, or not when enabled."""
+        subject._listen_mic = listen_mic
+
+        subject._init_and_run(cfg)
+
+        if listen_mic:
+            assert subject._stt_mic.started is True
+            assert subject._audio.options["on_mic_pcm"] == subject._stt_mic.feed
+            assert subject._stt_mic.options["on_final"] == subject._on_mic_final
+        else:
+            assert subject._stt_mic is None
+            assert subject._audio.options["on_mic_pcm"] is None
 
     def test_cloud_audio_reaches_stream(self, subject, cfg, dependencies, events):
         """Catch PCM or level callbacks disconnected from the live stream."""
@@ -319,19 +278,7 @@ class TestLifecycle:
 
         assert subject._running is False
         assert subject._audio is None
-        assert events == [("error", "Falta la API key de AssemblyAI. Ponla en Ajustes, "
-                           "o activa el modo offline para transcribir con Whisper local.")]
-
-    def test_whisper_load_failure_is_reported(self, subject, cfg, dependencies, events, monkeypatch):
-        """Catch a failed local model leaving the session marked running."""
-        subject._offline = True
-        monkeypatch.setattr(dependencies.transcribe, "Transcriber", fail_load)
-
-        subject._init_and_run(cfg)
-
-        assert subject._running is False
-        assert events[-1] == ("error", "No se pudo cargar Whisper: load failed")
-        assert subject._audio is None
+        assert events == [("error", "Falta la API key de AssemblyAI. Ponla en Ajustes.")]
 
     def test_coach_load_failure_is_reported(self, subject, cfg, dependencies, events, monkeypatch):
         """Catch a failed model client silently starting an unusable worker."""
@@ -341,7 +288,7 @@ class TestLifecycle:
 
         assert subject._running is False
         assert subject._worker is None
-        assert events[-1] == ("error", "No se pudo iniciar Claude: load failed")
+        assert events[-1] == ("error", "No se pudo iniciar el modelo de respuestas: load failed")
 
     def test_coach_load_failure_closes_transcription_stream(self, subject, cfg, dependencies,
                                                             monkeypatch):
@@ -354,7 +301,9 @@ class TestLifecycle:
 
         subject._init_and_run(cfg)
 
-        assert (created[0].started, created[0].stopped, subject._stt) == (True, True, None)
+        # Both billed streams (meeting and mic) are closed.
+        assert [(c.started, c.stopped) for c in created] == [(True, True), (True, True)]
+        assert (subject._stt, subject._stt_mic) == (None, None)
 
     def test_failed_start_reports_not_running(self, subject, cfg, dependencies, monkeypatch):
         """Catch the public running flag disagreeing with a failed start."""
@@ -368,12 +317,14 @@ class TestLifecycle:
         """Catch initialization dropping English rules or model token limits."""
         subject._init_and_run(cfg)
 
-        assert subject._coach.options == {
-            "api_key": "fake-anthropic", "provider": "anthropic",
+        options = dict(subject._coach.options)
+        assert options.pop("cache_key").startswith("armony-")
+        assert options == {
+            "api_key": "fake-openai",
             "system_prompt": "Reglas\n\n---\n\n(The same instructions in English; follow "
                              "whichever matches the language being spoken.)\n\nRules",
-            "model_voice": "voice", "tokens_voice": 100,
-            "model_vision": "vision", "tokens_vision": 300,
+            "model": "gpt-6.1-sol", "tokens_voice": 100, "tokens_vision": 300,
+            "effort_voice": "low", "effort_vision": "medium",
         }
 
     def test_warmup_reports_latency(self, subject, events):
@@ -554,74 +505,7 @@ class TestCommands:
 
         assert subject._queue.qsize() == 0
 
-    def test_utterance_drops_oldest_backlog(self, subject):
-        """Catch stale audio displacing the latest three segments."""
-        subject._queue.put({"type": "old"})
-        subject._queue.put({"type": "second"})
-        subject._queue.put({"type": "third"})
-
-        subject._on_utterance(b"pcm", "mic", "maxlen")
-
-        assert subject._queue.qsize() == 3
-        assert subject._queue.get_nowait() == {"type": "second"}
-        assert subject._queue.get_nowait() == {"type": "third"}
-        assert subject._queue.get_nowait() == {
-            "type": "utterance", "audio": b"pcm", "source": "mic", "reason": "maxlen"}
-
-
 class TestWorker:
-    @pytest.mark.parametrize("source,reason,text,history,responses", [
-        ("mic", "silence", "¿Lo revisas?", [("Yo", "¿Lo revisas?")], 0),
-        ("system", "silence", "¿Lo revisas?", [("Ellos", "¿Lo revisas?")], 1),
-        ("system", "maxlen", "¿Lo revisas?", [("Ellos", "¿Lo revisas?")], 0),
-        ("system", "silence", "El informe está listo.", [("Ellos", "El informe está listo.")], 0),
-        ("system", "silence", "", [], 0),
-    ])
-    def test_utterance_response_routing(self, subject, source, reason, text, history, responses):
-        """Catch microphone, empty or max-length segments triggering a response."""
-        subject._transcriber = FakeTranscriber(text)
-
-        run_items(subject, utterance(source, reason))
-
-        assert list(subject._history) == history
-        assert len(subject._coach.calls) == responses
-
-    def test_offline_test_mode_only_transcribes(self, subject, events, monkeypatch):
-        """Catch offline test mode retaining conversation or invoking the model."""
-        subject._test_mode = True
-        subject._transcriber = FakeTranscriber("¿Lo revisas?")
-        monkeypatch.setattr(engine.time, "time", lambda: 10.0)
-
-        run_items(subject, utterance("mic"))
-
-        assert events == [("sttLatency", 0), ("transcript", "mic", "¿Lo revisas?"),
-                          ("status", "Transcrito en 0 ms (mic, silence).")]
-        assert list(subject._history) == []
-        assert subject._coach.calls == []
-
-    @pytest.mark.parametrize("normalize,expected", [(True, [0.95, -0.475]),
-                                                    (False, [0.2, -0.1])])
-    def test_worker_honors_normalization_setting(self, subject, normalize, expected):
-        """Catch the offline worker ignoring automatic normalization settings."""
-        subject._auto_normalize = normalize
-        subject._transcriber = FakeTranscriber()
-
-        run_items(subject, utterance())
-
-        np.testing.assert_allclose(subject._transcriber.samples[0], expected, rtol=1e-6)
-
-    @pytest.mark.parametrize("source,expected", [
-        ("mic", [("Yo", "El informe está listo.")]),
-        ("system", [("Ellos", "El informe está listo.")]),
-    ])
-    def test_offline_utterance_is_recorded(self, subject, source, expected):
-        """Catch offline speech disappearing from the saved meeting transcript."""
-        subject._transcriber = FakeTranscriber("El informe está listo.")
-
-        run_items(subject, utterance(source))
-
-        assert subject._registro == expected
-
     @pytest.mark.parametrize("item,latest,images,note,silence", [
         ({"type": "respond", "text": "¿Ahora?", "auto": True}, "¿Ahora?", None, "", True),
         ({"type": "respond", "text": "Ahora"}, "Ahora", None, "", False),
@@ -640,9 +524,9 @@ class TestWorker:
 
     def test_worker_continues_after_item_error(self, subject, events):
         """Catch a malformed work item killing subsequent model requests."""
-        run_items(subject, {"type": "utterance"}, {"type": "respond", "text": "Next"})
+        run_items(subject, {"type": "respond"}, {"type": "respond", "text": "Next"})
 
-        assert events == [("error", "'audio'")]
+        assert events == [("error", "'text'")]
         assert subject._coach.calls[0]["latest"] == "Next"
 
     def test_stop_event_prevents_consumption(self, subject):
@@ -700,12 +584,13 @@ class TestStreaming:
         assert subject._registro == []
 
     def test_response_persists_full_transcript(self, subject):
-        """Catch code being removed from the full transcript instead of only context."""
+        """Catch the saved transcript losing code, or the answer leaking into the
+        heard-speech history (the coach conversation already holds it)."""
         subject._coach.chunks = ["# Heading\nAnswer\n```py\nx = 1\n```"]
 
         subject._respond("Question")
 
-        assert list(subject._history) == [("Yo (sugerido)", "Answer [código]")]
+        assert list(subject._history) == []
         assert subject._registro == [("Sugerido", "# Heading\nAnswer\n```py\nx = 1\n```")]
 
     def test_first_response_token_measures_e2e_once(self, subject, events, monkeypatch):
@@ -751,40 +636,26 @@ class TestStreaming:
 
 
 class TestContext:
-    def test_context_excludes_latest_duplicate(self, subject):
-        """Catch the current question being sent twice to the model."""
-        subject._history.extend([("Yo", "Listo"), ("Ellos", "¿Ahora?")])
+    """What is heard reaches the coach conversation as it happens."""
 
-        result = subject._contexto(False, "¿Ahora?")
+    def test_closed_turn_is_noted_in_the_coach_conversation(self, subject):
+        subject._on_stt_final("El informe está listo.", 10)
+        subject._flush_turn()
 
-        assert result == "Yo: Listo"
+        assert subject._coach.heard == [("Ellos", "El informe está listo.")]
 
-    @pytest.mark.parametrize("capture,count", [(False, 36), (True, 80)])
-    def test_context_keeps_recent_entry_limit(self, subject, capture, count):
-        """Catch stale entries displacing the newest voice or screenshot context."""
-        subject._history.extend([("Ellos", "old")] * 81)
-        subject._history.extend([("Yo", "recent")] * count)
+    def test_tester_speech_is_noted_in_the_coach_conversation(self, subject):
+        subject._on_mic_final("Usaría PostgreSQL por las transacciones.")
 
-        result = subject._contexto(capture)
+        assert subject._coach.heard == [("Yo", "Usaría PostgreSQL por las transacciones.")]
+        assert subject._registro == [("Yo", "Usaría PostgreSQL por las transacciones.")]
 
-        assert result.splitlines() == ["Yo: recent"] * count
-        assert "old" not in result
+    def test_nothing_is_noted_without_a_coach(self, subject):
+        subject._coach = None
 
-    def test_capture_discards_oldest_oversized_context(self, subject):
-        """Catch screenshot context trimming recent speech before older entries."""
-        subject._history.extend([("Ellos", "x" * 7990), ("Yo", "Recent")])
+        subject._record("Ellos", "hola")
 
-        result = subject._contexto(True)
-
-        assert result == "Yo: Recent"
-
-    def test_capture_limit_includes_line_separators(self, subject):
-        """Catch the serialized screenshot context exceeding its 8000-character cap."""
-        subject._history.extend([("A", "x" * 3997), ("B", "y" * 3997)])
-
-        result = subject._contexto(True)
-
-        assert len(result) <= 8000
+        assert subject._history == [("Ellos", "hola")]
 
 
 class TestPersistence:
@@ -874,7 +745,7 @@ class TestLogging:
             ("armony.engine", "ERROR", "Saving session metrics or transcript failed")]
 
     def test_worker_item_failure_is_logged(self, subject, caplog):
-        run_items(subject, {"type": "utterance"})
+        run_items(subject, {"type": "respond"})
 
         assert [(r.name, r.levelname, r.exc_info[0]) for r in caplog.records] == [
             ("armony.engine", "ERROR", KeyError)]
@@ -886,7 +757,7 @@ class TestLogging:
 
         assert log_entries(caplog) == [
             ("armony.engine", "ERROR",
-             "Engine start-up failed: No se pudo iniciar Claude: load failed")]
+             "Engine start-up failed: No se pudo iniciar el modelo de respuestas: load failed")]
 
     def test_transcript_io_error_is_logged(self, subject, tmp_path, caplog):
         subject._registro = [("Ellos", "Hello")]

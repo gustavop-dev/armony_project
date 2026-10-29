@@ -107,22 +107,15 @@ def test_main_collects_pygments_when_installed(build):
     assert _values_after(cmd, "--collect-all") == ["pygments"]
 
 
-def test_main_excludes_offline_stack_without_faster_whisper(build):
-    cmd = build()[0]
+@pytest.mark.parametrize("installed", [(), ("faster_whisper", "nvidia")])
+def test_main_always_excludes_the_removed_offline_stack(build, installed):
+    # The offline Whisper mode is gone: leftovers in the build env must never
+    # be bundled, installed or not.
+    cmd = build(installed=installed)[0]
 
     assert _values_after(cmd, "--exclude-module") == ["faster_whisper", "ctranslate2", "torch"]
-
-
-def test_main_collects_offline_stack_with_faster_whisper(build):
-    cmd = build(installed=("faster_whisper",))[0]
-
-    assert _values_after(cmd, "--collect-all") == ["faster_whisper", "ctranslate2"]
-
-
-def test_main_collects_cuda_binaries_with_nvidia(build):
-    cmd = build(installed=("faster_whisper", "nvidia"))[0]
-
-    assert cmd[cmd.index("--collect-binaries") + 1] == "nvidia"
+    assert "faster_whisper" not in _values_after(cmd, "--collect-all")
+    assert "--collect-binaries" not in cmd
 
 
 def test_main_bundles_openssl_dlls(build, monkeypatch):
