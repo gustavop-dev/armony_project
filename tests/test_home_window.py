@@ -477,3 +477,130 @@ def test_meeting_transcript_is_rendered(make_home):
 
     texto = _find(win, QtWidgets.QTextBrowser, "transcripcion").toPlainText()
     assert "**" not in texto and "###" not in texto
+
+
+# ------------------------------------------------------------------ tone
+import estilo  # noqa: E402
+
+CHAT = "".join(f"29/10/26, 16:{i:02d} - Yo: mensaje mío {i}\n"
+               f"29/10/26, 16:{i:02d} - Ana: privado de Ana {i}\n" for i in range(30))
+
+
+@pytest.fixture
+def chat(isolated_data_dir):
+    ruta = isolated_data_dir / "chat.txt"
+    ruta.write_text(CHAT, encoding="utf-8")
+    return str(ruta)
+
+
+@pytest.fixture
+def tone_home(make_home, monkeypatch):
+    """Home whose background job runs inline and whose author dialog picks 'Yo'."""
+    enviados = []
+    win = make_home(agent="grok", openai_api_key="sk-test")
+    win._lanzar = lambda trabajo, ok, ko: ok(trabajo())
+    win._elegir_autor = lambda cuentas, mensajes: "Yo"
+    monkeypatch.setattr(estilo, "generar_tono", lambda key, model, propios: (
+        enviados.append(propios) or "## Registro\nCercano"))
+    win.enviados = enviados
+    win.editar_agente("grok", "tono")
+    return win
+
+
+def test_tone_tab_exists_next_to_instructions(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok")
+
+    tabs = _find(win, hw.Segmented, "pestanas")
+
+    assert list(tabs._btns) == ["instrucciones", "tono", "conocimiento", "reglas"]
+
+
+def test_tone_is_written_like_any_other_section(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "tono")
+
+    _find(win, QtWidgets.QPlainTextEdit, "tono").setPlainText("Cercano, sin rodeos.")
+    win.guardar_ya()
+
+    assert agents.get("grok")["tono"] == "Cercano, sin rodeos."
+
+
+def test_whatsapp_import_fills_the_tone(tone_home, chat):
+    tone_home.analizar_export("grok", chat)
+    tone_home.guardar_ya()
+
+    assert agents.get("grok")["tono"] == "## Registro\nCercano"
+    assert _find(tone_home, QtWidgets.QTextBrowser, "vista-tono").isVisibleTo(tone_home)
+
+
+def test_only_my_messages_reach_the_model(tone_home, chat):
+    tone_home.analizar_export("grok", chat)
+
+    (propios,) = tone_home.enviados
+    assert len(propios) == 30 and not any("Ana" in m for m in propios)
+
+
+def test_import_can_be_undone(tone_home, chat, qtbot):
+    tone_home._ag_get("grok")["tono"] = "Mi tono escrito a mano"
+    tone_home.analizar_export("grok", chat)
+
+    qtbot.mouseClick(_find(tone_home, QtWidgets.QPushButton, "deshacer-tono"), LEFT)
+
+    assert tone_home._ag_get("grok")["tono"] == "Mi tono escrito a mano"
+
+
+def test_cancelled_author_choice_sends_nothing(tone_home, chat):
+    tone_home._elegir_autor = lambda cuentas, mensajes: None
+
+    tone_home.analizar_export("grok", chat)
+
+    assert tone_home.enviados == []
+
+
+def test_too_few_messages_are_not_sent(tone_home, isolated_data_dir):
+    corto = isolated_data_dir / "corto.txt"
+    corto.write_text("29/10/26, 16:00 - Yo: hola\n", encoding="utf-8")
+
+    tone_home.analizar_export("grok", str(corto))
+
+    assert tone_home.enviados == [] and "pocos mensajes" in tone_home._aviso
+
+
+def test_not_a_chat_is_explained(tone_home, isolated_data_dir):
+    nada = isolated_data_dir / "nada.txt"
+    nada.write_text("esto no es un chat", encoding="utf-8")
+
+    tone_home.analizar_export("grok", str(nada))
+
+    assert tone_home._aviso.startswith("No encontré mensajes")
+
+
+def test_without_openai_key_nothing_is_sent(tone_home, chat):
+    tone_home.values["openai_api_key"] = ""
+
+    tone_home.analizar_export("grok", chat)
+
+    assert tone_home.enviados == [] and "API key de OpenAI" in tone_home._aviso
+
+
+def test_failed_analysis_keeps_the_tone_and_explains(tone_home, chat):
+    tone_home._lanzar = lambda trabajo, ok, ko: ko("APIConnectionError: sin red")
+    tone_home._ag_get("grok")["tono"] = "antes"
+
+    tone_home.analizar_export("grok", chat)
+
+    assert tone_home._ag_get("grok")["tono"] == "antes"
+    assert tone_home._aviso == "No se pudo analizar tu estilo: APIConnectionError: sin red"
+    assert tone_home._analizando is None
+
+
+def test_author_dialog_says_what_will_be_sent(qtbot):
+    mensajes = estilo.parsear(CHAT)
+    dialogo = hw.ElegirAutor(estilo.autores(mensajes), mensajes)
+    qtbot.addWidget(dialogo)
+    dialogo.combo.setCurrentIndex(dialogo.combo.findData("Yo"))
+
+    assert dialogo.info.text().startswith("Se enviarán a OpenAI tus últimos 30 mensajes")
+    assert "Los mensajes de los demás no salen de tu equipo" in dialogo.info.text()
+    assert dialogo.ok.isEnabled() is True

@@ -73,6 +73,8 @@ class OverlayApp(QtCore.QObject):
         self.home.startMeeting.connect(self.start_meeting)
         self.home.closeApp.connect(self._quit_app)
         self.home.saved.connect(self._on_home_saved)
+        self.home.proteger_ventana = lambda ventana: set_capture_protection(
+            ventana.winId(), bool(self.cfg.get("invisible_on_share", True)))
         set_capture_protection(self.home.winId(),
                                bool(self.cfg.get("invisible_on_share", True)))
         self.home.show()

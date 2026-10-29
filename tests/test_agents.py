@@ -136,3 +136,29 @@ def test_system_prompt_adds_the_agent_knowledge():
 
 def test_system_prompt_without_context_is_just_the_instructions():
     assert agents.system_prompt({"instrucciones": "Sé breve."}) == "Sé breve."
+
+
+def test_tone_goes_between_instructions_and_knowledge():
+    agente = {"instrucciones": "Sé breve.", "tono": "Dice «la verdad es que».",
+              "conocimiento": [{"id": "doc-1", "name": "CV", "body": "Backend"}]}
+
+    texto = agents.system_prompt(agente)
+
+    assert texto.index("Sé breve.") < texto.index("# Tono y estilo") < texto.index(
+        "«la verdad es que»") < texto.index("# Contexto de esta reunion")
+
+
+def test_empty_tone_adds_nothing():
+    assert "Tono" not in agents.system_prompt({"instrucciones": "Sé breve.", "tono": " "})
+
+
+def test_tone_survives_a_round_trip():
+    lista = agents.list_agents()
+    lista[0]["tono"] = "## Registro\nCercano"
+    agents.write_all(lista)
+
+    assert agents.get("coach")["tono"] == "## Registro\nCercano"
+
+
+def test_presets_start_without_tone():
+    assert all(agents.preset(pid)["tono"] == "" for pid in agents.PRESETS)

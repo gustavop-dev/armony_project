@@ -327,6 +327,9 @@ Un agente es una personalidad del coach con su system prompt **entero y editable
 - **Reglas**: cómo funciona la conversación (Ellos / Yo), el formato con secciones
   `##`, el código y las capturas. También se pueden cambiar, pero la app depende de
   ellas: tocarlas puede estropear cómo se pinta la respuesta.
+- **Tono**: cómo quieres que suene (registro, muletillas, ritmo, humor), en
+  markdown. Se escribe a mano o se saca de tus chats con *Importar de WhatsApp*
+  (ver abajo). Va en el prompt entre las instrucciones y el conocimiento.
 - **Conocimiento**: sus documentos (tu CV, la oferta, el producto…), como los de un
   GPT o un proyecto. Se le dan enteros al empezar la reunión. Los contextos activos
   de versiones anteriores pasaron, una sola vez, al agente que estaba en uso.
@@ -336,6 +339,24 @@ Vienen cuatro de ejemplo: **Coach** (el de siempre), **Directo**, **Grok**
 nuevo empieza como copia del Coach, para ver lo que ya hay y decidir qué cambiar;
 *Restaurar* devuelve cada parte al texto de su agente de ejemplo. Se guardan como
 `agents/<id>.json` junto a `config.json`.
+
+### Tu tono desde WhatsApp
+
+1. En el móvil, abre un chat donde escribas mucho → ⋮ (o el nombre del contacto en
+   iPhone) → *Más* → *Exportar chat* → *Sin archivos*. Te da un `.txt` (Android)
+   o un `.zip` (iPhone); pásalo al ordenador.
+2. En el agente: *Editar agente* → pestaña **Tono** → *Importar de WhatsApp* y
+   elige el archivo.
+3. Di cuál de los del chat eres tú. Antes de enviar nada, la app te dice cuántos
+   mensajes se mandan.
+4. El modelo describe tu registro, tus frases, tu vocabulario, tu humor y cómo
+   adaptarlo a una reunión, con ejemplos. Queda en la pestaña para revisarlo y
+   editarlo; *Deshacer importación* recupera el tono que había.
+
+Privacidad: **solo tus mensajes** salen del equipo (los de los demás no), sin
+enlaces, correos ni teléfonos, sin adjuntos ni avisos del sistema, y como mucho
+los ~20.000 caracteres más recientes. Hace falta tu API key de OpenAI; el análisis
+es una llamada de unos segundos.
 
 El mismo agente responde en los dos paneles. Se elige en la Home y, en plena
 reunión, desde su nombre en la cabecera del panel hablado: la conversación sigue

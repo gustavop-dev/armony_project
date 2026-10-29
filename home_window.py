@@ -10,6 +10,8 @@ Como la de ChatGPT, Claude o Grok, pero para reuniones:
   - la flecha de cada agente despliega sus reuniones; una reunion se abre en
     el centro con su transcripcion.
   - todo lo escrito en markdown se lee formateado; "Editar" lo abre en bruto.
+  - el tono de cada agente se escribe o se saca de tus chats de WhatsApp
+    (estilo.py): solo tus mensajes, y solo cuando lo pides.
   - "Ajustes" es una vista aparte: claves, idioma y opacidad.
 
 Todo se guarda solo, un momento despues de cada cambio. Borrar un agente o
@@ -17,12 +19,15 @@ una reunion pide un segundo clic. Al iniciar la reunion la Home se oculta y
 queda el overlay; al terminar, vuelve.
 """
 import os
+import threading
+import zipfile
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import agents as agents_mod
 import config as cfg_mod
 import contexts as ctx_mod
+import estilo
 import icons
 import neu as N
 import sesiones
@@ -369,6 +374,71 @@ class AgentRow(NavItem):
         super().leaveEvent(e)
 
 
+class _Trabajo(QtCore.QObject):
+    """Lleva el resultado de un hilo de fondo al hilo de Qt (conexion en cola)."""
+    listo = QtCore.Signal(object)
+    fallo = QtCore.Signal(str)
+
+
+class ElegirAutor(QtWidgets.QDialog):
+    """¿Cual de los del chat eres tu? Y que se va a mandar exactamente."""
+
+    def __init__(self, cuentas, mensajes, parent=None):
+        super().__init__(parent)
+        self._mensajes = mensajes
+        self.setWindowTitle("Tu tono desde WhatsApp")
+        self.setStyleSheet(f"QDialog {{ background: {N.BG}; }} QLabel {{ background: transparent; }}"
+                           + N.qss_campo())
+        self.setMinimumWidth(460)
+        v = QtWidgets.QVBoxLayout(self); v.setContentsMargins(26, 22, 26, 18); v.setSpacing(10)
+        t = QtWidgets.QLabel("¿Cuál de estos eres tú?")
+        tf = t.font(); tf.setPixelSize(17); tf.setWeight(QtGui.QFont.DemiBold); t.setFont(tf)
+        t.setStyleSheet(f"color: {N.TITULO};")
+        v.addWidget(t)
+        self.combo = QtWidgets.QComboBox()
+        self.combo.setObjectName("autor")
+        for autor, n in cuentas.items():
+            self.combo.addItem(f"{autor} — {n} mensaje{'s' if n != 1 else ''}", autor)
+        self.combo.setStyleSheet(
+            f"QComboBox {{ background: transparent; border: none; padding: 8px 6px; "
+            f"color: {N.TEXTO}; font-size: 13px; }} "
+            f"QComboBox QAbstractItemView {{ background: {N.BG}; color: {N.TEXTO}; "
+            f"selection-background-color: rgba(91,124,250,0.16); selection-color: {N.ACENTO}; }}")
+        v.addWidget(N.campo(self.combo))
+        self.info = QtWidgets.QLabel()
+        self.info.setObjectName("info")
+        self.info.setWordWrap(True)
+        self.info.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px;")
+        v.addWidget(self.info)
+        botones = QtWidgets.QHBoxLayout(); botones.addStretch()
+        cancelar = N.Button("Cancelar", radio=14)
+        cancelar.clicked.connect(self.reject)
+        self.ok = N.Button("Analizar mi estilo", icono="sparkles", variante="acento", radio=14)
+        self.ok.setObjectName("analizar")
+        self.ok.clicked.connect(self.accept)
+        botones.addWidget(cancelar); botones.addWidget(self.ok)
+        v.addLayout(botones)
+        self.combo.currentIndexChanged.connect(self._contar)
+        self._contar()
+
+    def autor(self):
+        return self.combo.currentData()
+
+    def _contar(self):
+        propios = estilo.muestra(self._mensajes, self.autor())
+        palabras = sum(len(t.split()) for t in propios)
+        if len(propios) < estilo.MIN_MENSAJES:
+            self.info.setText(f"Solo hay {len(propios)} mensajes de esta persona: hacen falta "
+                              f"al menos {estilo.MIN_MENSAJES} para sacar un estilo.")
+            self.ok.setEnabled(False)
+            return
+        self.ok.setEnabled(True)
+        self.info.setText(
+            f"Se enviarán a OpenAI tus últimos {len(propios)} mensajes (~{palabras} "
+            f"palabras), sin enlaces, correos ni teléfonos, para describir tu tono. "
+            f"Los mensajes de los demás no salen de tu equipo.")
+
+
 def _resumen(texto, largo=160):
     """Primera frase con contenido de unas instrucciones, sin markdown."""
     for linea in texto.splitlines():
@@ -428,6 +498,13 @@ class HomeWindow(QtWidgets.QWidget):
         # Reuniones desplegadas en la barra (por agente) y campos en modo edicion.
         self._desplegados = set()
         self._editando = set()
+        # Tono desde WhatsApp: agente que se esta analizando y el tono que
+        # habia antes de importar (para deshacer).
+        self._analizando = None
+        self._tono_anterior = {}
+        # La app pasa aqui como excluir de la captura las ventanas que abre la
+        # Home (el dialogo del tono), igual que la propia Home.
+        self.proteger_ventana = None
         self._dirty = False
         self._error = None
         self._aviso = ""
@@ -777,8 +854,9 @@ class HomeWindow(QtWidgets.QWidget):
         v.addLayout(top)
 
         n_docs = len(a["conocimiento"])
-        tabs = Segmented([("instrucciones", "Instrucciones"), ("reglas", "Reglas"),
-                          ("conocimiento", f"Conocimiento · {n_docs}" if n_docs else "Conocimiento")],
+        tabs = Segmented([("instrucciones", "Instrucciones"), ("tono", "Tono"),
+                          ("conocimiento", f"Conocimiento · {n_docs}" if n_docs else "Conocimiento"),
+                          ("reglas", "Reglas")],
                          self.pestana)
         tabs.setObjectName("pestanas")
         tabs.changed.connect(lambda p, aid=a["id"]: self.editar_agente(aid, p))
@@ -789,19 +867,27 @@ class HomeWindow(QtWidgets.QWidget):
             v.addLayout(self._conocimiento(a), 1)
         else:
             campo = self.pestana
+            extra = []
+            vacio = "Aún no hay nada escrito. Pulsa Editar para escribir."
             if campo == "instrucciones":
-                ayuda = "Personalidad, tono y cómo responde. Lo que pongas aquí manda."
+                ayuda = "Personalidad y cómo responde. Lo que pongas aquí manda."
+            elif campo == "tono":
+                ayuda = ("Cómo quieres que suene: registro, muletillas, ritmo, humor. "
+                         "Escríbelo o sácalo de tus chats de WhatsApp.")
+                vacio = ("Aún no hay tono. Escríbelo con Editar o impórtalo de tus "
+                         "chats de WhatsApp.")
+                extra = self._botones_tono(a)
             else:
                 ayuda = ("Cómo funciona la conversación, el formato con secciones «##», "
                          "el código y las capturas. La app depende de ellas: si las "
                          "cambias, puede dejar de pintar bien las respuestas.")
             clave = (a["id"], campo)
             texto = MarkdownField(a[campo], campo, mono=campo == "reglas",
-                                  editando=clave in self._editando)
+                                  editando=clave in self._editando, vacio=vacio)
             texto.setMinimumHeight(300)
             texto.changed.connect(lambda t, aid=a["id"], c=campo: self._ag_set(aid, c, t))
             texto.modoCambiado.connect(lambda on, k=clave: self._modo(k, on))
-            v.addLayout(self._cabecera_campo(a, campo, ayuda, texto.boton))
+            v.addLayout(self._cabecera_campo(a, campo, ayuda, texto.boton, extra))
             v.addWidget(texto, 1)
         return page
 
@@ -812,7 +898,7 @@ class HomeWindow(QtWidgets.QWidget):
         else:
             self._editando.discard(clave)
 
-    def _cabecera_campo(self, a, campo, ayuda, boton_modo=None):
+    def _cabecera_campo(self, a, campo, ayuda, boton_modo=None, extra=()):
         head = QtWidgets.QHBoxLayout(); head.setSpacing(10)
         h = QtWidgets.QLabel(ayuda); h.setWordWrap(True)
         h.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px; background: transparent; "
@@ -824,10 +910,127 @@ class HomeWindow(QtWidgets.QWidget):
         rest.setEnabled(a[campo] != agents_mod.predeterminado(a)[campo])
         rest.setToolTip(f"Vuelve al texto de «{agents_mod.predeterminado(a)['name']}»")
         rest.clicked.connect(lambda _c=False, aid=a["id"], c=campo: self._ag_restore(aid, c))
+        botones = head
+        if extra:
+            # Con botones de mas, la ayuda va en su linea: al lado quedaba
+            # apretada en una columna estrecha.
+            botones = QtWidgets.QHBoxLayout(); botones.setSpacing(10)
+            botones.addStretch()
+        for w in extra:
+            botones.addWidget(w, 0, QtCore.Qt.AlignTop)
         if boton_modo is not None:
-            head.addWidget(boton_modo, 0, QtCore.Qt.AlignTop)
-        head.addWidget(rest, 0, QtCore.Qt.AlignTop)
-        return head
+            botones.addWidget(boton_modo, 0, QtCore.Qt.AlignTop)
+        botones.addWidget(rest, 0, QtCore.Qt.AlignTop)
+        if botones is head:
+            return head
+        col = QtWidgets.QVBoxLayout(); col.setSpacing(2)
+        col.addLayout(head)
+        col.addLayout(botones)
+        return col
+
+    # ---------------------------------------------------- tono desde WhatsApp
+    def _botones_tono(self, a):
+        botones = []
+        if a["id"] in self._tono_anterior:
+            deshacer = N.Button("Deshacer importación", radio=12, prof=3)
+            f = deshacer.font(); f.setPixelSize(12); deshacer.setFont(f)
+            deshacer.setObjectName("deshacer-tono")
+            deshacer.clicked.connect(lambda _c=False, aid=a["id"]: self._deshacer_tono(aid))
+            botones.append(deshacer)
+        analizando = self._analizando == a["id"]
+        importar = N.Button("Analizando tu estilo…" if analizando else "Importar de WhatsApp",
+                            icono="chat", radio=12, prof=3, color_icono=ACENTO)
+        f = importar.font(); f.setPixelSize(12); importar.setFont(f)
+        importar.setObjectName("importar-whatsapp")
+        importar.setToolTip("Elige un chat exportado de WhatsApp (.txt o .zip): se analizan "
+                            "solo tus mensajes.")
+        importar.setEnabled(self._analizando is None)
+        importar.clicked.connect(lambda _c=False, aid=a["id"]: self._importar_whatsapp(aid))
+        botones.append(importar)
+        return botones
+
+    def _importar_whatsapp(self, aid):
+        ruta, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Chat exportado de WhatsApp", "", "Chat de WhatsApp (*.txt *.zip)")
+        if ruta:
+            self.analizar_export(aid, ruta)
+
+    def _elegir_autor(self, cuentas, mensajes):
+        """Dialogo: quien eres en el chat. None si se cancela."""
+        dialogo = ElegirAutor(cuentas, mensajes, self)
+        if self.proteger_ventana is not None:
+            self.proteger_ventana(dialogo)
+        return dialogo.autor() if dialogo.exec() == QtWidgets.QDialog.Accepted else None
+
+    def analizar_export(self, aid, ruta):
+        """Lee el chat, pregunta quien eres y manda solo tus mensajes a analizar."""
+        try:
+            mensajes = estilo.parsear(estilo.leer_export(ruta))
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            self.mostrar_aviso(f"No se pudo leer el chat: {e}")
+            return
+        cuentas = estilo.autores(mensajes)
+        if not cuentas:
+            self.mostrar_aviso("No encontré mensajes en ese archivo. ¿Es un chat exportado "
+                               "de WhatsApp (.txt o .zip)?")
+            return
+        autor = self._elegir_autor(cuentas, mensajes)
+        if autor is None:
+            return
+        propios = estilo.muestra(mensajes, autor)
+        if len(propios) < estilo.MIN_MENSAJES:
+            self.mostrar_aviso(f"Hay pocos mensajes tuyos ({len(propios)}) para sacar un "
+                               f"estilo: prueba con un chat más largo.")
+            return
+        clave = self.values.get("openai_api_key")
+        if not clave:
+            self.mostrar_aviso("Añade tu API key de OpenAI en Ajustes para analizar tu estilo.")
+            return
+        self._aviso = ""
+        self._analizando = aid
+        self._mostrar()
+        modelo = self.values.get("openai_model") or "gpt-6.1-sol"
+        self._lanzar(lambda: estilo.generar_tono(clave, modelo, propios),
+                     lambda texto, aid=aid: self._tono_listo(aid, texto),
+                     self._tono_fallo)
+
+    def _lanzar(self, trabajo, al_terminar, al_fallar):
+        """trabajo() en un hilo de fondo; el resultado vuelve al hilo de Qt."""
+        aviso = _Trabajo(self)
+        aviso.listo.connect(al_terminar)
+        aviso.fallo.connect(al_fallar)
+
+        def correr():
+            try:
+                aviso.listo.emit(trabajo())
+            except Exception as e:                       # red, clave, modelo...
+                aviso.fallo.emit(f"{type(e).__name__}: {e}"[:200])
+
+        threading.Thread(target=correr, daemon=True, name="tono-whatsapp").start()
+
+    def _tono_listo(self, aid, texto):
+        self._analizando = None
+        a = self._ag_get(aid)
+        if a is None:
+            return
+        self._tono_anterior[aid] = a.get("tono", "")
+        a["tono"] = texto
+        self._editando.discard((aid, "tono"))      # se ve formateado
+        self._marcar()
+        if self.vista == ("editar", aid):
+            self.pestana = "tono"
+        self._mostrar()
+
+    def _tono_fallo(self, error):
+        self._analizando = None
+        self.mostrar_aviso(f"No se pudo analizar tu estilo: {error}")
+
+    def _deshacer_tono(self, aid):
+        a = self._ag_get(aid)
+        if a is not None and aid in self._tono_anterior:
+            a["tono"] = self._tono_anterior.pop(aid)
+            self._marcar()
+            self._mostrar()
 
     def _conocimiento(self, a):
         grid = QtWidgets.QHBoxLayout(); grid.setSpacing(16)

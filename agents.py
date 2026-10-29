@@ -5,6 +5,7 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
     {"name": "Grok", "preset": "grok",
      "instrucciones": "...personalidad, tono, longitud...",
      "reglas": "...como funciona la conversacion, formato, codigo...",
+     "tono": "...como hablas: registro, muletillas, ritmo...",
      "conocimiento": [{"id": "doc-1", "name": "Mi CV", "body": "..."}]}
 
 - Las dos partes se editan enteras desde Configuracion. 'reglas' es la mecanica
@@ -12,6 +13,8 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
   puede cambiar, pero romperla estropea como se pinta la respuesta.
 - 'preset' dice de que agente de ejemplo salio: "Restaurar" vuelve a su texto.
   Un agente nuevo nace como copia del Coach para que se vea lo que ya hay.
+- 'tono': como quieres que suene (markdown). Se escribe a mano o se saca de
+  tus chats de WhatsApp (estilo.py). Vacio en los de ejemplo.
 - 'conocimiento': documentos markdown del agente (CV, oferta, producto...),
   como los de un GPT o un proyecto. Se le dan enteros al empezar la reunion.
 - El que se usa es config["agent"]. Al empezar la reunion su texto y su
@@ -99,7 +102,8 @@ def preset(preset_id):
     pid = preset_id if preset_id in PRESETS else DEFAULT_ID
     nombre, instrucciones = PRESETS[pid]
     return {"id": pid, "name": nombre, "preset": pid,
-            "instrucciones": instrucciones, "reglas": REGLAS, "conocimiento": []}
+            "instrucciones": instrucciones, "reglas": REGLAS, "tono": "",
+            "conocimiento": []}
 
 
 def nuevo(existentes, nombre="Nuevo agente"):
@@ -161,6 +165,7 @@ def list_agents():
                     "preset": base["preset"],
                     "instrucciones": str(data.get("instrucciones", base["instrucciones"])),
                     "reglas": str(data.get("reglas", base["reglas"])),
+                    "tono": str(data.get("tono", base["tono"])),
                     "conocimiento": [
                         {"id": str(d.get("id") or f"doc-{i + 1}"),
                          "name": str(d.get("name") or "Documento"),
@@ -188,6 +193,7 @@ def write_all(agentes):
         datos = {"name": a.get("name", a["id"]), "preset": a.get("preset", DEFAULT_ID),
                  "instrucciones": a.get("instrucciones", ""),
                  "reglas": a.get("reglas", ""),
+                 "tono": a.get("tono", ""),
                  "conocimiento": a.get("conocimiento", [])}
         with open(os.path.join(AGENTS_DIR, a["id"] + ".json"), "w",
                   encoding="utf-8") as f:
@@ -214,9 +220,13 @@ def texto_conocimiento(agente):
 
 
 def system_prompt(agente):
-    """Instrucciones del agente mas su conocimiento. Las reglas van aparte
-    (Coach las pone detras)."""
+    """Instrucciones del agente, su tono y su conocimiento. Las reglas van
+    aparte (Coach las pone detras)."""
     texto = agente["instrucciones"].strip()
+    tono = agente.get("tono", "").strip()
+    if tono:
+        texto += ("\n\n# Tono y estilo\nHabla como se describe aqui: es como "
+                  "habla de verdad la persona a la que le soplas.\n\n" + tono)
     contexto = texto_conocimiento(agente)
     if contexto:
         texto += "\n\n# Contexto de esta reunion\n" + contexto
