@@ -264,7 +264,7 @@ Direction:
 
 | Date | Dataset | Config | WER | WER no accents | CER | Final. latency p50 / p95 | Notes |
 |---|---|---|---|---|---|---|---|
-| 2026-10-28 | FLEURS es_419 test, 30 clips (760 words) | direct 16 kHz, eot 0.4 | 1.97% | 1.84% | 0.89% | n/a (measured from file end; fixed in 208896a) | provider estimate p50 263 / p95 352 ms |
+| 2026-10-28 | FLEURS es_419 test, 30 clips (760 words) | direct 16 kHz, eot 0.4 | 1.97% | 1.84% | 0.89% | n/a (measured from file end; fixed in d39807d) | provider estimate p50 263 / p95 352 ms |
 | 2026-10-28 | same | `--capture stateless` (current audio.py), eot 0.4 | 2.11% | 1.97% | 0.98% | 696 / 1897 ms (n=24) | provider estimate p50 293 / p95 365 ms |
 | 2026-10-28 | same | `--capture stream` (ResampleStream), eot 0.4 | 2.11% | 1.97% | 0.87% | 657 / 1878 ms (n=23) | provider estimate p50 275 / p95 373 ms |
 
