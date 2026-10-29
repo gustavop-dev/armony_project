@@ -87,6 +87,29 @@ Local facts:
 - Users who saved older models in `config.json` keep them until they change
   them in Settings.
 
+0.4 **Spoken-question latency with the real prompt** (2026-10-28,
+`python -m stt_eval.voice_latency`; 12 Spanish technical questions in
+`stt_eval/voice_questions.json`; warm connection; configs interleaved):
+
+| Config | First word p50 (max) | Full answer p50 | Length p50 |
+|---|---|---|---|
+| `gpt-6.1-terra` effort none | 0.94 s (1.17) | 2.35 s | ~453 chars |
+| `gpt-6.1-terra` effort low | 0.91 s (1.69) | 2.64 s | ~444 chars |
+| `gpt-6.1-sol` effort low | 1.05 s (1.53) | 4.04 s | ~585 chars |
+
+Reading:
+- What the tester waits for is the first word: sol is ~0.1–0.15 s slower at
+  the median.
+- The full answer takes ~1.4 s longer on sol, mostly because it is ~30%
+  longer. Both stream at ~150–200 chars/s, an order of magnitude faster than
+  anyone reads aloud (~15–20 chars/s). The tail is never what the tester waits
+  on.
+- Sol's answers are more senior on the same questions. Duplicate card charge:
+  a DB unique constraint plus passing the idempotency key to the processor,
+  vs. a generic "unique identifier". Monolith split: sol also covers data
+  ownership.
+- One run of 12 questions: a direction, not a benchmark.
+
 Acceptance:
 - Tests are green.
 - The app starts and answers with OpenAI only.
