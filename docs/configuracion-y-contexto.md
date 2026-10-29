@@ -19,10 +19,11 @@ desarrollo).
 
 | Clave (`config.json`) | Etiqueta UI | Tipo | Valores / Rango | Default | Qué hace |
 |---|---|---|---|---|---|
-| `anthropic_api_key` | API key de Anthropic | Texto (oculto) | `sk-ant-...` | *(vacío)* | Credencial para llamar a Claude. Sin ella no arranca la reunión (salvo Modo prueba). |
-| `llm_model` | Modelo | Desplegable | `claude-haiku-4-5`, `claude-opus-4-8`, `claude-sonnet-5` | `claude-haiku-4-5` | Modelo que genera la respuesta. Haiku = más rápido; Opus = más inteligente. |
-| `whisper_size` | Tamaño Whisper | Desplegable | `tiny`, `base`, `small`, `medium` | `base` | Modelo de transcripción local. Mayor = más preciso pero más lento. |
-| `whisper_device` | Dispositivo STT | Desplegable | `auto`, `cpu`, `cuda` | `auto` | Dónde corre Whisper. `cuda` = GPU NVIDIA; `cpu` = procesador; `auto` = detecta. |
+| `openai_api_key` | API key de OpenAI | Texto (oculto) | `sk-proj-...` | *(vacío)* | Credencial del modelo de respuestas. Sin ella no arranca la reunión (salvo Modo prueba). |
+| `openai_model` | *(no visible)* | Fijo | `gpt-6.1-sol` | `gpt-6.1-sol` | Un único modelo para voz y capturas: la caché de prompt es por modelo. |
+| `openai_effort_voice` | Razonamiento · preguntas habladas | Desplegable | `low`, `medium`, `high` | `low` | Cuánto razona en las preguntas habladas. Manda la latencia. |
+| `openai_effort_vision` | Razonamiento · capturas de pantalla | Desplegable | `low`, `medium`, `high` | `medium` | Cuánto razona con capturas, donde suele haber código. |
+| `typesafe_api_key` | API key de TypeSafe (Jev) | Texto (oculto) | `apikey_...` | *(vacío)* | Opcional. Jev decide si lo que añaden a una pregunta abierta cambia la respuesta (se reescribe en su sitio), pide otra o es ruido. Sin ella, todo añadido es contexto hasta que contestas. |
 | `language` | Idioma | Desplegable | `es`, `en`, `auto` | `es` | Idioma del reconocimiento de voz. `auto` = detección automática. |
 
 ## 🪟 Overlay
@@ -30,26 +31,22 @@ desarrollo).
 | Clave | Etiqueta UI | Tipo | Rango | Default | Qué hace |
 |---|---|---|---|---|---|
 | `invisible_on_share` | Invisible al compartir pantalla | Casilla | on/off | `on` | Excluye el overlay de cualquier captura o compartición de pantalla. |
-| `test_mode` | Modo prueba | Casilla | on/off | `off` | Arranca sin API key: solo audio + transcripción, sin llamar a Claude. |
+| `test_mode` | Modo prueba | Casilla | on/off | `off` | Arranca sin API key: solo audio + transcripción, sin generar respuestas. |
 | `window_opacity` | Opacidad | Numérico | 0.15 – 1.0 (paso 0.05) | `0.65` | Transparencia de las ventanas del overlay. Bajo = se ve más el fondo. |
 
 ## 🎙️ Sensibilidad de audio
 
 | Clave | Etiqueta UI | Tipo | Rango | Default | Qué hace |
 |---|---|---|---|---|---|
-| `gain_system` | Ganancia reunión (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica el audio del sistema antes de medir nivel y detectar voz. |
+| `gain_system` | Ganancia reunión (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica el audio del sistema antes de medir nivel y transcribir. |
 | `gain_mic` | Ganancia micrófono (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica tu micro. Ojo: amplifica también el ruido de fondo. |
-| `speech_threshold` | Umbral de voz | Numérico | 0.001 – 0.100 (paso 0.002) | `0.012` | Energía mínima para considerar que hay voz. Menor = más sensible. |
-| `transcribe_mic` | Transcribir también mi voz | Casilla | on/off | `on` | Añade tus intervenciones al contexto (para que la IA no te sugiera repetir). Nunca dispara una sugerencia por sí sola. |
-| `mic_echo_gate` | Anti-eco del micrófono | Casilla | on/off | `on` | Ignora el micro mientras suena la reunión, para no transcribir el eco de los altavoces. Con auriculares es indiferente. |
-| `auto_normalize` | Normalizar cada frase | Casilla | on/off | `on` | Lleva cada frase al nivel óptimo antes de Whisper. Resuelve el audio flojo mejor que la ganancia manual. |
+| `listen_mic` | Escuchar mi micrófono | Casilla | on/off | `on` | Transcribe tu voz en un segundo stream (~0,45 USD/h). Nunca genera respuestas: sirve para saber que ya contestaste y no ponerte otra respuesta encima. Pensado para usar con auriculares. |
 
 ## ✂️ Detección de frases
 
 | Clave | Etiqueta UI | Tipo | Rango | Default | Qué hace |
 |---|---|---|---|---|---|
-| `silence_hang` | Pausa de fin de turno (s) | Numérico | 0.3 – 2.0 (paso 0.1) | `0.7` | Silencio necesario para dar la frase por terminada y disparar la respuesta. Bajo = reacciona antes pero puede cortar. |
-| `max_utterance` | Corte de monólogo largo (s) | Numérico | 3 – 20 (paso 1) | `8.0` | Corte de seguridad en monólogos sin pausas. Esos fragmentos se transcriben pero NO disparan respuesta. |
+| `silence_hang` | Pausa de fin de turno (s) | Numérico | 0.3 – 2.0 (paso 0.1) | `0.7` | Pausa que se espera tras un turno cerrado antes de responder; agrupa las frases seguidas de una misma intervención. Bajo = reacciona antes pero puede responder a media intervención. |
 
 ## 🧠 Coach
 
@@ -122,7 +119,7 @@ Integraciones: Slack, Zapier, API REST...
 ## Mecánica de inyección en la IA
 
 Al pulsar **Start meeting**, se concatenan los contextos activos y se anteponen al
-system prompt de Claude:
+system prompt del coach:
 
 ```
 [Prompt del coach: cómo comportarse]
@@ -133,12 +130,12 @@ system prompt de Claude:
 [contenido de "Cliente Acme"]
 ```
 
-Esto se envía como `system` en la llamada a Claude.
+Esto se envía como `instructions` en la llamada a la API Responses de OpenAI.
 
 **Impacto en la latencia (<2 s):** como el contexto es estable durante toda la
-reunión, se aprovecha el *prompt caching* de Claude — solo la primera respuesta
-paga el costo completo; las siguientes leen el contexto cacheado y el primer token
-sigue llegando rápido. El contexto se **congela al iniciar** la reunión para no
+reunión, puede aprovecharse el *prompt caching* de OpenAI (automático a partir de 1.024
+tokens de prefijo estable). Cuánto se cachea de verdad se mide y se mejora en
+`docs/plan-live-turns-openai.md` (fase 4). El contexto se **congela al iniciar** la reunión para no
 romper el caché a media llamada.
 
 ## Requisitos de la UI (para diseño)

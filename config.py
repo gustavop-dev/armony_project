@@ -1,9 +1,7 @@
 """Carga y guarda la configuracion de la app en config.json (junto a este archivo).
 
-Guarda: API keys (Anthropic, OpenAI y AssemblyAI), proveedor y modelo, ajustes
-de transcripcion
-(nube o modo offline con Whisper), idioma, prompt de coach y estado de "ventana
-invisible".
+Guarda: API keys (OpenAI y AssemblyAI), modelos, ajustes de transcripcion,
+idioma, prompt de coach y estado de "ventana invisible".
 
 config.json esta en .gitignore: las claves nunca salen del equipo.
 """
@@ -38,8 +36,10 @@ def data_dir():
 
 CONFIG_PATH = os.path.join(data_dir(), "config.json")
 
-# Campos que se guardan cifrados con DPAPI (ver secretstore).
-CLAVES_SECRETAS = ("anthropic_api_key", "openai_api_key", "assemblyai_api_key")
+# Campos que se guardan cifrados con DPAPI (ver secretstore). Los de Anthropic ya
+# no se leen, pero si estan en config.json se conservan tal cual (cifrados): la
+# integracion con Claude se quito "por ahora" y volver no debe exigir reescribirlos.
+CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key", "typesafe_api_key")
 
 # Prompts por defecto: uno por idioma (cada instruccion va en su idioma).
 DEFAULT_PROMPT_ES = (
@@ -83,33 +83,28 @@ DEFAULT_PROMPT_EN = (
 DEFAULT_SYSTEM_PROMPT = DEFAULT_PROMPT_ES   # compatibilidad
 
 DEFAULTS = {
-    # --- Proveedor de las respuestas ---
-    # 'anthropic' | 'openai'. Cada uno con su clave y sus modelos, para poder
-    # cambiar de uno a otro sin volver a escribir nada.
-    #
-    # Hay DOS modelos por proveedor porque los dos usos no se parecen:
+    # --- Modelo de las respuestas (OpenAI) ---
+    # UN modelo para todo (la cache de prompt es por modelo: con dos se perdia
+    # en cada salto). Lo que cambia entre los dos usos es cuanto razona:
     #   voz     -> alguien pregunta hablando. Manda la latencia: la respuesta
     #              tiene que estar antes de que el silencio se note.
     #   captura -> hay un ejercicio o codigo en pantalla. Manda la capacidad, y
     #              un par de segundos de mas no se notan porque estas leyendo.
-    "llm_provider": "anthropic",
-
-    "anthropic_api_key": "",
-    "anthropic_model_voice": "claude-haiku-4-5",     # el mas rapido
-    "anthropic_tokens_voice": 400,
-    "anthropic_model_vision": "claude-sonnet-5",     # mas capaz para codigo
+    # Medido con 12 preguntas habladas: sol 'low' da la primera palabra en
+    # ~1,05 s (terra ~0,9 s) con respuestas claramente mejores.
+    "openai_api_key": "",
+    "openai_model": "gpt-6.1-sol",
+    "openai_effort_voice": "low",
+    "openai_tokens_voice": 400,
+    "openai_effort_vision": "medium",
     # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
     # 1200 se quedaba a medias.
-    "anthropic_tokens_vision": 2500,
-
-    "openai_api_key": "",
-    # gpt-5.4-nano queda fuera a proposito: es el mas rapido, pero 1 de cada 5
-    # veces ignora la instruccion de callarse cuando no hay pregunta y escribe
-    # excusas en el panel. La velocidad no compensa ensuciar la pantalla.
-    "openai_model_voice": "gpt-5.6-terra",           # 0,8 s a la primera palabra
-    "openai_tokens_voice": 400,
-    "openai_model_vision": "gpt-5.6-sol",
     "openai_tokens_vision": 2500,
+    # --- Arbitro de anadidos (Jev, TypeSafe) ---
+    # Decide si lo que anaden a una pregunta abierta cambia la respuesta, pide
+    # otra o es ruido (followup.py). Sin clave se usa la regla fija de hilo.py:
+    # todo anadido es contexto hasta que contestas.
+    "typesafe_api_key": "",
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
     # texto llega palabra a palabra mientras se habla, no al terminar la frase.
@@ -118,12 +113,6 @@ DEFAULTS = {
     # Confianza para dar el turno por terminado (0-1). Mas alto = mas prudente,
     # espera mas antes de cerrar el turno; mas bajo = reacciona antes.
     "end_of_turn_threshold": 0.4,
-    # Modo offline: vuelve a la transcripcion local con Whisper. Sirve si no hay
-    # internet o no quieres que el audio salga del equipo. Mas lento y no da
-    # texto en vivo: hay que esperar a que la frase termine.
-    "offline_mode": False,
-    "whisper_size": "base",            # tiny | base | small | medium (solo offline)
-    "whisper_device": "auto",          # auto | cpu | cuda (solo offline)
     "language": "es",                  # es | en | auto (None)
     # Prompt del coach por idioma (Opcion B: el idioma solo afecta a coach + contexts).
     "system_prompt_es": DEFAULT_PROMPT_ES,
@@ -132,35 +121,31 @@ DEFAULTS = {
     "window_opacity": 0.65,            # 0.15 (muy transparente) a 1.0 (opaco)
 
     # --- Sensibilidad y ganancia ---
-    # Ganancia digital aplicada antes de medir el nivel y de detectar voz.
+    # Ganancia digital aplicada antes de medir el nivel y de transcribir.
     # Sube estas si las barras se quedan cortas. 1.0 = sin cambios.
     "gain_system": 1.0,
-    # Ojo: subir mucho la ganancia del micro amplifica tambien el zumbido electrico
-    # y el eco de los altavoces. Mejor subir el nivel de entrada en Windows.
+    # Ojo: subir mucho la ganancia del micro amplifica tambien el zumbido electrico.
+    # Mejor subir el nivel de entrada en Windows.
     "gain_mic": 1.0,
-    # Ignora el microfono mientras suena el audio de la reunion. Evita que el eco de
-    # los altavoces se transcriba como si fuera tu voz (duplicando lo que ya capta
-    # el loopback, pero sucio). Con auriculares da igual; con altavoces es clave.
-    "mic_echo_gate": True,
-    # Transcribir tambien tu voz en modo normal. Sirve para dos cosas:
-    # 1) Acta completa de la reunion (lo que dijo cada uno).
-    # 2) Claude sabe que respondiste ya y no te sugiere repetirlo.
-    # Nunca dispara una sugerencia: solo responde a lo que dicen los demas.
-    "transcribe_mic": True,
-    # Umbral de energia para considerar que hay voz. MAS BAJO = MAS SENSIBLE.
-    # 0.012 por defecto; 0.006 capta susurros pero tambien mas ruido.
-    "speech_threshold": 0.012,
-    # Normaliza cada frase al nivel optimo antes de Whisper. Resuelve el problema
-    # de volumen bajo mucho mejor que la ganancia manual. Recomendado: True.
-    "auto_normalize": True,
+    # Transcribir tu micro (segundo stream de AssemblyAI, ~0,45 USD/h mas). Nunca
+    # dispara respuestas: sirve para saber que ya contestaste y no ponerte otra
+    # respuesta encima mientras hablas. Pensado para usar con auriculares.
+    "listen_mic": True,
 
-    # --- Segmentacion de frases ---
-    # Silencio necesario para dar la frase por terminada (= te cedieron el turno).
+    # --- Agrupacion de turnos ---
+    # Pausa que se espera tras un turno cerrado antes de responder: junta las
+    # frases seguidas de una misma intervencion.
     "silence_hang": 0.7,
-    # Corte de seguridad para monologos largos sin pausas. Estos fragmentos se
-    # transcriben pero NO disparan respuesta (nadie te ha preguntado nada aun).
-    "max_utterance": 8.0,
 }
+
+# Ajustes que ya no hacen nada; se borran del config.json al cargarlo para que
+# no queden de recuerdo:
+#   - los del antiguo modo offline (Whisper local)
+#   - el modelo de voz y el de capturas por separado: ahora hay uno solo, y
+#     conservarlos dejaria a cada usuario con los modelos viejos que guardo.
+OBSOLETAS = ("offline_mode", "whisper_size", "whisper_device", "auto_normalize",
+             "transcribe_mic", "speech_threshold", "mic_echo_gate",
+             "max_utterance", "openai_model_voice", "openai_model_vision")
 
 
 def read_user_text(path):
@@ -221,17 +206,12 @@ def load_config():
     if legacy and cfg.get("system_prompt_es") == DEFAULT_PROMPT_ES:
         cfg["system_prompt_es"] = legacy
 
-    # Migracion: antes habia UN modelo por proveedor y un unico max_tokens. Lo
-    # guardado se conserva como modelo de voz, para no cambiarle la configuracion
-    # a nadie por debajo; el de capturas se queda con el valor por defecto.
-    for viejo, nuevo in (("llm_model", "anthropic_model_voice"),
-                         ("openai_model", "openai_model_voice")):
-        anterior = cfg.pop(viejo, None)
-        if anterior:
-            cfg[nuevo] = anterior
+    # Migracion: antes habia un unico max_tokens; pasa a ser el de voz.
     tokens = cfg.pop("max_tokens", None)
     if tokens:
-        cfg["anthropic_tokens_voice"] = cfg["openai_tokens_voice"] = int(tokens)
+        cfg["openai_tokens_voice"] = int(tokens)
+    for k in OBSOLETAS:
+        cfg.pop(k, None)
     return cfg
 
 

@@ -3,3 +3,4 @@
 pytest>=9.2
 pytest-cov>=7.1
 pytest-qt>=4.4
+jiwer>=4.0                   # WER/CER for the STT evaluation harness (stt_eval/)

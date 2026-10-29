@@ -1,0 +1,14 @@
+[
+  {"id": "pay-dup", "context": "Ellos: Bueno, te cuento un poco: somos una pasarela de pagos, procesamos transacciones con tarjeta de crédito para comercios en Latinoamérica.", "question": "¿Qué harías si en una transacción de una tarjeta de crédito llegan dos solicitudes al mismo tiempo pero son la misma, del mismo cliente?"},
+  {"id": "ms-split", "context": "Ellos: Ahora mismo tenemos un monolito en Django que ya tiene seis años y empieza a costar desplegarlo.", "question": "¿Cómo partirías ese monolito en microservicios sin parar el negocio?"},
+  {"id": "ms-comm", "context": "Ellos: Tenemos el servicio de pedidos y el de inventario separados.", "question": "¿Cómo harías que se comuniquen entre ellos, síncrono o asíncrono, y por qué?"},
+  {"id": "db-choice", "context": "Ellos: Guardamos el historial de movimientos de las cuentas de los usuarios.", "question": "¿Qué base de datos elegirías para eso y por qué?"},
+  {"id": "cache", "context": "Ellos: El catálogo de productos se consulta muchísimo y cambia poco.", "question": "¿Qué estrategia de caché usarías y cómo la invalidarías?"},
+  {"id": "slow-query", "context": "Ellos: En producción tenemos una consulta que a veces tarda diez segundos.", "question": "¿Cómo lo investigarías paso a paso?"},
+  {"id": "rate-limit", "context": "Ellos: Nuestra API pública la usan unos dos mil clientes.", "question": "¿Cómo implementarías un rate limiter que funcione con varias instancias?"},
+  {"id": "saga", "context": "Ellos: Un pedido implica cobrar, reservar stock y programar el envío, cada cosa en un servicio distinto.", "question": "¿Cómo garantizas la consistencia si falla el cobro a mitad del proceso?"},
+  {"id": "observ", "context": "Ellos: Tenemos unos quince microservicios en Kubernetes.", "question": "¿Cómo montarías la observabilidad para encontrar rápido dónde falla una petición?"},
+  {"id": "auth", "context": "Ellos: Vamos a abrir la API a partners externos.", "question": "¿Cómo manejarías la autenticación y la autorización?"},
+  {"id": "queue-retry", "context": "Ellos: Procesamos notificaciones con una cola y a veces el proveedor de SMS falla.", "question": "¿Cómo diseñarías los reintentos para no perder mensajes ni mandar duplicados?"},
+  {"id": "scale-reads", "context": "Ellos: Las lecturas se nos han multiplicado por diez este año.", "question": "¿Cómo escalarías la base de datos?"}
+]

@@ -1,28 +1,26 @@
-"""Motor de Meeting Coach: audio -> transcripcion -> Claude (streaming).
+"""Motor de Meeting Coach: audio -> transcripcion -> modelo de respuestas (streaming).
 
 Sin dependencias de interfaz: expone senales Qt y no sabe como se dibuja nada.
 
-Hay dos caminos de transcripcion, y cambian bastante el comportamiento:
+La transcripcion va en la nube (AssemblyAI): el audio de la reunion viaja
+continuo y el texto vuelve palabra a palabra mientras la persona habla. El fin
+de turno lo decide el propio modelo.
 
-  En la nube (por defecto, AssemblyAI): el audio de la reunion viaja continuo y
-  el texto vuelve palabra a palabra mientras la persona habla. El fin de turno
-  lo decide el propio modelo.
-
-  Offline (Whisper local): se corta el audio en frases por silencio y cada una
-  se transcribe entera. No hay texto en vivo y se nota mas retardo, pero no sale
-  nada del equipo y funciona sin internet.
+Tu micro va en un segundo stream: no dispara respuestas, pero dice cuando ya
+contestaste (hilo.py), y con eso lo que anada el entrevistador mientras lees o
+contestas queda como contexto en vez de abrir otra respuesta encima.
 """
 import logging
 import os
-import re
 import time
 import queue
 import threading
 from collections import deque
 
-import numpy as np
 from PySide6 import QtCore
 
+import followup
+import hilo
 import intent
 from metrics import E2E, LLM_CALENTAMIENTO, STT_LATENCIA, metricas
 
@@ -32,43 +30,16 @@ log = logging.getLogger("armony.engine")
 # llega a pintarse: se usa solo para decidir que no hay nada que sugerir.
 SENTINEL = "NO_RESPONSE"
 
-# Cuanta reunion se recuerda y cuanta se manda en cada respuesta.
-#
-# Una pregunta hablada se responde con lo justo: manda la latencia y lo que
-# acaban de decir explica casi siempre lo que preguntan. Una captura es otra
-# cosa: el pantallazo suele ser solo una PARTE del problema, y el resto esta en
-# lo que llevan un rato contando. Ahi compensa mandar el hilo largo, que ademas
-# se paga una vez y no en cada frase.
-# Ojo al contar: cada turno respondido deja DOS entradas (lo que dijeron y lo
-# que se sugirio), asi que estos numeros son entradas, no turnos. Se doblaron al
-# empezar a guardar las sugerencias para que el hilo real siguiera siendo el
-# mismo que antes.
-MEMORIA = 120             # entradas en memoria (~60 turnos)
-CONTEXTO_VOZ = 36         # las que acompañan a una pregunta hablada (~18 turnos)
-CONTEXTO_CAPTURA = 80     # las que acompañan a un pantallazo (~40 turnos)
-LIMITE_CHARS_CAPTURA = 8000   # tope por si alguien se explaya de verdad
-
-# De cada sugerencia se guarda un resumen corto, no la respuesta entera: sirve
-# para que no te repita lo mismo, no para reconstruirla.
-RESUMEN_SUGERENCIA = 240
+# La memoria de la reunion vive en la conversacion del coach (llm.Coach): todo
+# lo que se oye se le va anotando y viaja, solo lo nuevo, en cada respuesta.
+# Antes se mandaba una ventana con las ultimas ~18 intervenciones reconstruida
+# en cada pregunta: se olvidaba lo anterior y nunca aprovechaba la cache.
 
 # Lo que se le pasa como "ultimo turno" cuando mandas capturas y no hay ninguna
 # pregunta hablada esperando. Se dice explicito para que no se ponga a rebuscar
 # en la transcripcion algo a lo que responder: lo que importa esta en pantalla.
 SIN_PREGUNTA_CAPTURA = ("(no han dicho nada nuevo desde la ultima respuesta: lo "
                         "que hay que resolver esta en las capturas)")
-
-
-def _resumen(texto, limite=RESUMEN_SUGERENCIA):
-    """Version corta de una sugerencia, para guardarla como contexto.
-
-    Fuera los bloques de codigo y los encabezados: ocupan muchisimo y no son lo
-    que tu dirias en voz alta, que es lo unico que hace falta recordar.
-    """
-    sin_codigo = re.sub(r"```.*?```", " [código] ", texto or "", flags=re.S)
-    sin_titulos = re.sub(r"^#+ .*$", "", sin_codigo, flags=re.M)
-    limpio = " ".join(sin_titulos.split())
-    return limpio[:limite] + ("…" if len(limpio) > limite else "")
 
 
 def _prompt_bilingue(cfg):
@@ -95,6 +66,7 @@ class CoachEngine(QtCore.QObject):
     partial = QtCore.Signal(str)          # texto provisional, se repinta en vivo
     noAnswer = QtCore.Signal(str)         # no habra sugerencia, y por que
     respStart = QtCore.Signal()
+    respRevise = QtCore.Signal()          # reescribe en su sitio la ultima sugerencia
     respDelta = QtCore.Signal(str)
     respDone = QtCore.Signal()
     status = QtCore.Signal(str)
@@ -104,19 +76,15 @@ class CoachEngine(QtCore.QObject):
         super().__init__()
         self._running = False
         self._queue = queue.Queue()
-        # Se guarda bastante mas de lo que se manda en cada respuesta: asi una
-        # captura puede llevarse el hilo largo de la conversacion (ver _contexto).
-        self._history = deque(maxlen=MEMORIA)
+        # Todo lo oido en la reunion, por quien lo dijo. Lo que viaja al modelo
+        # lo lleva su conversacion (llm.Coach.anotar); esto es la copia local.
+        self._history = []
         self._audio = None
-        self._transcriber = None
         self._stt = None
         self._coach = None
         self._worker = None
         self._stop_event = None
         self._test_mode = False
-        self._offline = False
-        self._auto_normalize = True
-        self._transcribe_mic = True
         self._language = "es"
         self._last_question = ""      # ultima a la que SI se respondio
         self._last_heard = ""         # ultimo turno oido, se respondiera o no
@@ -124,14 +92,27 @@ class CoachEngine(QtCore.QObject):
         self._t_pregunta = 0.0        # cuando se cerro la pregunta (para el e2e)
         self._registro = []           # acta de la reunion, para repasarla luego
 
-        # Agrupacion de turnos (solo en la nube). AssemblyAI cierra un turno por
+        # Agrupacion de turnos. AssemblyAI cierra un turno por
         # cada frase, asi que un "¿Como vais? ¿Llegamos el viernes?" llega en dos
         # trozos. Responder a cada uno seria atropellado: se acumulan y solo se
-        # llama a Claude cuando pasa _turn_gap sin que nadie hable.
+        # llama al modelo cuando pasa _turn_gap sin que nadie hable.
         self._turn_lock = threading.Lock()
         self._turn_parts = []
         self._turn_timer = None
         self._turn_gap = 0.7
+
+        # La pregunta en curso y tu micro (ver hilo.py).
+        self._clock = time.monotonic
+        self._hilo_lock = threading.Lock()
+        self._hilo = None
+        self._stt_mic = None
+        self._listen_mic = True
+        self._recientes_ellos = deque(maxlen=6)   # (instante, texto) para el eco
+        self._eco_avisado = False
+        # Arbitro de anadidos (Jev). Sin clave, la regla fija de hilo.py.
+        self._arbitro = None
+        self._arbitrar_en_hilo = True    # las pruebas lo apagan para ir en linea
+        self._generando = False
 
     @property
     def running(self):
@@ -140,18 +121,20 @@ class CoachEngine(QtCore.QObject):
 
     def _init_failed(self, msg):
         """Start-up failed: mark the session stopped, release the transcription
-        stream if it was already opened (billed per connected second), report."""
+        streams if they were already opened (billed per connected second), report."""
         # msg is a fixed UI string plus a library exception message; no config
         # values or keys.
         log.error("Engine start-up failed: %s", msg)
         self._running = False
-        if self._stt is not None:
-            self._stt.stop()
-            self._stt = None
+        for nombre in ("_stt", "_stt_mic"):
+            stt = getattr(self, nombre)
+            if stt is not None:
+                stt.stop()
+                setattr(self, nombre, None)
         self.error.emit(msg)
 
     def start(self, cfg, test_mode=False):
-        """test_mode: solo audio + transcripcion (sin API key, sin llamar a Claude)."""
+        """test_mode: solo audio + transcripcion (sin llamar al modelo de respuestas)."""
         if self._running:
             return
         # Cola NUEVA en cada arranque: nada de la sesion anterior puede colarse.
@@ -165,65 +148,57 @@ class CoachEngine(QtCore.QObject):
         self._language = cfg.get("language", "es")
         self._running = True
         self._test_mode = test_mode
-        self._offline = bool(cfg.get("offline_mode", False))
-        self._auto_normalize = bool(cfg.get("auto_normalize", True))
-        self._transcribe_mic = bool(cfg.get("transcribe_mic", True))
         self._turn_gap = float(cfg.get("silence_hang", 0.7))
         self._turn_parts = []
         self._t_pregunta = 0.0
         self._registro = []
+        self._hilo = None
+        self._recientes_ellos.clear()
+        self._eco_avisado = False
+        self._listen_mic = bool(cfg.get("listen_mic", True))
 
         metricas.iniciar()
-        p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"
-        metricas.nota(f"proveedor: {p}")
-        if not self._offline:
-            metricas.nota(f"transcripcion: {cfg.get('assemblyai_model')}")
-            metricas.nota(f"voz: {cfg.get(f'{p}_model_voice')} · "
-                          f"capturas: {cfg.get(f'{p}_model_vision')}")
-        else:
-            metricas.nota(f"transcripcion: whisper {cfg.get('whisper_size')} "
-                          f"({cfg.get('whisper_device')})")
-        # La inicializacion (cargar modelo) puede tardar: hazla en un hilo.
+        metricas.nota("proveedor: openai")
+        metricas.nota(f"transcripcion: {cfg.get('assemblyai_model')}")
+        metricas.nota(f"modelo: {cfg.get('openai_model')} · esfuerzo voz "
+                      f"{cfg.get('openai_effort_voice')} · capturas "
+                      f"{cfg.get('openai_effort_vision')}")
+        # La inicializacion (conectar, preparar el coach) puede tardar: en un hilo.
         threading.Thread(target=self._init_and_run, args=(cfg,), daemon=True).start()
 
     def _init_and_run(self, cfg):
         # Importes tardios para que la ventana abra rapido.
         from llm import Coach
         from audio import AudioEngine
+        from stt_stream import StreamingSTT
 
-        if self._offline:
-            from transcribe import Transcriber
-            try:
-                self.status.emit(
-                    "Cargando modelo de transcripcion (primera vez descarga)...")
-                self._transcriber = Transcriber(
-                    size=cfg["whisper_size"],
-                    device=cfg["whisper_device"],
-                    language=cfg["language"],
-                )
-                self.status.emit(f"Whisper listo en {self._transcriber.device.upper()}.")
-            except Exception as e:
-                self._init_failed(f"No se pudo cargar Whisper: {e}")
-                return
-        else:
-            from stt_stream import StreamingSTT
-            if not cfg.get("assemblyai_api_key"):
-                self._init_failed(
-                    "Falta la API key de AssemblyAI. Ponla en Ajustes, o activa "
-                    "el modo offline para transcribir con Whisper local.")
-                return
-            self._stt = StreamingSTT(
+        if not cfg.get("assemblyai_api_key"):
+            self._init_failed("Falta la API key de AssemblyAI. Ponla en Ajustes.")
+            return
+        self._stt = StreamingSTT(
+            api_key=cfg["assemblyai_api_key"],
+            on_partial=self._on_stt_partial,
+            on_final=self._on_stt_final,
+            on_status=lambda m: self._running and self.status.emit(m),
+            on_error=lambda m: self._running and self.error.emit(m),
+            language=cfg.get("language", "es"),
+            model=cfg.get("assemblyai_model", "universal-3-5-pro"),
+            end_of_turn_threshold=cfg.get("end_of_turn_threshold", 0.4),
+        )
+        self._stt.start()
+        if self._listen_mic:
+            # Segundo stream, el de tu voz: misma clave e idioma, sin estados en
+            # la barra (ya los da el de la reunion) y con sus errores marcados.
+            self._stt_mic = StreamingSTT(
                 api_key=cfg["assemblyai_api_key"],
-                on_partial=self._on_stt_partial,
-                on_final=self._on_stt_final,
-                on_status=lambda m: self._running and self.status.emit(m),
-                on_error=lambda m: self._running and self.error.emit(m),
+                on_final=self._on_mic_final,
+                on_error=lambda m: self._running and self.error.emit(f"Micro: {m}"),
                 language=cfg.get("language", "es"),
                 model=cfg.get("assemblyai_model", "universal-3-5-pro"),
                 end_of_turn_threshold=cfg.get("end_of_turn_threshold", 0.4),
             )
-            self._stt.start()
-            self.status.emit("Conectando la transcripcion en vivo...")
+            self._stt_mic.start()
+        self.status.emit("Conectando la transcripcion en vivo...")
 
         if not self._test_mode:
             try:
@@ -238,26 +213,38 @@ class CoachEngine(QtCore.QObject):
                 extra = ctx_mod.active_text("auto")     # 'auto' = todos
                 if extra:
                     sys_prompt += "\n\n# Contexto de esta reunion\n" + extra
-                # Cada proveedor trae su clave y sus dos modelos: uno para las
-                # preguntas habladas y otro, mas capaz, para las capturas.
-                p = "openai" if cfg.get("llm_provider") == "openai" else "anthropic"
+                # Un modelo; las preguntas habladas razonan poco y las
+                # capturas mas.
                 self._coach = Coach(
-                    api_key=cfg[f"{p}_api_key"],
+                    api_key=cfg["openai_api_key"],
                     system_prompt=sys_prompt,
-                    provider=p,
-                    model_voice=cfg[f"{p}_model_voice"],
-                    tokens_voice=int(cfg[f"{p}_tokens_voice"]),
-                    model_vision=cfg[f"{p}_model_vision"],
-                    tokens_vision=int(cfg[f"{p}_tokens_vision"]),
+                    model=cfg["openai_model"],
+                    tokens_voice=int(cfg["openai_tokens_voice"]),
+                    tokens_vision=int(cfg["openai_tokens_vision"]),
+                    effort_voice=cfg.get("openai_effort_voice", "low"),
+                    effort_vision=cfg.get("openai_effort_vision", "medium"),
+                    # Una clave por reunion: el gasto en cache se ve por sesion.
+                    cache_key=f"armony-{time.strftime('%Y%m%d-%H%M%S')}",
                 )
             except Exception as e:
-                self._init_failed(f"No se pudo iniciar Claude: {e}")
+                self._init_failed(f"No se pudo iniciar el modelo de respuestas: {e}")
                 return
 
             # Calentar la conexion mientras te acomodas: la primera peticion
             # paga DNS, TLS y el procesado inicial del prompt con tus contextos.
             # Va en su hilo para no retrasar el arranque de la reunion.
             threading.Thread(target=self._calentar, daemon=True).start()
+
+            if cfg.get("typesafe_api_key"):
+                try:
+                    from typesafe_sdk import RetryPolicy, TypeSafeClient
+                    # Sin reintentos y con tope de 1 s: si Jev tarda, el anadido
+                    # se queda como contexto, que es lo seguro.
+                    self._arbitro = TypeSafeClient(
+                        api_key=cfg["typesafe_api_key"], model="jev-1.14.0",
+                        timeout=1.0, retry=RetryPolicy(max_retries=0))
+                except Exception as e:
+                    self.status.emit(f"Arbitro de anadidos desactivado: {e}")
 
         # El worker recibe SU cola y SU senal de parada. Asi un worker rezagado de una
         # sesion anterior no puede consumir eventos de la sesion nueva.
@@ -273,34 +260,21 @@ class CoachEngine(QtCore.QObject):
             # destruyendo los widgets y emitir ahi provoca un segfault al cerrar).
             on_sys_level=lambda v: self._running and self.sysLevel.emit(v),
             on_mic_level=lambda v: self._running and self.micLevel.emit(v),
-            on_utterance=self._on_utterance,
             on_status=lambda m: self._running and self.status.emit(m),
-            # Transcribir el micro en Modo prueba, o si el usuario lo activo para
-            # tener acta completa y dar contexto a Claude de lo que ya respondio.
-            # En la nube solo se transcribe la reunion: un unico stream. Tu micro
-            # sigue midiendo nivel (la barra) pero no se manda a transcribir.
-            capture_mic_utterances=self._offline and (self._test_mode
-                                                      or self._transcribe_mic),
-            on_system_pcm=None if self._offline else self._stt.feed,
-            segment_system=self._offline,
+            # La reunion y, si esta activado, tu micro: cada uno a su stream.
+            on_system_pcm=self._stt.feed,
+            on_mic_pcm=self._stt_mic.feed if self._stt_mic is not None else None,
             gain_system=cfg.get("gain_system", 1.0),
             gain_mic=cfg.get("gain_mic", 1.0),
-            speech_threshold=cfg.get("speech_threshold", 0.012),
-            silence_hang=cfg.get("silence_hang", 0.7),
-            max_utterance=cfg.get("max_utterance", 8.0),
-            mic_echo_gate=cfg.get("mic_echo_gate", True),
         )
         self._audio.start()
-        if self._test_mode and self._offline:
+        if self._test_mode:
             self.status.emit(
-                "MODO PRUEBA: transcribe reunion y microfono. No se llama a Claude.")
-        elif self._test_mode:
-            self.status.emit(
-                "MODO PRUEBA: transcribe la reunion en vivo. No se llama a Claude.")
+                "MODO PRUEBA: transcribe la reunion en vivo. No se generan respuestas.")
         else:
             self.status.emit("Escuchando la reunion. Habla y aparecera la sugerencia.")
 
-    # ---------------------------------------------- transcripcion en la nube
+    # ---------------------------------------------------------- transcripcion
     # Estos tres metodos los llama el hilo del WebSocket: nada de trabajo pesado
     # aqui dentro, solo emitir senales y dejar la respuesta al worker.
     def _on_stt_partial(self, texto):
@@ -315,8 +289,7 @@ class CoachEngine(QtCore.QObject):
     def _on_stt_final(self, texto, latencia_ms):
         if not self._running:
             return
-        # Aqui y no en el cliente de streaming: asi tambien cuenta el modo
-        # offline, que mide la latencia por su cuenta.
+        self._recientes_ellos.append((self._clock(), texto))
         metricas.medir(STT_LATENCIA, latencia_ms)
         self.sttLatency.emit(latencia_ms)
         if self._test_mode:
@@ -343,7 +316,7 @@ class CoachEngine(QtCore.QObject):
     def _flush_turn(self):
         """Cierra la intervencion y decide si merece respuesta.
 
-        Puerta 1: si no parece pregunta ni peticion, no se molesta a Claude. El
+        Puerta 1: si no parece pregunta ni peticion, no se molesta al modelo. El
         texto NO se pierde: queda en el historial y sera contexto de la proxima
         respuesta. Y si la transcripcion se comio los signos y aqui no se vio la
         pregunta, queda el atajo de responder ahora.
@@ -358,12 +331,85 @@ class CoachEngine(QtCore.QObject):
         self.transcript.emit("system", texto)
         self._anotar_oido(texto)
         metricas.contar("intervenciones")
-        if intent.parece_pregunta(texto, self._language):
+        es_pregunta = intent.parece_pregunta(texto, self._language)
+        # Puerta 0: si hay una pregunta abierta, lo que anadan se juzga segun en
+        # que punto va (hilo.py). Con Jev, el juicio fino (followup.py); sin el,
+        # la regla fija: contexto mientras lees o contestas.
+        ahora = self._clock()
+        with self._hilo_lock:
+            actual = self._hilo
+            estado = actual.estado(ahora) if actual is not None else None
+            datos = None
+            if actual is not None and self._arbitro is not None:
+                datos = (actual, estado, actual.partes[0], actual.respuesta,
+                         list(actual.dijo_tester))
+            else:
+                accion = hilo.decidir(actual, es_pregunta, ahora)
+                if accion == "nueva":
+                    self._hilo = hilo.HiloPregunta(texto, ahora)
+            if actual is not None and (datos is not None or accion != "nueva"):
+                actual.entrevistador(texto, ahora)
+        if datos is not None:
+            if self._arbitrar_en_hilo:
+                threading.Thread(target=self._arbitrar, args=(texto, es_pregunta, datos),
+                                 daemon=True).start()
+            else:
+                self._arbitrar(texto, es_pregunta, datos)
+            return
+        self._aplicar(accion, texto, es_pregunta)
+
+    def _arbitrar(self, texto, es_pregunta, datos):
+        """Jev juzga el anadido (~150 ms) y la regla de followup decide."""
+        hilo_actual, estado, pregunta, respuesta, dijo_tester = datos
+        try:
+            juicio = followup.juzgar(self._arbitro, pregunta, respuesta,
+                                     dijo_tester, texto)
+            decision = followup.decidir(juicio, estado)
+            metricas.medir("jev_ms", juicio.ms)
+            metricas.contar(f"jev_{decision}")
+        except Exception:
+            # Jev no respondio a tiempo: la regla fija, que nunca reescribe.
+            metricas.contar("jev_fallos")
+            decision = (followup.NUEVA if es_pregunta and estado == hilo.RESPONDIDA
+                        else followup.MANTENER)
+        if not self._running:
+            return
+        if decision == followup.NUEVA:
+            with self._hilo_lock:
+                if self._hilo is not hilo_actual:
+                    return               # mientras tanto ya se abrio otra
+                self._hilo = hilo.HiloPregunta(texto, self._clock())
+            self._aplicar("nueva", texto, es_pregunta)
+        elif decision == followup.REVISAR:
+            with self._hilo_lock:
+                vale = self._hilo is hilo_actual and hilo_actual.revisiones == 0
+                if vale:
+                    hilo_actual.revisiones += 1
+            if not vale:
+                self._aplicar("contexto", texto, es_pregunta)
+                return
+            metricas.contar("revisiones")
+            if self._generando and self._coach is not None:
+                self._coach.cancelar()   # la respuesta en curso ya no vale
+            self.status.emit("Lo que añadieron cambia la respuesta: actualizándola.")
+            self._queue.put({"type": "revise", "text": texto})
+        else:
+            if decision == followup.RETIRAR:
+                metricas.contar("preguntas_retiradas")
+            self._aplicar("contexto", texto, es_pregunta)
+
+    def _aplicar(self, accion, texto, es_pregunta):
+        """Lo que se ve de una decision: responder o dejarlo como contexto."""
+        if accion == "nueva":
             metricas.contar("con_pregunta")
             # Marca de tiempo para medir lo unico que notas de verdad: cuanto
             # tardas en tener algo que decir desde que te preguntan.
             self._t_pregunta = time.monotonic()
             self._queue.put({"type": "respond", "text": texto, "auto": True})
+        elif es_pregunta:
+            metricas.contar("anadidos_contexto")
+            self.status.emit("Añadido a la pregunta en curso: guardado como contexto.")
+            self.noAnswer.emit("follow_up")
         else:
             metricas.contar("solo_contexto")
             self.status.emit("Sin pregunta todavia: guardado como contexto.")
@@ -392,18 +438,44 @@ class CoachEngine(QtCore.QObject):
             self._record("Ellos", texto)
             self.transcript.emit("system", texto)
             self._anotar_oido(texto)
+        # Pedirla a mano manda: es una pregunta nueva aunque hubiera otra abierta.
+        with self._hilo_lock:
+            self._hilo = hilo.HiloPregunta(texto, self._clock())
         self._queue.put({"type": "respond", "text": texto, "auto": False})
+
+    def _on_mic_final(self, texto, latencia_ms=0):
+        """Lo que dijiste tu, por tu micro. Nunca dispara una respuesta: es
+        contexto (para no sugerirte repetir lo que ya dijiste) y la senal de que
+        la pregunta en curso ya la estas contestando."""
+        if not self._running or not texto:
+            return
+        ahora = self._clock()
+        if hilo.es_eco(texto, list(self._recientes_ellos), ahora):
+            metricas.contar("eco_micro")
+            if not self._eco_avisado:
+                self._eco_avisado = True
+                self.status.emit("Tu micro capta los altavoces: usa auriculares "
+                                 "para que no se confunda tu voz con la reunion.")
+            return
+        metricas.contar("intervenciones_tuyas")
+        self._record("Yo", texto)
+        with self._hilo_lock:
+            if self._hilo is not None:
+                self._hilo.tester(texto, ahora)
+
+    def _record(self, quien, texto):
+        """Close a spoken turn. Model context (_history and the coach
+        conversation, where it travels with the next answer) and the saved
+        transcript (_registro) must always receive the same turns."""
+        self._history.append((quien, texto))
+        self._registro.append((quien, texto))
+        if self._coach is not None:
+            self._coach.anotar(quien, texto)
 
     def _anotar_oido(self, texto):
         """Guarda el ultimo turno oido y lo marca como pendiente de respuesta."""
         self._last_heard = texto
         self._heard_respondido = False
-
-    def _record(self, quien, texto):
-        """Close a spoken turn: model context (_history) and saved transcript
-        (_registro) must always receive the same turns."""
-        self._history.append((quien, texto))
-        self._registro.append((quien, texto))
 
     def _cancel_turn_timer(self):
         with self._turn_lock:
@@ -411,28 +483,6 @@ class CoachEngine(QtCore.QObject):
                 self._turn_timer.cancel()
                 self._turn_timer = None
             self._turn_parts = []
-
-    def _on_utterance(self, audio, source="system", reason="silence"):
-        # Mantener la cola corta: si hay atraso, quedarse con lo mas reciente.
-        while self._queue.qsize() > 2:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                break
-        self._queue.put({"type": "utterance", "audio": audio,
-                         "source": source, "reason": reason})
-
-    @staticmethod
-    def _normalize(audio):
-        """Lleva la frase a un nivel optimo para Whisper.
-
-        Resuelve el audio flojo mucho mejor que la ganancia fija: se adapta a cada
-        frase, no puede quedarse corta ni saturar.
-        """
-        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-        if peak < 1e-4:          # silencio: no amplificar ruido de fondo
-            return audio
-        return np.clip(audio * (0.95 / peak), -1.0, 1.0).astype(np.float32)
 
     def request_screenshots(self, images):
         """Envia una o varias capturas juntas (util si el enunciado no cabe en una)."""
@@ -460,54 +510,10 @@ class CoachEngine(QtCore.QObject):
             if item is None or stop_event.is_set():
                 break
             try:
-                if item["type"] == "utterance":
-                    source = item.get("source", "system")
-                    reason = item.get("reason", "silence")
-                    audio = item["audio"]
-                    if self._auto_normalize:
-                        audio = self._normalize(audio)
-                    t0 = time.time()
-                    text = self._transcriber.transcribe(audio)
-                    stt_ms = int((time.time() - t0) * 1000)
-                    if self._running:
-                        self.sttLatency.emit(stt_ms)
-                    if not text:
-                        continue
-                    self.transcript.emit(source, text)
-                    if self._test_mode:
-                        self.status.emit(f"Transcrito en {stt_ms} ms ({source}, {reason}).")
-                        continue
-
-                    # Tu voz: se guarda como contexto (para que Claude no te sugiera
-                    # repetir lo que ya dijiste) pero NUNCA dispara una sugerencia.
-                    if source == "mic":
-                        self._record("Yo", text)
-                        continue
-
-                    # En operacion normal solo respondemos a lo que dicen los demas.
-                    if source == "system":
-                        self._record("Ellos", text)
-                        self._anotar_oido(text)
-                        if reason == "silence":
-                            # Hubo pausa: te cedieron el turno. Aun asi, solo se
-                            # responde si pidieron algo (misma puerta 1 que en la
-                            # nube); si no, queda de contexto.
-                            if intent.parece_pregunta(text, self._language):
-                                self._respond(text, images=None,
-                                              permitir_silencio=True)
-                            else:
-                                self.status.emit(
-                                    "Sin pregunta todavia: guardado como contexto.")
-                                self.noAnswer.emit("no_question")
-                        else:
-                            # Monologo cortado por longitud: aun esta hablando.
-                            # Se guarda como contexto pero no se responde todavia.
-                            self.status.emit(
-                                "Sigue hablando... (guardado como contexto)")
-                elif item["type"] == "respond":
-                    # Turno cerrado en la nube: ya se acumulo todo lo que dijeron.
+                if item["type"] == "respond":
+                    # Turno cerrado: ya se acumulo todo lo que dijeron.
                     # 'auto' distingue lo que dispara el filtro de lo que pides tu
-                    # a mano: si lo pides tu, Claude no puede callarse.
+                    # a mano: si lo pides tu, el modelo no puede callarse.
                     self._respond(item["text"], images=None,
                                   permitir_silencio=item.get("auto", False))
                 elif item["type"] == "screenshot":
@@ -515,6 +521,9 @@ class CoachEngine(QtCore.QObject):
                 elif item["type"] == "regen":
                     self._respond(self._last_question, images=None,
                                   note=item.get("note", ""))
+                elif item["type"] == "revise":
+                    # Anadido que cambia la respuesta: se reescribe en su sitio.
+                    self._respond(item["text"], images=None, revision=True)
             except Exception as e:
                 log.exception("Worker failed on a %r item",
                               item.get("type") if isinstance(item, dict) else None)
@@ -545,40 +554,16 @@ class CoachEngine(QtCore.QObject):
             if self._running:
                 self.status.emit(f"Modelo listo ({ms / 1000:.1f} s de calentamiento).")
 
-    def _contexto(self, con_captura, latest=None):
-        """Transcripcion reciente, etiquetada por hablante.
-
-        Con captura se manda mucho mas hilo: el pantallazo suele ser una parte
-        del problema y el resto esta en lo que llevan rato contando. Se recorta
-        por el final, que es lo que mas pesa en lo que estan preguntando ahora.
-        """
-        previas = list(self._history)
-        # Lo que se responde ahora va aparte, en 'latest': si estuviera tambien
-        # aqui, el modelo lo veria dos veces.
-        if previas and latest is not None and previas[-1][1] == latest:
-            previas = previas[:-1]
-        cuantas = CONTEXTO_CAPTURA if con_captura else CONTEXTO_VOZ
-        lineas = [f"{quien}: {texto}" for quien, texto in previas[-cuantas:]]
-        if con_captura:
-            recortado, total = [], 0
-            for linea in reversed(lineas):
-                coste = len(linea) + (1 if recortado else 0)   # + "\n" joiner
-                if total + coste > LIMITE_CHARS_CAPTURA:
-                    break
-                recortado.append(linea)
-                total += coste
-            lineas = list(reversed(recortado))
-        return "\n".join(lineas)
-
-    def _respond(self, latest, images=None, note="", permitir_silencio=False):
-        # Contexto etiquetado por hablante: Claude ve quien dijo cada cosa y sabe
-        # que respondiste tu, evitando sugerirte que repitas.
-        self._last_question = latest
+    def _respond(self, latest, images=None, note="", permitir_silencio=False,
+                 revision=False):
+        # El contexto ya lo lleva la conversacion del coach (todo lo oido,
+        # etiquetado por quien lo dijo, y las sugerencias anteriores).
+        if not revision:
+            self._last_question = latest
         # Ese turno queda saldado: si luego llegan capturas, no se le vuelven a
         # emparejar (ver la rama de 'screenshot' en el bucle).
         if latest and latest == self._last_heard:
             self._heard_respondido = True
-        context = self._contexto(bool(images), latest)
 
         # Puerta 2: la respuesta puede empezar por el centinela, asi que no se
         # pinta nada hasta tener letras suficientes para descartarlo. Son once
@@ -593,7 +578,7 @@ class CoachEngine(QtCore.QObject):
                 metricas.medir(E2E, ms)
                 self._t_pregunta = 0.0
                 self.e2eLatency.emit(int(ms))
-            self.respStart.emit()
+            (self.respRevise if revision else self.respStart).emit()
             self.respDelta.emit(estado["buffer"])
 
         def on_delta(txt):
@@ -612,37 +597,61 @@ class CoachEngine(QtCore.QObject):
                 return
             abrir()
 
+        # Una revision que falla deja en pantalla la respuesta anterior, que
+        # sigue valiendo: su pregunta no se cierra.
+        def sin_respuesta():
+            if not revision:
+                self._cerrar_hilo()
+
+        def on_error(mensaje):
+            if not estado["abierto"]:
+                sin_respuesta()             # fallo antes de pintar nada
+            self.error.emit(mensaje)
+
         def on_done():
             if estado["callado"]:
+                # No habia pregunta: nada en pantalla, asi que tampoco puede
+                # quedar una pregunta abierta bloqueando la siguiente.
+                sin_respuesta()
                 self.status.emit("Sin pregunta todavia: guardado como contexto.")
                 self.noAnswer.emit("model_declined")
                 return
             if not estado["abierto"]:
                 if not estado["buffer"].strip():
+                    sin_respuesta()
                     return                  # respuesta vacia: no hay nada que pintar
                 abrir()                     # respuesta mas corta que el centinela
-            # La sugerencia entregada pasa a ser contexto. No se transcribe tu
-            # voz (seria un segundo stream), pero lo normal es que hayas dicho
-            # algo parecido a esto, y con ello el modelo deja de repetirse y
-            # puede continuar en vez de volver a empezar.
-            resumen = _resumen(estado["todo"])
-            if resumen:
-                self._history.append(("Yo (sugerido)", resumen))
+            # La sugerencia ya queda en la conversacion del coach: el modelo la
+            # da por dicha y continua desde ahi en vez de repetirse. Y en el
+            # hilo, para que el arbitro sepa que se le sugirio.
+            with self._hilo_lock:
+                if self._hilo is not None:
+                    self._hilo.respuesta = estado["todo"]
             # En el acta va la sugerencia ENTERA, con su codigo: es lo que luego
             # quieres releer para ver si la respuesta te sirvio de verdad.
-            self._registro.append(("Sugerido", estado["todo"]))
+            self._registro.append(("Sugerido (revisada)" if revision else "Sugerido",
+                                   estado["todo"]))
             self.respDone.emit()
 
-        self._coach.stream_response(
-            context_text=context,
-            latest=latest,
-            images=images,
-            note=note,
-            on_delta=on_delta,
-            on_done=on_done,
-            on_error=self.error.emit,
-            allow_silence=permitir_silencio,
-        )
+        self._generando = True
+        try:
+            self._coach.stream_response(
+                latest=latest,
+                images=images,
+                note=note,
+                on_delta=on_delta,
+                on_done=on_done,
+                on_error=on_error,
+                allow_silence=permitir_silencio,
+                revision=revision,
+            )
+        finally:
+            self._generando = False
+
+    def _cerrar_hilo(self):
+        """La pregunta abierta no llego a tener respuesta en pantalla."""
+        with self._hilo_lock:
+            self._hilo = None
 
     def stop(self):
         """Para la sesion dejandolo TODO limpio para el siguiente arranque.
@@ -671,6 +680,9 @@ class CoachEngine(QtCore.QObject):
         if self._stt is not None:
             self._stt.stop()
             self._stt = None
+        if self._stt_mic is not None:
+            self._stt_mic.stop()
+            self._stt_mic = None
 
         q = self._queue
         q.put(None)                      # desbloquea al worker si esta esperando
@@ -711,8 +723,8 @@ class CoachEngine(QtCore.QObject):
             with open(ruta, "w", encoding="utf-8") as f:
                 f.write(f"# Reunion del {time.strftime('%d/%m/%Y %H:%M')}\n\n")
                 for quien, texto in self._registro:
-                    if quien == "Sugerido":
-                        f.write(f"### Sugerido\n\n{texto.strip()}\n\n")
+                    if quien.startswith("Sugerido"):
+                        f.write(f"### {quien}\n\n{texto.strip()}\n\n")
                     else:
                         f.write(f"**{quien}:** {texto.strip()}\n\n")
             return ruta

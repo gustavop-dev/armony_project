@@ -155,6 +155,7 @@ class OverlayApp(QtCore.QObject):
         e.partial.connect(self.on_partial)
         e.noAnswer.connect(self.on_no_answer)
         e.respStart.connect(self.on_resp_start)
+        e.respRevise.connect(self.on_resp_revise)
         e.respDelta.connect(self.panel.append_answer)
         e.respDone.connect(self.on_resp_done)
         e.status.connect(self.on_status)
@@ -174,17 +175,12 @@ class OverlayApp(QtCore.QObject):
         test = bool(self.cfg.get("test_mode", False))
         # En Modo prueba NO se necesita API key: arranca directo.
         # Sin key y sin modo prueba: solo avisa (no salta a settings de golpe).
-        proveedor = self.cfg.get("llm_provider", "anthropic")
-        clave_llm = self.cfg.get("openai_api_key" if proveedor == "openai"
-                                 else "anthropic_api_key")
-        if not test and not clave_llm:
-            nombre = "OpenAI" if proveedor == "openai" else "Anthropic"
-            self.panel.set_status(f"Add your {nombre} API key in Settings (⚙) to start")
+        if not test and not self.cfg.get("openai_api_key"):
+            self.panel.set_status("Add your OpenAI API key in Settings (⚙) to start")
             return
-        # La transcripcion en la nube necesita su propia key; en modo offline no.
-        if not self.cfg.get("offline_mode") and not self.cfg.get("assemblyai_api_key"):
-            self.panel.set_status("Add your AssemblyAI key in Settings (⚙), "
-                                  "or turn on Offline mode")
+        # La transcripcion en la nube necesita su propia key.
+        if not self.cfg.get("assemblyai_api_key"):
+            self.panel.set_status("Add your AssemblyAI key in Settings (⚙) to start")
             return
         self._running = True
         self._elapsed = 0
@@ -363,6 +359,10 @@ class OverlayApp(QtCore.QObject):
             return
         if motivo == "model_declined":
             self.panel.show_skip("Not a question — Alt+5 to answer")
+        elif motivo == "follow_up":
+            # Anadieron algo a la pregunta que estas leyendo o contestando: no
+            # se te pone otra respuesta encima, pero puedes pedirla.
+            self.panel.show_skip("Added to the current question — Alt+5 for a new answer")
         else:
             self.panel.show_skip("No question yet — Alt+5 to answer")
 
@@ -383,6 +383,16 @@ class OverlayApp(QtCore.QObject):
         self.panel.clear_answer()        # abre una burbuja nueva en el hilo
         self.panel.set_state("generating")   # borde dorado vivo mientras genera
         self.panel.set_status("Drafting…")
+
+    def on_resp_revise(self):
+        """Lo que anadieron cambia la respuesta: se reescribe en su sitio."""
+        if not self._running:
+            return
+        self._responding = True
+        self.panel.hide_skip()
+        self.panel.revisar_respuesta()   # misma burbuja, marcada "Updated"
+        self.panel.set_state("generating")
+        self.panel.set_status("Updating…")
 
     def on_resp_done(self):
         self._responding = False
@@ -431,6 +441,7 @@ class OverlayApp(QtCore.QObject):
             self.engine.partial.disconnect()
             self.engine.noAnswer.disconnect()
             self.engine.respStart.disconnect()
+            self.engine.respRevise.disconnect()
             self.engine.respDelta.disconnect()
             self.engine.respDone.disconnect()
             self.engine.status.disconnect()

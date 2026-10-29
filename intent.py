@@ -2,11 +2,11 @@
 
 En una reunion la gente habla mucho mas de lo que pregunta: cuenta antecedentes,
 enumera, divaga. Responder a cada frase llenaria el panel de ruido justo cuando
-mas concentrado estas, asi que antes de molestar a Claude se mira si lo que
+mas concentrado estas, asi que antes de molestar al modelo se mira si lo que
 acaban de decir parece una pregunta o una peticion.
 
 Esta es la PRIMERA de dos puertas. Se equivoca a proposito por exceso: al dejar
-pasar de mas, Claude tiene la ultima palabra y puede callarse. Si en cambio se
+pasar de mas, el modelo tiene la ultima palabra y puede callarse. Si en cambio se
 quedara corta, la pregunta se perderia en silencio, y eso si se nota. Por eso
 ante la duda, pasa.
 

@@ -152,17 +152,12 @@ class BilingualPrompt(QtWidgets.QWidget):
         self._on_change(self._lang, self._texts[self._lang])
 
 
-# Modelos ofrecidos. Los tiempos de GPT son medianas de 5 llamadas medidas desde
-# este equipo, hasta la primera palabra en pantalla; de calidad no hay medida, asi
-# que no se ordenan por "listos".
-CLAUDE = [("claude-haiku-4-5", "Claude Haiku 4.5 — el más rápido"),
-          ("claude-sonnet-5", "Claude Sonnet 5 — equilibrado"),
-          ("claude-opus-4-8", "Claude Opus 4.8 — el más capaz")]
-
-GPT = [("gpt-5.4-mini", "GPT-5.4 mini — 0,7 s"),
-       ("gpt-5.6-terra", "GPT-5.6 terra — 0,8 s"),
-       ("gpt-5.6-luna", "GPT-5.6 luna — 1,2 s"),
-       ("gpt-5.6-sol", "GPT-5.6 sol — 1,3 s")]
+# El modelo es fijo (config: openai_model, gpt-6.1-sol); lo que se elige es
+# cuanto razona en cada uso. gpt-6.1-sol no acepta 'none'. Medido con 12
+# preguntas habladas: 'low' da la primera palabra en ~1,05 s.
+ESFUERZO = [("low", "low — el más rápido"),
+            ("medium", "medium — piensa más"),
+            ("high", "high — el más profundo, tarda más")]
 
 
 def _schema():
@@ -170,60 +165,33 @@ def _schema():
     return [
         ("connection", "bolt", "Conexión",
          "Credenciales y modelos que alimentan la transcripción y las respuestas.", [
-            dict(key="llm_provider", label="Proveedor de respuestas", type="select",
-                 hint="Quién redacta las sugerencias. Cada proveedor usa su propia "
-                      "clave y su propio modelo, elegidos abajo.",
-                 options=[("anthropic", "Anthropic (Claude)"),
-                          ("openai", "OpenAI (GPT)")]),
-            # --- Anthropic (solo si es el proveedor elegido) ---
-            dict(key="anthropic_api_key", label="API key de Anthropic", type="text",
-                 secret=True, placeholder="sk-ant-…", visible_si=("llm_provider", "anthropic"),
-                 hint="Sin ella no arranca la reunión (salvo Modo prueba)."),
-            dict(key="anthropic_model_voice", label="Modelo · preguntas habladas",
-                 type="select", visible_si=("llm_provider", "anthropic"),
-                 hint="Para lo que te preguntan hablando. Aquí manda la rapidez: "
-                      "Haiku es el más rápido.",
-                 options=CLAUDE),
-            dict(key="anthropic_tokens_voice", label="Longitud máx. · habladas",
-                 type="number", min=100, max=1000, step=50, unit=" tok",
-                 visible_si=("llm_provider", "anthropic"),
-                 hint="Cuánto puede extenderse la respuesta hablada."),
-            dict(key="anthropic_model_vision", label="Modelo · capturas de pantalla",
-                 type="select", visible_si=("llm_provider", "anthropic"),
-                 hint="Para los pantallazos, donde suele haber código que resolver. "
-                      "Aquí compensa uno más capaz aunque tarde algo más.",
-                 options=CLAUDE),
-            dict(key="anthropic_tokens_vision", label="Longitud máx. · capturas",
-                 type="number", min=200, max=4000, step=100, unit=" tok",
-                 visible_si=("llm_provider", "anthropic"),
-                 hint="El código ocupa: quedarse corto lo deja cortado a medias."),
-
-            # --- OpenAI (solo si es el proveedor elegido) ---
             dict(key="openai_api_key", label="API key de OpenAI", type="text",
-                 secret=True, placeholder="sk-proj-…", visible_si=("llm_provider", "openai"),
+                 secret=True, placeholder="sk-proj-…",
                  hint="Sin ella no arranca la reunión (salvo Modo prueba)."),
-            dict(key="openai_model_voice", label="Modelo · preguntas habladas",
-                 type="select", visible_si=("llm_provider", "openai"),
-                 hint="Para lo que te preguntan hablando. El tiempo es hasta la "
-                      "PRIMERA palabra en pantalla, medido desde este equipo.",
-                 options=GPT),
+            dict(key="openai_effort_voice", label="Razonamiento · preguntas habladas",
+                 type="select",
+                 hint="Para lo que te preguntan hablando: manda la rapidez. "
+                      "Modelo: GPT-6.1 sol.",
+                 options=ESFUERZO),
             dict(key="openai_tokens_voice", label="Longitud máx. · habladas",
                  type="number", min=100, max=1000, step=50, unit=" tok",
-                 visible_si=("llm_provider", "openai"),
                  hint="Cuánto puede extenderse la respuesta hablada."),
-            dict(key="openai_model_vision", label="Modelo · capturas de pantalla",
-                 type="select", visible_si=("llm_provider", "openai"),
+            dict(key="openai_effort_vision", label="Razonamiento · capturas de pantalla",
+                 type="select",
                  hint="Para los pantallazos, donde suele haber código que resolver. "
-                      "Aquí compensa uno más capaz aunque tarde algo más.",
-                 options=GPT),
+                      "Aquí compensa que piense más aunque tarde algo más.",
+                 options=ESFUERZO),
             dict(key="openai_tokens_vision", label="Longitud máx. · capturas",
                  type="number", min=200, max=4000, step=100, unit=" tok",
-                 visible_si=("llm_provider", "openai"),
                  hint="El código ocupa: quedarse corto lo deja cortado a medias."),
+            dict(key="typesafe_api_key", label="API key de TypeSafe (Jev)", type="text",
+                 secret=True, placeholder="apikey_…",
+                 hint="Opcional. Decide si lo que añaden a una pregunta cambia la "
+                      "respuesta o es ruido. Sin ella, todo añadido es contexto."),
             dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
                  secret=True, placeholder="…",
-                 hint="Transcripción en vivo en la nube. Sin ella solo funciona "
-                      "el modo offline."),
+                 hint="Transcripción en vivo en la nube. Sin ella no se puede "
+                      "iniciar una reunión."),
             dict(key="language", label="Idioma", type="select",
                  hint="Idioma del reconocimiento de voz. Auto detecta solo y "
                       "admite cambios de idioma a mitad de frase.",
@@ -232,24 +200,6 @@ def _schema():
                  type="number", min=0.1, max=0.9, step=0.05, unit="",
                  hint="Cuánta seguridad exige para dar por terminado el turno. "
                       "Bajo = responde antes; alto = espera más y se corta menos."),
-         ]),
-        ("offline", "chip", "Modo offline",
-         "Transcripción local con Whisper: sin internet y sin que el audio salga "
-         "del equipo. A cambio no hay texto en vivo y hay más retardo.", [
-            dict(key="offline_mode", label="Activar modo offline", type="toggle",
-                 hint="Apagado: transcribe AssemblyAI en vivo. Encendido: Whisper "
-                      "local en este equipo."),
-            dict(key="whisper_size", label="Tamaño Whisper", type="select",
-                 hint="Solo en modo offline. En GPU, 'small' mejora bastante la "
-                      "transcripción y sigue siendo rápido (recomendado).",
-                 options=[("tiny", "1 · tiny — el más rápido, menos preciso"),
-                          ("base", "2 · base — equilibrado"),
-                          ("small", "3 · small — preciso (recomendado)"),
-                          ("medium", "4 · medium — máxima precisión, más lento")]),
-            dict(key="whisper_device", label="Dispositivo STT", type="select",
-                 hint="Solo en modo offline. cuda = GPU NVIDIA · cpu = procesador "
-                      "· auto = detecta.",
-                 options=[("auto", "auto"), ("cpu", "cpu"), ("cuda", "cuda")]),
          ]),
         ("overlay", "window", "Overlay",
          "Cómo se ve y se comporta la ventana flotante sobre tus reuniones.", [
@@ -262,36 +212,24 @@ def _schema():
                  hint="Transparencia de las ventanas. Bajo = se ve más el fondo."),
          ]),
         ("audio", "microphone", "Sensibilidad de audio",
-         "Cómo se capta y limpia el audio antes de detectar voz.", [
+         "Cómo se capta el audio antes de transcribirlo.", [
             dict(key="gain_system", label="Ganancia reunión", type="number",
                  min=0.5, max=10, step=0.5, unit="x",
                  hint="Amplifica el audio del sistema antes de medir nivel."),
             dict(key="gain_mic", label="Ganancia micrófono", type="number",
                  min=0.5, max=10, step=0.5, unit="x",
                  hint="Amplifica tu micro (y también el ruido de fondo)."),
-            dict(key="speech_threshold", label="Umbral de voz", type="number",
-                 # min must sit on the step grid: 0.002..0.100 holds the 0.012 default.
-                 min=0.002, max=0.1, step=0.002, unit="",
-                 hint="Energía mínima para considerar que hay voz. Menor = más sensible."),
-            dict(key="transcribe_mic", label="Transcribir también mi voz", type="toggle",
-                 hint="Solo en modo offline. Añade tus intervenciones al contexto; "
-                      "nunca dispara una sugerencia sola."),
-            dict(key="mic_echo_gate", label="Anti-eco del micrófono", type="toggle",
-                 hint="Ignora el micro mientras suena la reunión. Con auriculares es indiferente."),
-            dict(key="auto_normalize", label="Normalizar cada frase", type="toggle",
-                 hint="Solo en modo offline: lleva cada frase al nivel óptimo antes "
-                      "de Whisper."),
+            dict(key="listen_mic", label="Escuchar mi micrófono", type="toggle",
+                 hint="Transcribe tu voz para saber que ya contestaste y no ponerte "
+                      "otra respuesta encima. Nunca genera respuestas. Usa "
+                      "auriculares."),
          ]),
         ("phrases", "scissors", "Detección de frases",
          "Cuándo se da una frase por terminada y se dispara la respuesta.", [
             dict(key="silence_hang", label="Pausa de fin de turno", type="number",
                  min=0.3, max=2, step=0.1, unit=" s",
-                 hint="Pausa que espera antes de responder. Con la transcripción en "
-                      "vivo agrupa las frases seguidas de una misma intervención."),
-            dict(key="max_utterance", label="Corte de monólogo largo", type="number",
-                 min=3, max=20, step=1, unit=" s",
-                 hint="Solo en modo offline. Corte de seguridad en monólogos; esos "
-                      "fragmentos NO disparan respuesta."),
+                 hint="Pausa que espera antes de responder. Agrupa las frases "
+                      "seguidas de una misma intervención."),
          ]),
         ("coach", "chat", "Coach",
          "Cómo se comporta la IA. Un prompt por idioma; el qué sabe vive en Contexts.", [

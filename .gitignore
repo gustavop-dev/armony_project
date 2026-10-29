@@ -39,3 +39,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# STT evaluation harness: downloaded datasets and run reports
+.stt_eval_cache/
+stt_eval/runs/
