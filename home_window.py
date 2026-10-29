@@ -12,6 +12,8 @@ Como la de ChatGPT, Claude o Grok, pero para reuniones:
   - todo lo escrito en markdown se lee formateado; "Editar" lo abre en bruto.
   - el tono de cada agente se escribe o se saca de tus chats de WhatsApp
     (estilo.py): solo tus mensajes, y solo cuando lo pides.
+  - cada agente tiene su personaje y su color (avatares.py); se cambian
+    pulsando el personaje.
   - permisos de cada agente: notetaker, responder al pedir o automatico,
     capturas de pantalla y notas al terminar. Las notas de una reunion se
     leen en su pagina, junto a la transcripcion.
@@ -28,6 +30,7 @@ import zipfile
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import agents as agents_mod
+import avatares
 import config as cfg_mod
 import contexts as ctx_mod
 import estilo
@@ -328,9 +331,13 @@ class AgentRow(NavItem):
         self._hover = False
         self._tiene = n_reuniones > 0
         self._desplegado = desplegado
+        self._cara = avatares.de_agente(agente)
         super().__init__("chat", agente["name"])
         self.setObjectName("agente")
         self.setProperty("agente", agente["id"])
+        # Su personaje en vez del icono de chat.
+        self._icon.setFixedSize(26, 26)
+        self._icon.setPixmap(avatares.pixmap(*self._cara, 26))
         self._lab.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         lay = self.layout()
         lay.setContentsMargins(24, 12, 16, 12)
@@ -357,6 +364,8 @@ class AgentRow(NavItem):
 
     def set_active(self, on):
         super().set_active(on)
+        if hasattr(self, "_cara"):
+            self._icon.setPixmap(avatares.pixmap(*self._cara, 26))
         if hasattr(self, "btn_editar"):
             self._actualizar()
 
@@ -381,6 +390,109 @@ class _Trabajo(QtCore.QObject):
     """Lleva el resultado de un hilo de fondo al hilo de Qt (conexion en cola)."""
     listo = QtCore.Signal(object)
     fallo = QtCore.Signal(str)
+
+
+class _BotonPersonaje(QtWidgets.QAbstractButton):
+    """Un personaje del selector: en relieve; el elegido, hundido."""
+
+    def __init__(self, personaje, color):
+        super().__init__()
+        self.personaje, self.color = personaje, color
+        self.setCheckable(True)
+        self.setFixedSize(68, 68)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip(avatares.PERSONAJES[personaje][0])
+
+    def paintEvent(self, _e):
+        p = QtGui.QPainter(self)
+        modo = "hundido" if self.isChecked() else "relieve"
+        p.drawPixmap(0, 0, N.superficie(self.width(), self.height(), 8, 16, modo, 4))
+        avatares.pintar(p, QtCore.QRectF(16, 16, 36, 36), self.personaje, self.color)
+        p.end()
+
+
+class _BotonColor(QtWidgets.QAbstractButton):
+    """Una muestra de color: circulo; el elegido, con un aro."""
+
+    def __init__(self, cid, hexa, nombre):
+        super().__init__()
+        self.cid, self.hexa = cid, hexa
+        self.setCheckable(True)
+        self.setFixedSize(34, 34)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip(nombre)
+
+    def paintEvent(self, _e):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        if self.isChecked():
+            p.setPen(QtGui.QPen(QtGui.QColor(self.hexa), 2))
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawEllipse(QtCore.QRectF(2, 2, 30, 30))
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(self.hexa))
+        p.drawEllipse(QtCore.QRectF(7, 7, 20, 20))
+        p.end()
+
+
+class ElegirPersonaje(QtWidgets.QDialog):
+    """Personaje y color de un agente, con la vista previa en grande."""
+
+    def __init__(self, personaje, color, nombre, parent=None):
+        super().__init__(parent)
+        self.personaje, self.color = personaje, color
+        self.setWindowTitle("Personaje")
+        self.setStyleSheet(f"QDialog {{ background: {N.BG}; }} QLabel {{ background: transparent; }}")
+        v = QtWidgets.QVBoxLayout(self); v.setContentsMargins(26, 22, 26, 18); v.setSpacing(12)
+        self.vista = avatares.Avatar(personaje, color, 112, vivo=True)
+        v.addWidget(self.vista, 0, QtCore.Qt.AlignHCenter)
+        self.titulo = QtWidgets.QLabel(nombre)
+        tf = self.titulo.font(); tf.setPixelSize(18); tf.setWeight(QtGui.QFont.DemiBold)
+        self.titulo.setFont(tf)
+        self.titulo.setAlignment(QtCore.Qt.AlignCenter)
+        self.titulo.setStyleSheet(f"color: {N.TITULO};")
+        v.addWidget(self.titulo)
+        rejilla = QtWidgets.QGridLayout(); rejilla.setSpacing(2)
+        self._personajes = {}
+        for i, pid in enumerate(avatares.PERSONAJES):
+            b = _BotonPersonaje(pid, color)
+            b.setObjectName(f"personaje-{pid}")
+            b.setChecked(pid == personaje)
+            b.clicked.connect(lambda _c=False, x=pid: self._elegir(personaje=x))
+            self._personajes[pid] = b
+            rejilla.addWidget(b, i // 4, i % 4)
+        v.addLayout(rejilla)
+        colores = QtWidgets.QHBoxLayout(); colores.setSpacing(4)
+        colores.addStretch()
+        self._colores = {}
+        for cid, nombre_color, hexa in avatares.COLORES:
+            b = _BotonColor(cid, hexa, nombre_color)
+            b.setObjectName(f"color-{cid}")
+            b.setChecked(cid == color)
+            b.clicked.connect(lambda _c=False, x=cid: self._elegir(color=x))
+            self._colores[cid] = b
+            colores.addWidget(b)
+        colores.addStretch()
+        v.addLayout(colores)
+        botones = QtWidgets.QHBoxLayout(); botones.addStretch()
+        cancelar = N.Button("Cancelar", radio=14)
+        cancelar.clicked.connect(self.reject)
+        listo = N.Button("Listo", variante="acento", radio=14)
+        listo.setObjectName("listo")
+        listo.clicked.connect(self.accept)
+        botones.addWidget(cancelar); botones.addWidget(listo)
+        v.addLayout(botones)
+
+    def _elegir(self, personaje=None, color=None):
+        self.personaje = personaje or self.personaje
+        self.color = color or self.color
+        for pid, b in self._personajes.items():
+            b.setChecked(pid == self.personaje)
+            b.color = self.color
+            b.update()
+        for cid, b in self._colores.items():
+            b.setChecked(cid == self.color)
+        self.vista.set_personaje(self.personaje, self.color)
 
 
 class ElegirAutor(QtWidgets.QDialog):
@@ -806,11 +918,7 @@ class HomeWindow(QtWidgets.QWidget):
         tarjeta.setObjectName("portada")
         tarjeta.setFixedWidth(560)
         t = QtWidgets.QVBoxLayout(tarjeta); t.setContentsMargins(40, 30, 40, 30); t.setSpacing(10)
-        inicial = N.Button(a["name"][:1].upper() or "?", redondo=64, prof=5)
-        f = inicial.font(); f.setPixelSize(26); f.setWeight(QtGui.QFont.DemiBold); inicial.setFont(f)
-        inicial.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-        inicial.setFocusPolicy(QtCore.Qt.NoFocus)
-        t.addWidget(inicial, 0, QtCore.Qt.AlignHCenter)
+        t.addWidget(self._cara_agente(a, 96, vivo=True), 0, QtCore.Qt.AlignHCenter)
         nombre = QtWidgets.QLabel(a["name"])
         nombre.setObjectName("nombre-portada")
         nf = nombre.font(); nf.setPixelSize(24); nf.setWeight(QtGui.QFont.DemiBold); nombre.setFont(nf)
@@ -854,6 +962,36 @@ class HomeWindow(QtWidgets.QWidget):
         v.addStretch(2)
         return page
 
+    def _cara_agente(self, a, lado, vivo=False):
+        """El personaje del agente; al pulsarlo se cambia (personaje y color)."""
+        cara = avatares.Avatar(*avatares.de_agente(a), lado, vivo=vivo)
+        cara.setObjectName("cara")
+        cara.setCursor(QtCore.Qt.PointingHandCursor)
+        cara.setToolTip("Cambiar personaje y color")
+        cara.clicked.connect(lambda aid=a["id"]: self.cambiar_personaje(aid))
+        return cara
+
+    def _elegir_personaje(self, personaje, color, nombre):
+        """Dialogo: (personaje, color) o None si se cancela."""
+        dialogo = ElegirPersonaje(personaje, color, nombre, self)
+        if self.proteger_ventana is not None:
+            self.proteger_ventana(dialogo)
+        if dialogo.exec() != QtWidgets.QDialog.Accepted:
+            return None
+        return dialogo.personaje, dialogo.color
+
+    def cambiar_personaje(self, aid):
+        a = self._ag_get(aid)
+        if a is None:
+            return
+        elegido = self._elegir_personaje(*avatares.de_agente(a), a["name"])
+        if elegido is None:
+            return
+        a["personaje"], a["color"] = elegido
+        self._marcar()
+        self._rellenar_lista()
+        self._mostrar()
+
     def _vista_agente(self, a):
         page, v = self._pagina()
         top = QtWidgets.QHBoxLayout(); top.setSpacing(8)
@@ -862,6 +1000,7 @@ class HomeWindow(QtWidgets.QWidget):
         volver.setToolTip("Volver al agente")
         volver.clicked.connect(lambda _c=False, aid=a["id"]: self.abrir_agente(aid))
         top.addWidget(volver)
+        top.addWidget(self._cara_agente(a, 40))
         name = QtWidgets.QLineEdit(a["name"])
         name.setObjectName("nombre-agente")
         name.setStyleSheet(N.qss_campo() + "QLineEdit { font-weight: 600; font-size: 18px; }")

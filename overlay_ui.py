@@ -12,6 +12,7 @@ import math
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
 
+import avatares
 import icons
 from feedanchor import ANCLADO, FeedAnchor
 import richtext
@@ -849,15 +850,22 @@ class AgentChip(QtWidgets.QPushButton):
         # de pantalla igual que el overlay (si no, se veria al compartir).
         self.antes_de_mostrar = None
         self._agentes = []
+        self._caras = {}
+        self._expresion = avatares.ABIERTOS
         self.activo = ""
         self.clicked.connect(self._abrir)
         self.setVisible(False)
 
+    _CARA = 18                # lado del personaje junto al nombre
+
     def set_agents(self, agentes, activo):
-        """agentes: [(id, nombre)]; activo: id del que se usa."""
-        self._agentes = list(agentes)
+        """agentes: [(id, nombre)] o [(id, nombre, (personaje, color))];
+        activo: id del que se usa."""
+        self._agentes = [(a[0], a[1]) for a in agentes]
+        self._caras = {a[0]: a[2] for a in agentes if len(a) > 2}
         self.activo = activo
         self.nombre = next((n for a, n in self._agentes if a == activo), "")
+        self._pintar_cara()
         # Aun sin colocar no se sabe el ancho: se rotula con el maximo y el
         # resizeEvent lo ajusta al que le toque.
         self._rotular(self.sizeHint().width())
@@ -867,7 +875,7 @@ class AgentChip(QtWidgets.QPushButton):
     def _rotular(self, ancho=None):
         fm = self.fontMetrics()
         ancho = self.width() if ancho is None else ancho
-        libre = min(self._ANCHO_MAX, ancho - self._RELLENO
+        libre = min(self._ANCHO_MAX, ancho - self._RELLENO - self._hueco_cara()
                     - fm.horizontalAdvance(self._FLECHA))
         # Si cabe, entero: elidedText recorta por redondeo con el ancho justo.
         nombre = (self.nombre if fm.horizontalAdvance(self.nombre) <= libre
@@ -877,8 +885,26 @@ class AgentChip(QtWidgets.QPushButton):
     def sizeHint(self):
         fm = self.fontMetrics()
         ancho = (min(self._ANCHO_MAX, fm.horizontalAdvance(self.nombre))
-                 + fm.horizontalAdvance(self._FLECHA) + self._RELLENO)
+                 + fm.horizontalAdvance(self._FLECHA) + self._RELLENO + self._hueco_cara())
         return QtCore.QSize(ancho, super().sizeHint().height())
+
+    def _hueco_cara(self):
+        return self._CARA + 6 if not self.icon().isNull() else 0
+
+    def _pintar_cara(self):
+        cara = getattr(self, "_caras", {}).get(self.activo)
+        if cara is None:
+            self.setIcon(QtGui.QIcon())
+            return
+        self.setIcon(QtGui.QIcon(avatares.pixmap(*cara, self._CARA, self._expresion)))
+        self.setIconSize(QtCore.QSize(self._CARA, self._CARA))
+
+    def set_pensando(self, on):
+        """Mientras redacta la respuesta, el personaje mira hacia arriba."""
+        expresion = avatares.PENSANDO if on else avatares.ABIERTOS
+        if expresion != self._expresion:
+            self._expresion = expresion
+            self._pintar_cara()
 
     def minimumSizeHint(self):
         # Cede el titulo del panel, no el agente: es lo que se pulsa. Su ancho
@@ -893,6 +919,8 @@ class AgentChip(QtWidgets.QPushButton):
         self.menu.clear()
         for aid, nombre in self._agentes:
             accion = self.menu.addAction(nombre)
+            if aid in self._caras:
+                accion.setIcon(QtGui.QIcon(avatares.pixmap(*self._caras[aid], 18)))
             accion.setCheckable(True)
             accion.setChecked(aid == self.activo)
             accion.triggered.connect(lambda _c=False, a=aid: self.chosen.emit(a))
@@ -1613,6 +1641,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         """idle | listening | generating -> cambia el borde y el pulso."""
         self._state = state
         self.bars.set_listening(state in ("listening", "generating"))
+        if self.modo == "voz":
+            self.agent_chip.set_pensando(state == "generating")
         self._apply_border()
         self._render_question()
 

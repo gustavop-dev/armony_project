@@ -446,3 +446,19 @@ def test_agent_name_that_fits_is_never_cut(panel, qtbot, nombre):
     qtbot.waitExposed(panel)
 
     assert panel.agent_chip.text() == f"{nombre} ▾"
+
+
+def test_agent_title_carries_its_character(panel):
+    panel.set_agents([("grok", "Grok", ("zorro", "coral"))], "grok")
+
+    assert panel.agent_chip.icon().isNull() is False
+
+
+def test_character_thinks_while_drafting(panel):
+    panel.set_agents([("grok", "Grok", ("zorro", "coral"))], "grok")
+
+    panel.set_state("generating")
+    pensando = panel.agent_chip._expresion
+    panel.set_state("listening")
+
+    assert (pensando, panel.agent_chip._expresion) == ("pensando", "abiertos")

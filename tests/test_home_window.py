@@ -5,6 +5,7 @@ import pytest
 from PySide6 import QtCore, QtWidgets
 
 import agents
+import avatares
 import config
 import home_window as hw
 import sesiones
@@ -706,3 +707,45 @@ def test_failed_notes_are_explained(make_home):
 
     assert _find(win, QtWidgets.QTextBrowser, "notas").toPlainText().startswith(
         "No se pudieron generar las notas")
+
+
+# ------------------------------------------------------------------ characters
+def test_agent_page_shows_its_character(make_home):
+    win = make_home(agent="grok")
+
+    cara = _find(win, avatares.Avatar, "cara")
+
+    assert (cara.personaje, cara.color) == ("zorro", "coral")
+
+
+def test_picking_a_character_and_colour_is_saved(make_home, monkeypatch):
+    win = make_home(agent="grok")
+    monkeypatch.setattr(win, "_elegir_personaje", lambda p, c, n: ("oso", "lavanda"))
+
+    win.cambiar_personaje("grok")
+    win.guardar_ya()
+
+    g = agents.get("grok")
+    assert (g["personaje"], g["color"]) == ("oso", "lavanda")
+    assert win._filas_agente["grok"]._cara == ("oso", "lavanda")
+
+
+def test_cancelled_picker_changes_nothing(make_home, monkeypatch):
+    win = make_home(agent="grok")
+    monkeypatch.setattr(win, "_elegir_personaje", lambda p, c, n: None)
+
+    win.cambiar_personaje("grok")
+
+    assert win._dirty is False
+
+
+def test_picker_previews_the_choice(qtbot):
+    dialogo = hw.ElegirPersonaje("gota", "pervinca", "Coach")
+    qtbot.addWidget(dialogo)
+
+    qtbot.mouseClick(dialogo.findChild(QtWidgets.QAbstractButton, "personaje-robot"), LEFT)
+    qtbot.mouseClick(dialogo.findChild(QtWidgets.QAbstractButton, "color-menta"), LEFT)
+
+    assert (dialogo.personaje, dialogo.color) == ("robot", "menta")
+    assert (dialogo.vista.personaje, dialogo.vista.color) == ("robot", "menta")
+    assert dialogo._personajes["robot"].isChecked() and not dialogo._personajes["gota"].isChecked()

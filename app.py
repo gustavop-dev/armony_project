@@ -15,6 +15,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import agents as agents_mod
 import applog
+import avatares
 import config as cfg_mod
 import theme as T
 from engine import CoachEngine
@@ -253,7 +254,8 @@ class OverlayApp(QtCore.QObject):
             log.warning("Agents not readable (%s)", type(e).__name__)
             return
         activo = agents_mod.get(self.cfg.get("agent"))["id"]
-        self.panel.set_agents([(a["id"], a["name"]) for a in lista], activo)
+        self.panel.set_agents([(a["id"], a["name"], avatares.de_agente(a)) for a in lista],
+                              activo)
 
     def choose_agent(self, agent_id):
         """Elegido en el overlay: se guarda y, si hay reunion, la siguiente

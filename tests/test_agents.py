@@ -197,3 +197,26 @@ def test_unknown_mode_falls_back_to_automatic(isolated_data_dir):
 ])
 def test_notetaker_has_no_screens_and_always_notes(agente, capturas, notas):
     assert (agents.usa_capturas(agente), agents.toma_notas(agente)) == (capturas, notas)
+
+
+def test_every_preset_has_its_own_face():
+    caras = [(agents.preset(p)["personaje"], agents.preset(p)["color"]) for p in agents.PRESETS]
+
+    assert len(set(caras)) == len(caras)
+
+
+def test_new_agents_rotate_faces():
+    lista = agents.list_agents()
+    uno = agents.nuevo(lista)
+    dos = agents.nuevo(lista + [uno])
+
+    assert (uno["personaje"], uno["color"]) != (dos["personaje"], dos["color"])
+
+
+def test_face_survives_a_round_trip():
+    lista = agents.list_agents()
+    lista[0].update(personaje="oso", color="lavanda")
+    agents.write_all(lista)
+
+    c = agents.get("coach")
+    assert (c["personaje"], c["color"]) == ("oso", "lavanda")

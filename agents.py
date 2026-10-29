@@ -7,6 +7,7 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
      "reglas": "...como funciona la conversacion, formato, codigo...",
      "tono": "...como hablas: registro, muletillas, ritmo...",
      "modo": "automatico", "capturas": true, "notas": true,
+     "personaje": "zorro", "color": "coral",
      "conocimiento": [{"id": "doc-1", "name": "Mi CV", "body": "..."}]}
 
 - Las dos partes se editan enteras desde Configuracion. 'reglas' es la mecanica
@@ -20,6 +21,7 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
   solo cuando lo pides; automatico: responde en cuanto detecta una pregunta),
   'capturas' (puede usar pantallazos) y 'notas' (notas al terminar; el
   notetaker las toma siempre).
+- 'personaje' y 'color': su cara (avatares.py), en la Home y en el overlay.
 - 'conocimiento': documentos markdown del agente (CV, oferta, producto...),
   como los de un GPT o un proyecto. Se le dan enteros al empezar la reunion.
 - El que se usa es config["agent"]. Al empezar la reunion su texto y su
@@ -96,6 +98,10 @@ _SENIOR = (
     "- Tono tranquilo y seguro, de quien ya lo ha hecho; sin listas recitadas.\n"
     "- Si falta contexto, di qué supones y sigue.")
 
+# Cara de cada agente de ejemplo: (personaje, color) de avatares.py.
+CARAS = {"coach": ("gota", "pervinca"), "directo": ("robot", "grafito"),
+         "grok": ("zorro", "coral"), "senior": ("buho", "menta")}
+
 # id -> (nombre, instrucciones). Las reglas de todos son las de llm.REGLAS.
 PRESETS = {
     "coach": ("Coach", prompt_bilingue(cfg_mod.DEFAULT_PROMPT_ES,
@@ -110,7 +116,9 @@ def preset(preset_id):
     """El agente de ejemplo tal cual viene (desconocido -> Coach)."""
     pid = preset_id if preset_id in PRESETS else DEFAULT_ID
     nombre, instrucciones = PRESETS[pid]
+    personaje, color = CARAS[pid]
     return {"id": pid, "name": nombre, "preset": pid,
+            "personaje": personaje, "color": color,
             "instrucciones": instrucciones, "reglas": REGLAS, "tono": "",
             "modo": AUTOMATICO, "capturas": True, "notas": True,
             "conocimiento": []}
@@ -118,8 +126,15 @@ def preset(preset_id):
 
 def nuevo(existentes, nombre="Nuevo agente"):
     """Agente nuevo: copia del Coach, para partir de lo que ya funciona."""
+    import avatares
     base = preset(DEFAULT_ID)
-    base.update(id=next_id(existentes), name=nombre)
+    # Cada agente nuevo con otra cara: personaje y color van rotando.
+    n = len(existentes)
+    personajes = list(avatares.PERSONAJES)
+    colores = [c for c, _, _ in avatares.COLORES]
+    base.update(id=next_id(existentes), name=nombre,
+                personaje=personajes[n % len(personajes)],
+                color=colores[(n * 3 + 1) % len(colores)])
     return base
 
 
@@ -179,6 +194,8 @@ def list_agents():
                     "modo": data.get("modo") if data.get("modo") in MODOS else AUTOMATICO,
                     "capturas": bool(data.get("capturas", True)),
                     "notas": bool(data.get("notas", True)),
+                    "personaje": str(data.get("personaje") or base["personaje"]),
+                    "color": str(data.get("color") or base["color"]),
                     "conocimiento": [
                         {"id": str(d.get("id") or f"doc-{i + 1}"),
                          "name": str(d.get("name") or "Documento"),
@@ -210,6 +227,8 @@ def write_all(agentes):
                  "modo": a.get("modo", AUTOMATICO),
                  "capturas": bool(a.get("capturas", True)),
                  "notas": bool(a.get("notas", True)),
+                 "personaje": a.get("personaje", ""),
+                 "color": a.get("color", ""),
                  "conocimiento": a.get("conocimiento", [])}
         with open(os.path.join(AGENTS_DIR, a["id"] + ".json"), "w",
                   encoding="utf-8") as f:
