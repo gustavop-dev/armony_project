@@ -270,7 +270,8 @@ def _schema():
                  min=0.5, max=10, step=0.5, unit="x",
                  hint="Amplifica tu micro (y también el ruido de fondo)."),
             dict(key="speech_threshold", label="Umbral de voz", type="number",
-                 min=0.001, max=0.1, step=0.002, unit="",
+                 # min must sit on the step grid: 0.002..0.100 holds the 0.012 default.
+                 min=0.002, max=0.1, step=0.002, unit="",
                  hint="Energía mínima para considerar que hay voz. Menor = más sensible."),
             dict(key="transcribe_mic", label="Transcribir también mi voz", type="toggle",
                  hint="Solo en modo offline. Añade tus intervenciones al contexto; "

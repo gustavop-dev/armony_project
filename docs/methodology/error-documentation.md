@@ -22,7 +22,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P2 | ~~KNOWN-402~~ ERR-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
 | P3 | KNOWN-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
 | P3 | ~~KNOWN-101~~ ERR-101, ~~KNOWN-102~~ ERR-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
-| P3 | KNOWN-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
+| P3 | ~~KNOWN-601~~ ERR-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
 | P3 | KNOWN-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
 | P3 | KNOWN-503, KNOWN-504, KNOWN-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
 | P3 | KNOWN-701 | Capture context can exceed 8000 chars by ≤ 79 | any engine branch |
@@ -54,21 +54,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
 - **Proposed fix:** run the `_eaten` key-up check before the `if self._passthrough: return False` branch.
 - **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
-### [KNOWN-601] `speech_threshold` slider cannot represent its default value
-- **Where:** `settings_window.py:630-633` (`_number_control`: `steps = round((max-min)/step)`, `value = round((val-min)/step)`), field schema at `settings_window.py:272` (min 0.001, step 0.002, max 0.1).
-- **Reproduced (2026-10-28) in `SettingsWindow`**, config `speech_threshold=0.012` (default):
-
-  | Action | Label | Saved to `config.json` |
-  |---|---|---|
-  | open | `0.013` (slider 6/50) | — |
-  | Save without touching | `0.013` | `0.012` |
-  | slider +1 then -1, Save | `0.013` | `0.013` |
-  | slider at max, Save | — | `0.101` (above declared max 0.1) |
-- **Scope:** checked all 11 numeric fields in `_schema()`: only `speech_threshold` has an off-grid default or an off-grid max.
-- **Root cause:** `(0.012 - 0.001) / 0.002 = 5.5` is not an integer; `(0.1 - 0.001) / 0.002 = 49.5` rounds up to 50.
-- **Impact:** low. The displayed value differs from the stored one until the slider is touched; then the threshold becomes 0.013 (≈8% less sensitive voice detection / echo gate, `audio.py:271`).
-- **Proposed fix:** `min=0.002` (grid 0.002…0.100 contains 0.012 and 0.1) or `step=0.001`.
-- **Test:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`
 ### [KNOWN-502] Question caret never blinks
 - **Where:** `overlay_ui.py:1242` (`_animate` re-renders the caret only when `self._question_text`); `_question_text` is set to `""` at `overlay_ui.py:964` and never assigned again.
 - **Reproduced (2026-10-28):** `set_state("listening"); set_question("Tell me about")`, 1.5 s → caret stays visible.
@@ -276,3 +261,19 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** false negative at gate 1: the turn is stored as context and no suggestion is requested; the user must press Alt+5. Only when the transcript lacks `?`.
 - **Resolution (2026-10-28):** Tokens are `[a-z0-9]+` (apostrophe splits), so `what's` yields `what`.
 - **Regression tests:** `tests/test_intent.py::test_english_contracted_interrogative_is_a_question`, `::test_english_gate_regressions`
+
+### [ERR-601] `speech_threshold` slider cannot represent its default value
+- **Where:** `settings_window.py:630-633` (`_number_control`: `steps = round((max-min)/step)`, `value = round((val-min)/step)`), field schema at `settings_window.py:272` (min 0.001, step 0.002, max 0.1).
+- **Reproduced (2026-10-28) in `SettingsWindow`**, config `speech_threshold=0.012` (default):
+
+  | Action | Label | Saved to `config.json` |
+  |---|---|---|
+  | open | `0.013` (slider 6/50) | — |
+  | Save without touching | `0.013` | `0.012` |
+  | slider +1 then -1, Save | `0.013` | `0.013` |
+  | slider at max, Save | — | `0.101` (above declared max 0.1) |
+- **Scope:** checked all 11 numeric fields in `_schema()`: only `speech_threshold` has an off-grid default or an off-grid max.
+- **Root cause:** `(0.012 - 0.001) / 0.002 = 5.5` is not an integer; `(0.1 - 0.001) / 0.002 = 49.5` rounds up to 50.
+- **Impact:** low. The displayed value differs from the stored one until the slider is touched; then the threshold becomes 0.013 (≈8% less sensitive voice detection / echo gate, `audio.py:271`).
+- **Resolution (2026-10-28):** Schema `min` changed 0.001 → 0.002 (`settings_window.py` `speech_threshold`): the grid 0.002…0.100 in 0.002 steps contains the 0.012 default and the 0.1 max. Slider shows 0.012; nudge +1/-1 keeps 0.012; ends give 0.002 / 0.1.
+- **Regression tests:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`, `::test_speech_threshold_slider_ends_stay_in_declared_range`, `::test_speech_threshold_nudge_round_trip_keeps_default`

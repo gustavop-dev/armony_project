@@ -202,8 +202,6 @@ def test_number_field_displays_formatted_value(qtbot, make_window, section, key,
     assert shown == expected
 
 
-@pytest.mark.xfail(strict=True, reason="[KNOWN-601] speech_threshold slider grid "
-                   "(min 0.001, step 0.002) cannot show the 0.012 default")
 def test_speech_threshold_displays_default_value(qtbot, make_window):
     win = make_window(speech_threshold=0.012)
     _goto(qtbot, win, "Sensibilidad de audio")
@@ -211,6 +209,32 @@ def test_speech_threshold_displays_default_value(qtbot, make_window):
     shown = [lab.text() for lab in _labels(_row(win, "speech_threshold"))][-1]
 
     assert shown == "0.012"
+
+
+def _threshold_slider(qtbot, win):
+    _goto(qtbot, win, "Sensibilidad de audio")
+    return _row(win, "speech_threshold").findChild(QtWidgets.QSlider)
+
+
+@pytest.mark.parametrize("end, expected", [("minimum", 0.002), ("maximum", 0.1)])
+def test_speech_threshold_slider_ends_stay_in_declared_range(qtbot, make_window,
+                                                             end, expected):
+    win = make_window(speech_threshold=0.012)
+    slider = _threshold_slider(qtbot, win)
+
+    slider.setValue(getattr(slider, end)())
+
+    assert round(win.values["speech_threshold"], 6) == expected
+
+
+def test_speech_threshold_nudge_round_trip_keeps_default(qtbot, make_window):
+    win = make_window(speech_threshold=0.012)
+    slider = _threshold_slider(qtbot, win)
+
+    slider.setValue(slider.value() + 1)
+    slider.setValue(slider.value() - 1)
+
+    assert round(win.values["speech_threshold"], 6) == 0.012
 
 
 @pytest.mark.parametrize("value", [True, False])
