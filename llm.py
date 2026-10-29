@@ -21,10 +21,29 @@ OPENAI = "openai"
 _REINTENTABLES = ("429", "500", "502", "503", "504", "rate limit", "timeout",
                   "timed out", "overloaded", "connection", "temporarily")
 
+# The SDK clients do not retry on their own (max_retries=0): the single retry in
+# stream_response is the only one, and it never runs once text has arrived.
+# Timeouts are sized for a live meeting; read is the max gap between stream
+# chunks, not the total answer time.
+_MAX_RETRIES_SDK = 0
+_TIMEOUT_CONNECT_S = 5.0
+_TIMEOUT_READ_S = 30.0
+
 
 def _reintentable(error):
+    # SDK errors (anthropic / openai share the shape): classify by type and
+    # HTTP status instead of message text. Duck-typed so neither SDK is imported.
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int):
+        return status in (408, 409, 429) or status >= 500
+    if any(c.__name__ == "APIConnectionError" for c in type(error).__mro__):
+        return True              # includes APITimeoutError
     texto = f"{type(error).__name__} {error}".lower()
     return any(p in texto for p in _REINTENTABLES)
+
+
+def _timeout(sdk):
+    return sdk.Timeout(_TIMEOUT_READ_S, connect=_TIMEOUT_CONNECT_S)
 
 
 # Cuando hay codigo de por medio manda otra estructura. Un ejercicio no se
@@ -77,11 +96,13 @@ class Coach:
         self.tokens_vision = int(tokens_vision or tokens_voice)
         # Importe perezoso: solo se exige tener instalado el proveedor que se usa.
         if self.provider == OPENAI:
-            from openai import OpenAI
-            self.client = OpenAI(api_key=api_key)
+            import openai
+            self.client = openai.OpenAI(api_key=api_key, max_retries=_MAX_RETRIES_SDK,
+                                        timeout=_timeout(openai))
         else:
             import anthropic
-            self.client = anthropic.Anthropic(api_key=api_key)
+            self.client = anthropic.Anthropic(api_key=api_key, max_retries=_MAX_RETRIES_SDK,
+                                              timeout=_timeout(anthropic))
 
     # ------------------------------------------------------------------ prompt
     def _prompt(self, context_text, latest, images, note, allow_silence):

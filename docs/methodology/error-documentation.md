@@ -16,7 +16,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P2 | ~~KNOWN-203~~ ERR-203 | One non-UTF-8 context blocks Settings and leaves the meeting UI running without engine | `fix/…-safe-config-io` |
 | P2 | ~~KNOWN-003~~ ERR-003 | Engine init failure leaves the UI in running state | `fix/…-start-failure-state` |
 | P2 | ERR-006 | Failed start left the billed STT WebSocket open (found during ERR-003) | `fix/…-start-failure-state` |
-| P2 | KNOWN-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
+| P2 | ~~KNOWN-004~~ ERR-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
 | P2 | KNOWN-005 | No logging; background-thread failures discarded | `feat/…-file-logging` |
 | P2 | KNOWN-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
 | P2 | KNOWN-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
@@ -148,19 +148,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Test:** `tests/test_engine.py::TestContext::test_capture_limit_includes_line_separators`
 ## Design issues — confirmed by measurement
 
-### [KNOWN-004] LLM clients keep SDK default retries and a 10-minute read timeout
-- **Where:** `llm.py:79-84` (`anthropic.Anthropic(api_key=...)` / `OpenAI(api_key=...)` with defaults) plus the manual retry loop `llm.py:192-221`.
-- **Measured (2026-10-28), anthropic 2.3.0 / openai 3.37.0:** defaults `max_retries=2`, `timeout=Timeout(connect=5.0, read=600, write=600, pool=600)` on both SDKs. Through `Coach.stream_response` with a mocked transport:
-
-  | Server response | HTTP requests | Time until `on_error` |
-  |---|---|---|
-  | 503 | 6 | 3.1 s |
-  | 529 overloaded | 6 | 3.4 s |
-  | 401 | 1 | 0.0 s |
-- **Root cause:** the SDK retries 2× with backoff inside each attempt; `_reintentable` (string matching on the error text) adds one more attempt → 2 × 3 requests.
-- **Impact:** during an outage each suggestion takes ~3.4 s to fail instead of failing fast; a stalled stream can block the single worker thread for up to 600 s per attempt, queueing every later turn behind it.
-- **Proposed fix:** construct clients with `max_retries=0` (keep the single manual retry before the first token) and a request timeout sized for live use (e.g. `connect=5`, `read=20`); classify retryable errors with the SDK exception types (`RateLimitError`, `APIConnectionError`, `InternalServerError`, `APIStatusError.status_code`) instead of message text.
-- **Test:** none yet (needs a mocked-transport test in `tests/test_llm.py`).
 ### [KNOWN-005] No logging; failures in background threads are discarded
 - **Where:** no module imports `logging`. Broad handlers that discard the exception with no signal/status: `audio.py:103-104` (`on_utterance` callback — offline utterance lost), `audio.py:278-280` (`on_system_pcm` → `StreamingSTT.feed` — cloud transcription stops silently), `engine.py:669-670` (metrics report and session transcript not written), `llm.py:255-256` (warm-up), `stt_stream.py:124-129, 230-231`, and 6 more `pass` branches in `audio.py`. Per module: `audio.py` 11, `engine.py` 8, `stt_stream.py` 7, `richtext.py` 3, `overlay.py` 3, `llm.py` 3, `hotkeys.py` 3, others ≤ 2.
 - **Impact:** field failures leave no trace on disk; the packaged exe runs with `--noconsole`, so stderr is also lost. The defects in this file were found by tests, not from logs.
@@ -271,3 +258,17 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** the transcription session stays connected until the process exits; AssemblyAI bills streaming by connection time.
 - **Resolution (2026-10-28):** `_init_failed` stops and clears `_stt` before reporting. Verified with the real engine thread: stream started/stopped = True/True.
 - **Regression tests:** `tests/test_engine.py::TestLifecycle::test_coach_load_failure_closes_transcription_stream`
+
+### [ERR-004] LLM clients keep SDK default retries and a 10-minute read timeout
+- **Where:** `llm.py:79-84` (`anthropic.Anthropic(api_key=...)` / `OpenAI(api_key=...)` with defaults) plus the manual retry loop `llm.py:192-221`.
+- **Measured (2026-10-28), anthropic 2.3.0 / openai 3.37.0:** defaults `max_retries=2`, `timeout=Timeout(connect=5.0, read=600, write=600, pool=600)` on both SDKs. Through `Coach.stream_response` with a mocked transport:
+
+  | Server response | HTTP requests | Time until `on_error` |
+  |---|---|---|
+  | 503 | 6 | 3.1 s |
+  | 529 overloaded | 6 | 3.4 s |
+  | 401 | 1 | 0.0 s |
+- **Root cause:** the SDK retries 2× with backoff inside each attempt; `_reintentable` (string matching on the error text) adds one more attempt → 2 × 3 requests.
+- **Impact:** during an outage each suggestion takes ~3.4 s to fail instead of failing fast; a stalled stream can block the single worker thread for up to 600 s per attempt, queueing every later turn behind it.
+- **Resolution (2026-10-28):** Both SDK clients are built with `max_retries=0` and `Timeout(30.0, connect=5.0)` (`llm.py`), leaving the single manual retry before the first token. `_reintentable` classifies SDK errors by `status_code` (408/409/429/>=500) and by `APIConnectionError` in the MRO (covers `APITimeoutError`), duck-typed so neither SDK is imported; plain exceptions keep the text fallback. Measured with a mocked transport: 503/529 → 2 requests, 0.6 s to `on_error` (was 6 requests, 3.1-3.4 s); 401 → 1 request.
+- **Regression tests:** `tests/test_llm.py::test_sdk_client_does_not_retry_on_its_own`, `::test_sdk_client_timeout_is_sized_for_live_use`, `::test_retry_classification_uses_status_and_type`, `::test_failed_suggestion_http_attempts`

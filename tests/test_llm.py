@@ -339,3 +339,68 @@ def test_openai_warmup_retries_without_reasoning_option(openai_coach):
     openai_coach.calentar()
 
     assert "reasoning" not in openai_coach.client.calls[1]
+
+
+# ------------------------------------------- client limits (ERR-004)
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_sdk_client_does_not_retry_on_its_own(provider):
+    c = Coach(api_key="k", provider=provider)
+
+    assert c.client.max_retries == 0
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_sdk_client_timeout_is_sized_for_live_use(provider):
+    c = Coach(api_key="k", provider=provider)
+
+    assert (c.client.timeout.connect, c.client.timeout.read) == (5.0, 30.0)
+
+
+def _status_error(status):
+    return type("APIStatusError", (Exception,), {"status_code": status})("x")
+
+
+class APIConnectionError(Exception):
+    pass
+
+
+class APITimeoutError(APIConnectionError):
+    pass
+
+
+@pytest.mark.parametrize("error, expected", [
+    (_status_error(429), True),
+    (_status_error(408), True),
+    (_status_error(529), True),
+    (_status_error(500), True),
+    (_status_error(400), False),
+    (_status_error(401), False),
+    (_status_error(404), False),
+    (APIConnectionError("reset"), True),
+    (APITimeoutError("read timeout"), True),
+])
+def test_retry_classification_uses_status_and_type(error, expected):
+    assert llm._reintentable(error) is expected
+
+
+def _mocked_anthropic(coach, status):
+    """Point the coach's real client at an in-memory transport; return the hit list."""
+    import httpx2
+    hits = []
+
+    def handler(request):
+        hits.append(request.url.path)
+        return httpx2.Response(status, json={"type": "error",
+                                             "error": {"type": "error", "message": "x"}})
+    coach.client = coach.client.with_options(
+        http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+    return hits
+
+
+@pytest.mark.parametrize("status, expected_requests", [(503, 2), (529, 2), (401, 1)])
+def test_failed_suggestion_http_attempts(coach, status, expected_requests):
+    hits = _mocked_anthropic(coach, status)
+
+    out = _run(coach)
+
+    assert (len(hits), len(out["errors"])) == (expected_requests, 1)
