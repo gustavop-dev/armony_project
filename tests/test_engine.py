@@ -482,8 +482,6 @@ class TestTurns:
         assert events == [("transcript", "system", "Primera frase.")]
         assert subject._last_heard == "Primera frase."
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="[KNOWN-002] Manual pending turns are omitted from the session transcript")
     def test_manual_answer_records_pending_turn(self, subject):
         """Catch a manually closed turn disappearing from the saved transcript."""
         subject._turn_parts = ["Primera frase."]
@@ -616,8 +614,6 @@ class TestWorker:
         ("mic", [("Yo", "El informe está listo.")]),
         ("system", [("Ellos", "El informe está listo.")]),
     ])
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="[KNOWN-002] Offline utterances are omitted from the session transcript")
     def test_offline_utterance_is_recorded(self, subject, source, expected):
         """Catch offline speech disappearing from the saved meeting transcript."""
         subject._transcriber = FakeTranscriber("El informe está listo.")
@@ -782,8 +778,6 @@ class TestContext:
 
         assert result == "Yo: Recent"
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="[KNOWN-701] Capture context budget excludes newline separators")
     def test_capture_limit_includes_line_separators(self, subject):
         """Catch the serialized screenshot context exceeding its 8000-character cap."""
         subject._history.extend([("A", "x" * 3997), ("B", "y" * 3997)])

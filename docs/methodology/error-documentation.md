@@ -20,12 +20,12 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P2 | ~~KNOWN-005~~ ERR-005 | No logging; background-thread failures discarded | `feat/…-file-logging` |
 | P2 | ~~KNOWN-103~~ ERR-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
 | P2 | ~~KNOWN-402~~ ERR-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
-| P3 | KNOWN-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
+| P3 | ~~KNOWN-002~~ ERR-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
 | P3 | ~~KNOWN-101~~ ERR-101, ~~KNOWN-102~~ ERR-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
 | P3 | ~~KNOWN-601~~ ERR-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
 | P3 | KNOWN-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
 | P3 | ~~KNOWN-503~~ ERR-503, ~~KNOWN-504~~ ERR-504, ~~KNOWN-502~~ ERR-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
-| P3 | KNOWN-701 | Capture context can exceed 8000 chars by ≤ 79 | any engine branch |
+| P3 | ~~KNOWN-701~~ ERR-701 | Capture context can exceed 8000 chars by ≤ 79 | any engine branch |
 | P4 | KNOWN-301, KNOWN-302 | Segmenter pre-roll edge cases; unreachable with fixed `preroll=0.3` | drop with offline removal |
 | — | KNOWN-001 | Closed: not a defect on CPython 3.11 (measured) | — |
 
@@ -54,21 +54,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
 - **Proposed fix:** run the `_eaten` key-up check before the `if self._passthrough: return False` branch.
 - **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
-### [KNOWN-002] Session transcript misses turns
-- **Where:** `_registro` (the transcript saved to `sesiones/sesion-*.md` by `_guardar_acta`, `engine.py:672-695`) is appended only in `_flush_turn` (`engine.py:341`) and in `_respond.on_done` (`engine.py:608`).
-  - `answer_now` with a pending turn (`engine.py:374-378`) appends to `_history` only.
-  - Offline worker path (`engine.py:461-468`): mic (`"Yo"`) and system (`"Ellos"`) utterances append to `_history` only.
-  - Cloud test mode returns before `_flush_turn` (`engine.py:305-308`): nothing is recorded (by design or not — undocumented).
-- **Reproduced (2026-10-28):** the three xfail tests below fail as expected.
-- **Impact:** in offline mode the saved transcript contains only `### Sugerido` blocks, none of the spoken turns; in cloud mode, turns forced with Alt+5 while someone is still speaking are missing.
-- **Proposed fix:** a single `_record(speaker, text)` helper that appends to both `_history` and `_registro`, used at every turn-closing site. Note: if `refactor/28102026-remove-offline-whisper` removes offline mode, only the `answer_now` part remains.
-- **Test:** `tests/test_engine.py::TestTurns::test_manual_answer_records_pending_turn`, `tests/test_engine.py::TestWorker::test_offline_utterance_is_recorded`
-### [KNOWN-701] Capture context budget ignores line separators
-- **Where:** `engine.py:538-545` (`_contexto`, capture branch sums `len(linea)` but the result is joined with `"\n"`).
-- **Repro:** two history lines of 4000 chars → 8001-char context (limit 8000).
-- **Impact:** negligible: the overshoot is at most `lines - 1` characters (≤ 79 with `CONTEXTO_CAPTURA=80`) on an 8000-char budget.
-- **Proposed fix:** `total + len(linea) + (1 if recortado else 0) > LIMITE_CHARS_CAPTURA`.
-- **Test:** `tests/test_engine.py::TestContext::test_capture_limit_includes_line_separators`
 ## Test infrastructure notes
 - `faster_whisper` is not installed in `.venv`; `tests/test_transcribe.py` injects a stub module. Offline mode cannot run from this venv as-is.
 - `--cov=contexts` measures the `contexts/` data directory instead of `contexts.py`. Use `--cov=. --cov-report=term-missing` and read the module rows.
@@ -287,3 +272,20 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** low; the top bar and the collapsed button stay where `_place` puts them. Dead code in `_Draggable`.
 - **Resolution (2026-10-28):** Decision (operator, 2026-10-28): make both windows draggable. `_Draggable` now precedes `QWidget` in the bases of `TopBar`, `TranscriptPanel` and `CollapsedButton`. `TopBar` gets a grip (`GripDots(2, 3)`) in the brand block, exposed as `drag_zone` and listed in `interactive_widgets()` so it is not click-through. `ClickFrame(drags_window=True)` (used by `CollapsedButton`) moves the window once the press travels `QApplication.startDragDistance()` and suppresses `clicked` for that gesture; plain buttons keep consuming the press. Manual check on Windows pending: (1) drag the top bar by the grip next to "Armony.", (2) click the gear still opens Settings, (3) Alt+1 to collapse, drag the "Show overlay" pill, then click it to restore, (4) empty top-bar areas still pass clicks to the app below.
 - **Regression tests:** `tests/test_overlay_ui_widgets.py::test_topbar_drag_from_empty_area_moves_window`, `::test_topbar_drag_from_grip_zone_moves_window`, `::test_topbar_button_press_does_not_move_window`, `::test_topbar_interactive_widgets_are_drag_zone_and_settings`, `::test_collapsed_button_drag_moves_window`, `::test_collapsed_button_drag_does_not_click`, `::test_collapsed_button_small_jitter_still_clicks`, `::test_plain_click_frame_does_not_move_window`
+
+### [ERR-002] Session transcript misses turns
+- **Where:** `_registro` (the transcript saved to `sesiones/sesion-*.md` by `_guardar_acta`, `engine.py:672-695`) is appended only in `_flush_turn` (`engine.py:341`) and in `_respond.on_done` (`engine.py:608`).
+  - `answer_now` with a pending turn (`engine.py:374-378`) appends to `_history` only.
+  - Offline worker path (`engine.py:461-468`): mic (`"Yo"`) and system (`"Ellos"`) utterances append to `_history` only.
+  - Cloud test mode returns before `_flush_turn` (`engine.py:305-308`): nothing is recorded (by design or not — undocumented).
+- **Reproduced (2026-10-28):** the three xfail tests below fail as expected.
+- **Impact:** in offline mode the saved transcript contains only `### Sugerido` blocks, none of the spoken turns; in cloud mode, turns forced with Alt+5 while someone is still speaking are missing.
+- **Resolution (2026-10-28):** New `CoachEngine._record(quien, texto)` appends a spoken turn to both `_history` and `_registro`; used by `_flush_turn`, `answer_now` (pending turn) and the offline worker path (`Yo` / `Ellos`). Suggestions keep their separate entries (summary in `_history`, full text in `_registro`). Cloud test mode still records nothing (unchanged, no LLM session).
+- **Regression tests:** `tests/test_engine.py::TestTurns::test_manual_answer_records_pending_turn`, `tests/test_engine.py::TestWorker::test_offline_utterance_is_recorded`
+
+### [ERR-701] Capture context budget ignores line separators
+- **Where:** `engine.py:538-545` (`_contexto`, capture branch sums `len(linea)` but the result is joined with `"\n"`).
+- **Repro:** two history lines of 4000 chars → 8001-char context (limit 8000).
+- **Impact:** negligible: the overshoot is at most `lines - 1` characters (≤ 79 with `CONTEXTO_CAPTURA=80`) on an 8000-char budget.
+- **Resolution (2026-10-28):** `_contexto` counts the `\n` joiner (`len(linea) + 1` after the first kept line) against `LIMITE_CHARS_CAPTURA`.
+- **Regression tests:** `tests/test_engine.py::TestContext::test_capture_limit_includes_line_separators`

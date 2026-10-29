@@ -354,8 +354,7 @@ class CoachEngine(QtCore.QObject):
             self._turn_timer = None
         if not texto or not self._running:
             return
-        self._history.append(("Ellos", texto))
-        self._registro.append(("Ellos", texto))
+        self._record("Ellos", texto)
         self.transcript.emit("system", texto)
         self._anotar_oido(texto)
         metricas.contar("intervenciones")
@@ -390,7 +389,7 @@ class CoachEngine(QtCore.QObject):
             return
         if pendiente:
             # Estaban hablando ahora mismo: se cierra el turno aqui.
-            self._history.append(("Ellos", texto))
+            self._record("Ellos", texto)
             self.transcript.emit("system", texto)
             self._anotar_oido(texto)
         self._queue.put({"type": "respond", "text": texto, "auto": False})
@@ -399,6 +398,12 @@ class CoachEngine(QtCore.QObject):
         """Guarda el ultimo turno oido y lo marca como pendiente de respuesta."""
         self._last_heard = texto
         self._heard_respondido = False
+
+    def _record(self, quien, texto):
+        """Close a spoken turn: model context (_history) and saved transcript
+        (_registro) must always receive the same turns."""
+        self._history.append((quien, texto))
+        self._registro.append((quien, texto))
 
     def _cancel_turn_timer(self):
         with self._turn_lock:
@@ -476,12 +481,12 @@ class CoachEngine(QtCore.QObject):
                     # Tu voz: se guarda como contexto (para que Claude no te sugiera
                     # repetir lo que ya dijiste) pero NUNCA dispara una sugerencia.
                     if source == "mic":
-                        self._history.append(("Yo", text))
+                        self._record("Yo", text)
                         continue
 
                     # En operacion normal solo respondemos a lo que dicen los demas.
                     if source == "system":
-                        self._history.append(("Ellos", text))
+                        self._record("Ellos", text)
                         self._anotar_oido(text)
                         if reason == "silence":
                             # Hubo pausa: te cedieron el turno. Aun asi, solo se
@@ -557,10 +562,11 @@ class CoachEngine(QtCore.QObject):
         if con_captura:
             recortado, total = [], 0
             for linea in reversed(lineas):
-                if total + len(linea) > LIMITE_CHARS_CAPTURA:
+                coste = len(linea) + (1 if recortado else 0)   # + "\n" joiner
+                if total + coste > LIMITE_CHARS_CAPTURA:
                     break
                 recortado.append(linea)
-                total += len(linea)
+                total += coste
             lineas = list(reversed(recortado))
         return "\n".join(lineas)
 
