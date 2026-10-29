@@ -104,18 +104,39 @@ class ClickFrame(QtWidgets.QFrame):
     """
     clicked = QtCore.Signal()
 
-    def __init__(self):
+    def __init__(self, drags_window=False):
+        """drags_window: a press that moves beyond the drag distance moves the
+        top-level window instead of clicking (used by CollapsedButton, whose
+        whole surface is this frame)."""
         super().__init__()
+        self._drags_window = drags_window
+        self._press = None          # (global press point, window top-left)
+        self._dragged = False
         # A proposito NO se cambia el cursor. La ventana es invisible al compartir
         # pantalla, pero el cursor NO lo es: si se volviera una manita al pasar
         # sobre un boton, quien te ve compartiendo pantalla veria el puntero
         # transformandose encima de la nada. El overlay se delataria solo.
 
     def mousePressEvent(self, e):
+        if self._drags_window and e.button() == QtCore.Qt.LeftButton:
+            self._press = (e.globalPosition().toPoint(),
+                           self.window().frameGeometry().topLeft())
+            self._dragged = False
         e.accept()          # no propagar: evita arrastrar la ventana al pulsar
 
+    def mouseMoveEvent(self, e):
+        if self._press is not None and e.buttons() & QtCore.Qt.LeftButton:
+            delta = e.globalPosition().toPoint() - self._press[0]
+            if (self._dragged or delta.manhattanLength()
+                    >= QtWidgets.QApplication.startDragDistance()):
+                self._dragged = True
+                self.window().move(self._press[1] + delta)
+        e.accept()
+
     def mouseReleaseEvent(self, e):
-        if e.button() == QtCore.Qt.LeftButton and self.rect().contains(e.position().toPoint()):
+        dragged, self._press, self._dragged = self._dragged, None, False
+        if (not dragged and e.button() == QtCore.Qt.LeftButton
+                and self.rect().contains(e.position().toPoint())):
             self.clicked.emit()
         e.accept()
 
@@ -745,7 +766,8 @@ class AudioBars(QtWidgets.QWidget):
 
 # --------------------------------------------------------------- barra superior
 
-class TopBar(QtWidgets.QWidget, _Draggable):
+# _Draggable goes first in the bases: its mouse handlers must override QWidget's.
+class TopBar(_Draggable, QtWidgets.QWidget):
     startStopClicked = QtCore.Signal()
     screenshotClicked = QtCore.Signal()
     generateClicked = QtCore.Signal()
@@ -785,10 +807,14 @@ class TopBar(QtWidgets.QWidget, _Draggable):
         lay.setSpacing(6)
 
         # --- marca "Cue." (C dorada, resto blanco), sin icono de limon ---
+        # The brand block is also the drag handle: the grip dots signal it, and
+        # it is listed in interactive_widgets so it does not pass clicks through.
         marca = QtWidgets.QWidget()
+        self.drag_zone = marca
         ml = QtWidgets.QHBoxLayout(marca)
         ml.setContentsMargins(8, 6, 8, 6)
         ml.setSpacing(8)
+        ml.addWidget(GripDots(cols=2, rows=3))
         nombre = QtWidgets.QLabel(
             f'<span style="color:{T.GOLD};font-weight:700;">Arm</span>'
             f'<span style="color:#ffffff;font-weight:700;">ony.</span>')
@@ -870,7 +896,7 @@ class TopBar(QtWidgets.QWidget, _Draggable):
 
     def interactive_widgets(self):
         """Zonas que SI responden al mouse (el resto deja pasar el clic)."""
-        return [self.btn_cfg]
+        return [self.drag_zone, self.btn_cfg]
 
     def set_generate_enabled(self, on):
         """Encendido = hay capturas listas. Se maneja por Alt+3; aqui solo se ve."""
@@ -956,7 +982,7 @@ class TopBar(QtWidgets.QWidget, _Draggable):
 
 # --------------------------------------------------------------- panel principal
 
-class TranscriptPanel(QtWidgets.QWidget, _Draggable):
+class TranscriptPanel(_Draggable, QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         _frameless(self)
@@ -1495,7 +1521,7 @@ def parse_sections(raw):
 
 # --------------------------------------------------------------- auxiliares
 
-class CollapsedButton(QtWidgets.QWidget, _Draggable):
+class CollapsedButton(_Draggable, QtWidgets.QWidget):
     """Pildora 'Show overlay' que aparece cuando el overlay esta oculto."""
     clicked = QtCore.Signal()
 
@@ -1506,7 +1532,7 @@ class CollapsedButton(QtWidgets.QWidget, _Draggable):
         self.setStyleSheet(f"background: {T.PANEL_TOP};")
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        b = ClickFrame()
+        b = ClickFrame(drags_window=True)   # click restores, drag moves
         b.setStyleSheet(f"""
             QFrame {{ background: {T.PANEL_TOP}; border: 1px solid {T.PANEL_BORDER};
                       border-radius: {T.R_COLLAPSE}px; }}

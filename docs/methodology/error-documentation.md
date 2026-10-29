@@ -24,7 +24,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P3 | ~~KNOWN-101~~ ERR-101, ~~KNOWN-102~~ ERR-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
 | P3 | ~~KNOWN-601~~ ERR-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
 | P3 | KNOWN-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
-| P3 | KNOWN-503, ~~KNOWN-504~~ ERR-504, ~~KNOWN-502~~ ERR-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
+| P3 | ~~KNOWN-503~~ ERR-503, ~~KNOWN-504~~ ERR-504, ~~KNOWN-502~~ ERR-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
 | P3 | KNOWN-701 | Capture context can exceed 8000 chars by ≤ 79 | any engine branch |
 | P4 | KNOWN-301, KNOWN-302 | Segmenter pre-roll edge cases; unreachable with fixed `preroll=0.3` | drop with offline removal |
 | — | KNOWN-001 | Closed: not a defect on CPython 3.11 (measured) | — |
@@ -54,17 +54,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
 - **Proposed fix:** run the `_eaten` key-up check before the `if self._passthrough: return False` branch.
 - **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
-### [KNOWN-503] Drag mixin handlers are shadowed by `QWidget`
-- **Where:** `overlay_ui.py:746`, `957`, `1488` — `class X(QtWidgets.QWidget, _Draggable)`; `_Draggable.mousePressEvent/mouseMoveEvent` (`overlay_ui.py:159-170`) are never reached.
-- **Reproduced (2026-10-28):** MRO resolves `mousePressEvent` to `QWidget` for `TopBar`, `TranscriptPanel` and `CollapsedButton`; a press/move on an empty area of `TopBar` does not move it.
-- **Effective behavior per window:**
-  - `TranscriptPanel`: movable through its `DragBar` header (`overlay_ui.py:1070`), which implements its own handlers — works.
-  - `TopBar`: not movable. In production its empty areas are also click-through (`interactive_widgets()` returns only `[self.btn_cfg]`, `overlay_ui.py:869-871`; `app._update_click_through`), so fixing the MRO alone does not make it draggable.
-  - `CollapsedButton`: its whole surface is a `ClickFrame` child that consumes the press; not movable.
-- **Root cause:** base-class order; the mixin must precede `QWidget` to override Qt's virtual handlers.
-- **Impact:** low; the top bar and the collapsed button stay where `_place` puts them. Dead code in `_Draggable`.
-- **Proposed fix:** decide whether those windows should be movable. If yes: `class TopBar(_Draggable, QtWidgets.QWidget)` plus an interactive drag zone (e.g. a grip) in `interactive_widgets()`. If no: remove `_Draggable` and its docstring claim.
-- **Test:** `tests/test_overlay_ui_widgets.py::test_topbar_drag_from_empty_area_moves_window`
 ### [KNOWN-002] Session transcript misses turns
 - **Where:** `_registro` (the transcript saved to `sesiones/sesion-*.md` by `_guardar_acta`, `engine.py:672-695`) is appended only in `_flush_turn` (`engine.py:341`) and in `_respond.on_done` (`engine.py:608`).
   - `answer_now` with a pending turn (`engine.py:374-378`) appends to `_history` only.
@@ -286,3 +275,15 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
   - Privacy: call sites log exception types, library/server error messages, HTTP/server codes, counts, durations, model ids and file paths only. Config parse errors log the JSON line/column, not content.
   - Not done: no Qt message handler (`qInstallMessageHandler`) is installed; `richtext.py` and `overlay.py` handlers are unchanged.
 - **Regression tests:** `tests/test_applog.py` (all 14, including `::test_child_logger_record_reaches_file`, `::test_second_setup_keeps_single_handler`, `::test_handler_rotation_settings`, `::test_thread_exception_is_logged`, `::test_uncaught_exception_reaches_previous_hook`, `::test_hook_callback_exception_is_logged`, `::test_hook_callback_exception_passes_key_through`), `tests/test_audio.py::test_segmenter_callback_failure_is_logged`, `::test_system_pcm_failure_is_logged_once_per_session`, `::test_start_rearms_system_pcm_failure_log`, `::test_capture_read_failure_is_logged`, `::test_default_output_check_failure_is_logged_once`, `::test_terminate_failure_is_logged`, `tests/test_engine.py::TestLogging::test_stop_save_failure_is_logged`, `::test_worker_item_failure_is_logged`, `::test_start_failure_is_logged`, `::test_transcript_io_error_is_logged`, `tests/test_stt_stream.py::test_send_failure_is_logged`, `::test_rejected_handshake_is_logged_with_status`, `::test_dropped_connection_is_logged`, `::test_server_error_message_is_logged`, `::test_stop_close_failure_is_logged_at_debug`, `::test_connect_close_failure_is_logged_at_debug`, `tests/test_llm.py::test_final_error_is_logged_with_status_code`, `::test_retry_is_logged_at_info`, `::test_warmup_failure_is_logged`, `::test_error_log_does_not_contain_api_key`
+
+### [ERR-503] Drag mixin handlers are shadowed by `QWidget`
+- **Where:** `overlay_ui.py:746`, `957`, `1488` — `class X(QtWidgets.QWidget, _Draggable)`; `_Draggable.mousePressEvent/mouseMoveEvent` (`overlay_ui.py:159-170`) are never reached.
+- **Reproduced (2026-10-28):** MRO resolves `mousePressEvent` to `QWidget` for `TopBar`, `TranscriptPanel` and `CollapsedButton`; a press/move on an empty area of `TopBar` does not move it.
+- **Effective behavior per window:**
+  - `TranscriptPanel`: movable through its `DragBar` header (`overlay_ui.py:1070`), which implements its own handlers — works.
+  - `TopBar`: not movable. In production its empty areas are also click-through (`interactive_widgets()` returns only `[self.btn_cfg]`, `overlay_ui.py:869-871`; `app._update_click_through`), so fixing the MRO alone does not make it draggable.
+  - `CollapsedButton`: its whole surface is a `ClickFrame` child that consumes the press; not movable.
+- **Root cause:** base-class order; the mixin must precede `QWidget` to override Qt's virtual handlers.
+- **Impact:** low; the top bar and the collapsed button stay where `_place` puts them. Dead code in `_Draggable`.
+- **Resolution (2026-10-28):** Decision (operator, 2026-10-28): make both windows draggable. `_Draggable` now precedes `QWidget` in the bases of `TopBar`, `TranscriptPanel` and `CollapsedButton`. `TopBar` gets a grip (`GripDots(2, 3)`) in the brand block, exposed as `drag_zone` and listed in `interactive_widgets()` so it is not click-through. `ClickFrame(drags_window=True)` (used by `CollapsedButton`) moves the window once the press travels `QApplication.startDragDistance()` and suppresses `clicked` for that gesture; plain buttons keep consuming the press. Manual check on Windows pending: (1) drag the top bar by the grip next to "Armony.", (2) click the gear still opens Settings, (3) Alt+1 to collapse, drag the "Show overlay" pill, then click it to restore, (4) empty top-bar areas still pass clicks to the app below.
+- **Regression tests:** `tests/test_overlay_ui_widgets.py::test_topbar_drag_from_empty_area_moves_window`, `::test_topbar_drag_from_grip_zone_moves_window`, `::test_topbar_button_press_does_not_move_window`, `::test_topbar_interactive_widgets_are_drag_zone_and_settings`, `::test_collapsed_button_drag_moves_window`, `::test_collapsed_button_drag_does_not_click`, `::test_collapsed_button_small_jitter_still_clicks`, `::test_plain_click_frame_does_not_move_window`

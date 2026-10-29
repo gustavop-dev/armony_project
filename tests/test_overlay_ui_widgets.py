@@ -144,8 +144,8 @@ def test_set_generate_enabled_dims_label(bar, on, color):
     assert f"color: {color};" in bar.lbl_gen.styleSheet()
 
 
-def test_topbar_interactive_widgets_is_settings_only(bar):
-    assert bar.interactive_widgets() == [bar.btn_cfg]
+def test_topbar_interactive_widgets_are_drag_zone_and_settings(bar):
+    assert bar.interactive_widgets() == [bar.drag_zone, bar.btn_cfg]
 
 
 def test_topbar_settings_tooltip(bar):
@@ -175,8 +175,6 @@ def test_topbar_resize_rounds_corners(qtbot, bar):
             mask.contains(bar.rect().center())) == (False, True)
 
 
-@pytest.mark.xfail(strict=True, reason="[KNOWN-503] _Draggable is listed after "
-                   "QWidget in the bases, so QWidget's mouse handlers shadow it")
 def test_topbar_drag_from_empty_area_moves_window(qtbot, bar):
     bar.show()
     qtbot.waitExposed(bar)
@@ -186,6 +184,28 @@ def test_topbar_drag_from_empty_area_moves_window(qtbot, bar):
     send(bar, mouse(QtCore.QEvent.MouseMove, (160, 140), button=QtCore.Qt.NoButton))
 
     assert bar.pos() == QtCore.QPoint(150, 130)
+
+
+def test_topbar_drag_from_grip_zone_moves_window(qtbot, bar):
+    bar.show()
+    qtbot.waitExposed(bar)
+    bar.move(100, 100)
+
+    send(bar.drag_zone, mouse(QtCore.QEvent.MouseButtonPress, (110, 110)))
+    send(bar.drag_zone, mouse(QtCore.QEvent.MouseMove, (160, 140), button=QtCore.Qt.NoButton))
+
+    assert bar.pos() == QtCore.QPoint(150, 130)
+
+
+def test_topbar_button_press_does_not_move_window(qtbot, bar):
+    bar.show()
+    qtbot.waitExposed(bar)
+    bar.move(100, 100)
+
+    send(bar.btn_cfg, mouse(QtCore.QEvent.MouseButtonPress, (110, 110)))
+    send(bar.btn_cfg, mouse(QtCore.QEvent.MouseMove, (160, 140), button=QtCore.Qt.NoButton))
+
+    assert bar.pos() == QtCore.QPoint(100, 100)
 
 
 # --------------------------------------------------------------- CollapsedButton
@@ -536,3 +556,57 @@ def test_drag_bar_ignores_right_button(qtbot):
 ])
 def test_parse_sections_flattens_answer(raw, expected):
     assert overlay_ui.parse_sections(raw) == expected
+
+
+# --------------------------------------------------------------- CollapsedButton drag
+@pytest.fixture
+def collapsed(qtbot):
+    btn = overlay_ui.CollapsedButton()
+    qtbot.addWidget(btn)
+    btn.show()
+    qtbot.waitExposed(btn)
+    btn.move(300, 300)
+    return btn
+
+
+def _press_move_release(widget, start, end):
+    send(widget, mouse(QtCore.QEvent.MouseButtonPress, start))
+    send(widget, mouse(QtCore.QEvent.MouseMove, end, button=QtCore.Qt.NoButton))
+    send(widget, mouse(QtCore.QEvent.MouseButtonRelease, end, buttons=QtCore.Qt.NoButton))
+
+
+def test_collapsed_button_drag_moves_window(collapsed):
+    frame = collapsed.findChild(overlay_ui.ClickFrame)
+
+    _press_move_release(frame, (310, 310), (360, 340))
+
+    assert collapsed.pos() == QtCore.QPoint(350, 330)
+
+
+def test_collapsed_button_drag_does_not_click(qtbot, collapsed):
+    frame = collapsed.findChild(overlay_ui.ClickFrame)
+    clicks = []
+    collapsed.clicked.connect(lambda: clicks.append(1))
+
+    _press_move_release(frame, (310, 310), (360, 340))
+
+    assert clicks == []
+
+
+def test_collapsed_button_small_jitter_still_clicks(qtbot, collapsed):
+    frame = collapsed.findChild(overlay_ui.ClickFrame)
+    clicks = []
+    collapsed.clicked.connect(lambda: clicks.append(1))
+
+    _press_move_release(frame, (310, 310), (311, 310))
+
+    assert (clicks, collapsed.pos()) == ([1], QtCore.QPoint(300, 300))
+
+
+def test_plain_click_frame_does_not_move_window(frame):
+    frame.show()
+    frame.move(50, 50)
+
+    _press_move_release(frame, (60, 60), (120, 90))
+
+    assert frame.pos() == QtCore.QPoint(50, 50)
