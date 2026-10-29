@@ -578,11 +578,6 @@ def test_inline_html_keeps_lone_power_operator_inside_code():
     assert salida == '<span style="">a ** b</span>'
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="[KNOWN-103] bold/italic substitutions still run over inline code "
-    "content, mangling `__init__` and `x ** 2` spans",
-)
 @pytest.mark.parametrize(
     ("texto", "esperado"),
     [
@@ -597,3 +592,19 @@ def test_inline_html_does_not_format_inside_inline_code(texto, esperado):
 
     # Assert
     assert salida == esperado
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("**use `x` here**", '<b>use <span style="">x</span> here</b>'),
+        ("*see `y`*", '<i>see <span style="">y</span></i>'),
+        ("`a` and `b`", '<span style="">a</span> and <span style="">b</span>'),
+        ("Override `__init__` and `**kwargs`",
+         'Override <span style="">__init__</span> and <span style="">**kwargs</span>'),
+        ("`<script>`", '<span style="">&lt;script&gt;</span>'),
+        ("raw \x00 0 \x00 byte", "raw  0  byte"),
+    ],
+)
+def test_inline_html_emphasis_around_inline_code(texto, esperado):
+    assert inline_html(texto) == esperado

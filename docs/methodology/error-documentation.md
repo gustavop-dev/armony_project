@@ -18,7 +18,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P2 | ERR-006 | Failed start left the billed STT WebSocket open (found during ERR-003) | `fix/…-start-failure-state` |
 | P2 | ~~KNOWN-004~~ ERR-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
 | P2 | KNOWN-005 | No logging; background-thread failures discarded | `feat/…-file-logging` |
-| P2 | KNOWN-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
+| P2 | ~~KNOWN-103~~ ERR-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
 | P2 | KNOWN-402 | Touchpad: scroll down too fast, scroll up does nothing | `fix/…-wheel-accumulator` |
 | P3 | KNOWN-002 | Session transcript misses Alt+5 pending turns (and all spoken turns offline) | `fix/…-start-failure-state` or own branch |
 | P3 | KNOWN-101, KNOWN-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
@@ -52,13 +52,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** false negative at gate 1: the turn is stored as context and no suggestion is requested; the user must press Alt+5. Only when the transcript lacks `?`.
 - **Proposed fix:** split contractions (`re.findall(r"[a-z0-9]+", ...)` or strip `'s`/`'re`/`'d`) before the interrogative lookup.
 - **Test:** `tests/test_intent.py` (KNOWN-102 xfail)
-### [KNOWN-103] Bold/italic substitution runs inside inline code
-- **Where:** `richtext.py:254-259` (`inline_html`); rendered through `overlay_ui.py:1446` (paragraphs) and `:1455` (bullets).
-- **Reproduced (2026-10-28) in `TranscriptPanel`:** model text ``Override `__init__` and forward `**kwargs` `` renders the code span as `<b>init</b>`; ``Use `a * b * c` `` renders `a <i> b </i> c` inside the code span. With two `**` on a line (``\`x ** 2\` and **bold**``) the generated markup is unbalanced.
-- **Root cause:** emphasis regexes run on the whole string after code spans are converted, without protecting their content.
-- **Impact:** code identifiers in suggestions are displayed incorrectly (dunder methods, `**kwargs`, `*args`, arithmetic) — the case the vision model is prompted to produce.
-- **Proposed fix:** tokenize code spans first (replace with placeholders), apply emphasis to the remaining text, then restore escaped code spans.
-- **Test:** `tests/test_richtext.py` (KNOWN-103 xfail)
 ### [KNOWN-301] `preroll=0` keeps the whole silence history
 - **Where:** `audio.py:74` (`_Segmenter.process`, slice `[-self.preroll_samples:]`)
 - **Behavior:** with `preroll_samples == 0` the slice is `[-0:]`, which returns the full buffer; pre-roll grows during silence and is prepended to the utterance.
@@ -272,3 +265,11 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** during an outage each suggestion takes ~3.4 s to fail instead of failing fast; a stalled stream can block the single worker thread for up to 600 s per attempt, queueing every later turn behind it.
 - **Resolution (2026-10-28):** Both SDK clients are built with `max_retries=0` and `Timeout(30.0, connect=5.0)` (`llm.py`), leaving the single manual retry before the first token. `_reintentable` classifies SDK errors by `status_code` (408/409/429/>=500) and by `APIConnectionError` in the MRO (covers `APITimeoutError`), duck-typed so neither SDK is imported; plain exceptions keep the text fallback. Measured with a mocked transport: 503/529 → 2 requests, 0.6 s to `on_error` (was 6 requests, 3.1-3.4 s); 401 → 1 request.
 - **Regression tests:** `tests/test_llm.py::test_sdk_client_does_not_retry_on_its_own`, `::test_sdk_client_timeout_is_sized_for_live_use`, `::test_retry_classification_uses_status_and_type`, `::test_failed_suggestion_http_attempts`
+
+### [ERR-103] Bold/italic substitution runs inside inline code
+- **Where:** `richtext.py:254-259` (`inline_html`); rendered through `overlay_ui.py:1446` (paragraphs) and `:1455` (bullets).
+- **Reproduced (2026-10-28) in `TranscriptPanel`:** model text ``Override `__init__` and forward `**kwargs` `` renders the code span as `<b>init</b>`; ``Use `a * b * c` `` renders `a <i> b </i> c` inside the code span. With two `**` on a line (``\`x ** 2\` and **bold**``) the generated markup is unbalanced.
+- **Root cause:** emphasis regexes run on the whole string after code spans are converted, without protecting their content.
+- **Impact:** code identifiers in suggestions are displayed incorrectly (dunder methods, `**kwargs`, `*args`, arithmetic) — the case the vision model is prompted to produce.
+- **Resolution (2026-10-28):** `inline_html` replaces code spans with `\\x00<n>\\x00` placeholders before the emphasis substitutions and restores them afterwards (input `\\x00` is stripped first). Code span content is never formatted; emphasis around a code span (`**use \`x\` here**`) still applies. Verified: `__init__`, `**kwargs`, `a * b * c`, `x ** 2` render verbatim inside code spans.
+- **Regression tests:** `tests/test_richtext.py::test_inline_html_does_not_format_inside_inline_code`, `::test_inline_html_emphasis_around_inline_code`

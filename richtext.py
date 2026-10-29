@@ -252,9 +252,17 @@ def inline_html(texto, code_style=""):
     interpretaria como negrita y se comeria los asteriscos del codigo.
     """
     t = html.escape(texto)
-    t = re.sub(r"`([^`\n]+)`",
-               lambda m: f'<span style="{code_style}">{m.group(1)}</span>', t)
+    # Code spans are swapped for \x00<n>\x00 placeholders while emphasis runs,
+    # so `__init__` or `a * b * c` are never touched, but **use `x`** still
+    # wraps the code span in bold.
+    codigos = []
+
+    def _guardar(m):
+        codigos.append(f'<span style="{code_style}">{m.group(1)}</span>')
+        return f"\x00{len(codigos) - 1}\x00"
+
+    t = re.sub(r"`([^`\n]+)`", _guardar, t.replace("\x00", ""))
     t = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", t)
     t = re.sub(r"__([^_\n]+)__", r"<b>\1</b>", t)
     t = re.sub(r"(?<![\*\w])\*([^*\n]+)\*(?![\*\w])", r"<i>\1</i>", t)
-    return t
+    return re.sub(r"\x00(\d+)\x00", lambda m: codigos[int(m.group(1))], t)
