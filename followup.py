@@ -52,19 +52,30 @@ RELACIONES = {
 }
 
 
-def construir_estado(pregunta, respuesta, dijo_tester, anadido):
+# Cuanto de la solucion en pantalla ve Jev: el principio basta para saber de que
+# va, y el estado tiene que caber holgado en su contexto.
+MAX_SOLUCION_PANTALLA = 2500
+
+SIN_PREGUNTA = "(no open spoken question)"
+
+
+def construir_estado(pregunta, respuesta, dijo_tester, anadido, solucion_pantalla=None):
     """Estado que ve Jev, con campos con nombre para citarlos en las preguntas."""
-    return {
-        "interviewer_question": pregunta,
+    estado = {
+        "interviewer_question": pregunta or SIN_PREGUNTA,
         "suggested_answer": respuesta or "(still being generated)",
         "interviewee_said_since": list(dijo_tester) or ["(nothing)"],
         "follow_up": anadido,
     }
+    if solucion_pantalla:
+        estado["screen_solution"] = solucion_pantalla[:MAX_SOLUCION_PANTALLA]
+    return estado
 
 
-def preguntas():
-    """Las tres preguntas van en UNA peticion: se evaluan en paralelo."""
-    return {
+def preguntas(con_pantalla=False):
+    """Las preguntas van en UNA peticion: se evaluan en paralelo. La de la
+    pantalla solo cuando hay una solucion de codigo a la vista."""
+    qs = {
         "relation": Choice(
             instructions=(
                 "In a live technical interview, the interviewer asked "
@@ -83,6 +94,15 @@ def preguntas():
             "Is `follow_up` a reaction to something in `interviewee_said_since`, "
             "rather than a continuation of the interviewer's own question?")),
     }
+    if con_pantalla:
+        qs["targets_screen_solution"] = Noul(instructions=(
+            "`screen_solution` is the code solution, with its explanation, that "
+            "the interviewee has on screen for an exercise. Does `follow_up` ask "
+            "to fix, change, extend or explain THAT solution (e.g. 'hay un error, "
+            "hazlo de esta manera', '¿y qué cambiarías para que también "
+            "soporte X?', '¿cómo harías esa parte del código?'), rather than "
+            "continuing the spoken conversation?"))
+    return qs
 
 
 @dataclass
@@ -93,18 +113,22 @@ class Juicio:
     cambia: float             # P(hay que reescribir la respuesta)
     reacciona_tester: float
     ms: float = 0.0           # latencia de la llamada
+    pantalla: float = 0.0     # P(va dirigido a la solucion en pantalla)
 
 
-def juzgar(cliente, pregunta, respuesta, dijo_tester, anadido, clock=None):
+def juzgar(cliente, pregunta, respuesta, dijo_tester, anadido, clock=None,
+           solucion_pantalla=None):
     """Una llamada a Jev. ``cliente`` es un typesafe_sdk.TypeSafeClient."""
     import time
     clock = clock or time.monotonic
     t0 = clock()
     r = cliente.system_one(
-        state=construir_estado(pregunta, respuesta, dijo_tester, anadido),
-        questions=preguntas(),
+        state=construir_estado(pregunta, respuesta, dijo_tester, anadido,
+                               solucion_pantalla),
+        questions=preguntas(con_pantalla=bool(solucion_pantalla)),
     )
     a = r.answers
+    pantalla = a["targets_screen_solution"].noul if solucion_pantalla else 0.0
     return Juicio(
         relacion=a["relation"].choice,
         confianza=a["relation"].confidence,
@@ -112,7 +136,17 @@ def juzgar(cliente, pregunta, respuesta, dijo_tester, anadido, clock=None):
         cambia=a["changes_answer"].noul,
         reacciona_tester=a["reacts_to_interviewee"].noul,
         ms=(clock() - t0) * 1000,
+        pantalla=pantalla,
     )
+
+
+# Por encima, lo que dijeron va para la solucion en pantalla: se ofrece al
+# tester relanzarla con ello (nunca se relanza sola).
+UMBRAL_PANTALLA = 0.6
+
+
+def apunta_a_pantalla(juicio, umbral=UMBRAL_PANTALLA):
+    return juicio is not None and juicio.pantalla >= umbral
 
 
 @dataclass

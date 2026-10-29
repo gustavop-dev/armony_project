@@ -69,6 +69,14 @@ class CoachEngine(QtCore.QObject):
     respRevise = QtCore.Signal()          # reescribe en su sitio la ultima sugerencia
     respDelta = QtCore.Signal(str)
     respDone = QtCore.Signal()
+    # El carril de la pantalla (capturas y codigo): mismas senales, su panel.
+    shotStart = QtCore.Signal()
+    shotRevise = QtCore.Signal()
+    shotDelta = QtCore.Signal(str)
+    shotDone = QtCore.Signal()
+    # Lo que dijeron parece ir para la solucion en pantalla: se ofrece relanzarla
+    # con ello (texto); "" retira la sugerencia.
+    screenSuggest = QtCore.Signal(str)
     status = QtCore.Signal(str)
     error = QtCore.Signal(str)
 
@@ -113,6 +121,15 @@ class CoachEngine(QtCore.QObject):
         self._arbitro = None
         self._arbitrar_en_hilo = True    # las pruebas lo apagan para ir en linea
         self._generando = False
+        # Carril de la pantalla: su propio coach (misma reunion, mas razonamiento),
+        # su cola y su worker, para que una solucion de codigo larga no deje
+        # esperando a las preguntas habladas.
+        self._coach_pantalla = None
+        self._queue_pantalla = queue.Queue()
+        self._worker_pantalla = None
+        self._generando_pantalla = False
+        self._solucion_pantalla = ""     # la ultima solucion dada (para Jev)
+        self._sugerencia_pantalla = ""   # lo dicho que podria relanzarla
 
     @property
     def running(self):
@@ -140,6 +157,7 @@ class CoachEngine(QtCore.QObject):
         # Cola NUEVA en cada arranque: nada de la sesion anterior puede colarse.
         # (Antes quedaban frases viejas y el centinela None, que mataba al worker.)
         self._queue = queue.Queue()
+        self._queue_pantalla = queue.Queue()
         self._stop_event = threading.Event()
         self._history.clear()
         self._last_question = ""
@@ -153,6 +171,8 @@ class CoachEngine(QtCore.QObject):
         self._t_pregunta = 0.0
         self._registro = []
         self._hilo = None
+        self._solucion_pantalla = ""
+        self._sugerencia_pantalla = ""
         self._recientes_ellos.clear()
         self._eco_avisado = False
         self._listen_mic = bool(cfg.get("listen_mic", True))
@@ -213,8 +233,10 @@ class CoachEngine(QtCore.QObject):
                 extra = ctx_mod.active_text("auto")     # 'auto' = todos
                 if extra:
                     sys_prompt += "\n\n# Contexto de esta reunion\n" + extra
-                # Un modelo; las preguntas habladas razonan poco y las
-                # capturas mas.
+                # Un modelo y dos conversaciones: la hablada razona poco y la de
+                # la pantalla mas. Empiezan igual (prompt + contextos), asi que
+                # ese principio se cachea una vez y lo aprovechan las dos.
+                cache_key = f"armony-{time.strftime('%Y%m%d-%H%M%S')}"
                 self._coach = Coach(
                     api_key=cfg["openai_api_key"],
                     system_prompt=sys_prompt,
@@ -224,7 +246,18 @@ class CoachEngine(QtCore.QObject):
                     effort_voice=cfg.get("openai_effort_voice", "low"),
                     effort_vision=cfg.get("openai_effort_vision", "medium"),
                     # Una clave por reunion: el gasto en cache se ve por sesion.
-                    cache_key=f"armony-{time.strftime('%Y%m%d-%H%M%S')}",
+                    cache_key=cache_key,
+                )
+                esfuerzo_pantalla = cfg.get("openai_effort_vision", "medium")
+                self._coach_pantalla = Coach(
+                    api_key=cfg["openai_api_key"],
+                    system_prompt=sys_prompt,
+                    model=cfg["openai_model"],
+                    tokens_voice=int(cfg["openai_tokens_vision"]),
+                    tokens_vision=int(cfg["openai_tokens_vision"]),
+                    effort_voice=esfuerzo_pantalla,
+                    effort_vision=esfuerzo_pantalla,
+                    cache_key=cache_key,
                 )
             except Exception as e:
                 self._init_failed(f"No se pudo iniciar el modelo de respuestas: {e}")
@@ -254,6 +287,12 @@ class CoachEngine(QtCore.QObject):
             daemon=True,
         )
         self._worker.start()
+        self._worker_pantalla = threading.Thread(
+            target=self._process_loop,
+            args=(self._queue_pantalla, self._stop_event),
+            daemon=True,
+        )
+        self._worker_pantalla.start()
 
         self._audio = AudioEngine(
             # Envolvemos los emit: si ya se detuvo, no tocar la UI (Qt puede estar
@@ -340,9 +379,13 @@ class CoachEngine(QtCore.QObject):
             actual = self._hilo
             estado = actual.estado(ahora) if actual is not None else None
             datos = None
-            if actual is not None and self._arbitro is not None:
-                datos = (actual, estado, actual.partes[0], actual.respuesta,
-                         list(actual.dijo_tester))
+            hay_pantalla = bool(self._solucion_pantalla)
+            if (actual is not None or hay_pantalla) and self._arbitro is not None:
+                if actual is not None:
+                    datos = (actual, estado, actual.partes[0], actual.respuesta,
+                             list(actual.dijo_tester))
+                else:
+                    datos = (None, None, "", "", [])
             else:
                 accion = hilo.decidir(actual, es_pregunta, ahora)
                 if accion == "nueva":
@@ -359,21 +402,46 @@ class CoachEngine(QtCore.QObject):
         self._aplicar(accion, texto, es_pregunta)
 
     def _arbitrar(self, texto, es_pregunta, datos):
-        """Jev juzga el anadido (~150 ms) y la regla de followup decide."""
+        """Jev juzga el anadido (~150 ms) y la regla de followup decide.
+
+        Si hay una solucion en pantalla, Jev mira tambien si lo dicho va para
+        ella ("hay un error, hazlo asi"). Entonces no se responde hablando: se
+        ofrece relanzar la solucion con ello, y el tester decide (Alt+6).
+        """
         hilo_actual, estado, pregunta, respuesta, dijo_tester = datos
+        solucion = self._solucion_pantalla
+        juicio = None
         try:
             juicio = followup.juzgar(self._arbitro, pregunta, respuesta,
-                                     dijo_tester, texto)
-            decision = followup.decidir(juicio, estado)
+                                     dijo_tester, texto, solucion_pantalla=solucion)
             metricas.medir("jev_ms", juicio.ms)
-            metricas.contar(f"jev_{decision}")
         except Exception:
-            # Jev no respondio a tiempo: la regla fija, que nunca reescribe.
             metricas.contar("jev_fallos")
-            decision = (followup.NUEVA if es_pregunta and estado == hilo.RESPONDIDA
-                        else followup.MANTENER)
         if not self._running:
             return
+        if solucion and followup.apunta_a_pantalla(juicio):
+            metricas.contar("sugerencias_pantalla")
+            self._sugerir_pantalla(texto)
+            return
+        if hilo_actual is None:
+            # Sin pregunta hablada abierta: la puerta de siempre.
+            if es_pregunta:
+                with self._hilo_lock:
+                    if self._hilo is not None:
+                        self._aplicar("contexto", texto, es_pregunta)
+                        return            # mientras tanto ya se abrio otra
+                    self._hilo = hilo.HiloPregunta(texto, self._clock())
+                self._aplicar("nueva", texto, es_pregunta)
+            else:
+                self._aplicar("contexto", texto, es_pregunta)
+            return
+        if juicio is not None:
+            decision = followup.decidir(juicio, estado)
+            metricas.contar(f"jev_{decision}")
+        else:
+            # Jev no respondio a tiempo: la regla fija, que nunca reescribe.
+            decision = (followup.NUEVA if es_pregunta and estado == hilo.RESPONDIDA
+                        else followup.MANTENER)
         if decision == followup.NUEVA:
             with self._hilo_lock:
                 if self._hilo is not hilo_actual:
@@ -469,8 +537,9 @@ class CoachEngine(QtCore.QObject):
         transcript (_registro) must always receive the same turns."""
         self._history.append((quien, texto))
         self._registro.append((quien, texto))
-        if self._coach is not None:
-            self._coach.anotar(quien, texto)
+        for coach in (self._coach, self._coach_pantalla):
+            if coach is not None:
+                coach.anotar(quien, texto)
 
     def _anotar_oido(self, texto):
         """Guarda el ultimo turno oido y lo marca como pendiente de respuesta."""
@@ -485,9 +554,38 @@ class CoachEngine(QtCore.QObject):
             self._turn_parts = []
 
     def request_screenshots(self, images):
-        """Envia una o varias capturas juntas (util si el enunciado no cabe en una)."""
+        """Envia una o varias capturas juntas (util si el enunciado no cabe en una).
+
+        Van por el carril de la pantalla: su respuesta no espera a las habladas
+        ni las hace esperar. Un problema nuevo retira la sugerencia pendiente.
+        """
         if self._running and images:
-            self._queue.put({"type": "screenshot", "images": list(images)})
+            self._sugerir_pantalla("")
+            self._queue_pantalla.put({"type": "screenshot", "images": list(images)})
+
+    def _sugerir_pantalla(self, texto):
+        """Ofrece (o retira, con "") relanzar la solucion en pantalla. Si ya
+        habia una sugerencia, se suma: lo dicho seguido va junto."""
+        if texto and self._sugerencia_pantalla:
+            texto = f"{self._sugerencia_pantalla} {texto}"
+        self._sugerencia_pantalla = texto
+        if texto:
+            self.status.emit("Parece dirigido a la solución en pantalla: "
+                             "Alt+6 para actualizarla.")
+        self.screenSuggest.emit(texto)
+
+    def relaunch_screen(self):
+        """Alt+6: el tester acepta relanzar la solucion con lo que dijeron."""
+        if not self._running or self._test_mode:
+            return
+        texto = self._sugerencia_pantalla
+        if not texto or not self._solucion_pantalla:
+            self.status.emit("No hay nada que actualizar en la pantalla.")
+            return
+        self._sugerir_pantalla("")
+        if self._generando_pantalla and self._coach_pantalla is not None:
+            self._coach_pantalla.cancelar()
+        self._queue_pantalla.put({"type": "screen_revise", "text": texto})
 
     def regenerate(self, note=""):
         """Rehace la respuesta a la ultima pregunta, opcionalmente guiada por una nota.
@@ -524,6 +622,10 @@ class CoachEngine(QtCore.QObject):
                 elif item["type"] == "revise":
                     # Anadido que cambia la respuesta: se reescribe en su sitio.
                     self._respond(item["text"], images=None, revision=True)
+                elif item["type"] == "screen_revise":
+                    # El tester acepto relanzar la solucion en pantalla.
+                    self._respond(item["text"], images=None, revision=True,
+                                  carril="pantalla")
             except Exception as e:
                 log.exception("Worker failed on a %r item",
                               item.get("type") if isinstance(item, dict) else None)
@@ -542,7 +644,8 @@ class CoachEngine(QtCore.QObject):
         """
         self.status.emit("Analizando la pantalla...")
         pendiente = "" if self._heard_respondido else self._last_heard
-        self._respond(pendiente or SIN_PREGUNTA_CAPTURA, images=images)
+        self._respond(pendiente or SIN_PREGUNTA_CAPTURA, images=images,
+                      carril="pantalla")
 
     def _calentar(self):
         coach = self._coach
@@ -555,10 +658,18 @@ class CoachEngine(QtCore.QObject):
                 self.status.emit(f"Modelo listo ({ms / 1000:.1f} s de calentamiento).")
 
     def _respond(self, latest, images=None, note="", permitir_silencio=False,
-                 revision=False):
+                 revision=False, carril="voz"):
         # El contexto ya lo lleva la conversacion del coach (todo lo oido,
         # etiquetado por quien lo dijo, y las sugerencias anteriores).
-        if not revision:
+        pantalla = carril == "pantalla"
+        coach = self._coach_pantalla if pantalla else self._coach
+        if pantalla:
+            s_inicio, s_revisa, s_trozo, s_fin = (self.shotStart, self.shotRevise,
+                                                  self.shotDelta, self.shotDone)
+        else:
+            s_inicio, s_revisa, s_trozo, s_fin = (self.respStart, self.respRevise,
+                                                  self.respDelta, self.respDone)
+        if not revision and not pantalla:
             self._last_question = latest
         # Ese turno queda saldado: si luego llegan capturas, no se le vuelven a
         # emparejar (ver la rama de 'screenshot' en el bucle).
@@ -573,20 +684,20 @@ class CoachEngine(QtCore.QObject):
 
         def abrir():
             estado["abierto"] = True
-            if self._t_pregunta:
+            if self._t_pregunta and not pantalla:
                 ms = (time.monotonic() - self._t_pregunta) * 1000
                 metricas.medir(E2E, ms)
                 self._t_pregunta = 0.0
                 self.e2eLatency.emit(int(ms))
-            (self.respRevise if revision else self.respStart).emit()
-            self.respDelta.emit(estado["buffer"])
+            (s_revisa if revision else s_inicio).emit()
+            s_trozo.emit(estado["buffer"])
 
         def on_delta(txt):
             if estado["callado"]:
                 return
             estado["todo"] += txt
             if estado["abierto"]:
-                self.respDelta.emit(txt)
+                s_trozo.emit(txt)
                 return
             estado["buffer"] += txt
             limpio = estado["buffer"].lstrip()
@@ -600,7 +711,7 @@ class CoachEngine(QtCore.QObject):
         # Una revision que falla deja en pantalla la respuesta anterior, que
         # sigue valiendo: su pregunta no se cierra.
         def sin_respuesta():
-            if not revision:
+            if not revision and not pantalla:
                 self._cerrar_hilo()
 
         def on_error(mensaje):
@@ -624,18 +735,26 @@ class CoachEngine(QtCore.QObject):
             # La sugerencia ya queda en la conversacion del coach: el modelo la
             # da por dicha y continua desde ahi en vez de repetirse. Y en el
             # hilo, para que el arbitro sepa que se le sugirio.
-            with self._hilo_lock:
-                if self._hilo is not None:
-                    self._hilo.respuesta = estado["todo"]
+            if pantalla:
+                self._solucion_pantalla = estado["todo"]
+            else:
+                with self._hilo_lock:
+                    if self._hilo is not None:
+                        self._hilo.respuesta = estado["todo"]
             # En el acta va la sugerencia ENTERA, con su codigo: es lo que luego
             # quieres releer para ver si la respuesta te sirvio de verdad.
-            self._registro.append(("Sugerido (revisada)" if revision else "Sugerido",
-                                   estado["todo"]))
-            self.respDone.emit()
+            etiqueta = "Sugerido (pantalla)" if pantalla else "Sugerido"
+            if revision:
+                etiqueta += " (revisada)"
+            self._registro.append((etiqueta, estado["todo"]))
+            s_fin.emit()
 
-        self._generando = True
+        if pantalla:
+            self._generando_pantalla = True
+        else:
+            self._generando = True
         try:
-            self._coach.stream_response(
+            coach.stream_response(
                 latest=latest,
                 images=images,
                 note=note,
@@ -646,7 +765,10 @@ class CoachEngine(QtCore.QObject):
                 revision=revision,
             )
         finally:
-            self._generando = False
+            if pantalla:
+                self._generando_pantalla = False
+            else:
+                self._generando = False
 
     def _cerrar_hilo(self):
         """La pregunta abierta no llego a tener respuesta en pantalla."""
@@ -684,17 +806,19 @@ class CoachEngine(QtCore.QObject):
             self._stt_mic.stop()
             self._stt_mic = None
 
-        q = self._queue
-        q.put(None)                      # desbloquea al worker si esta esperando
-        if self._worker is not None:
-            self._worker.join(timeout=3.0)
-            self._worker = None
-
-        while True:                      # vaciar restos
-            try:
-                q.get_nowait()
-            except queue.Empty:
-                break
+        for nombre_q, nombre_w in (("_queue", "_worker"),
+                                   ("_queue_pantalla", "_worker_pantalla")):
+            q = getattr(self, nombre_q)
+            q.put(None)                  # desbloquea al worker si esta esperando
+            worker = getattr(self, nombre_w)
+            if worker is not None:
+                worker.join(timeout=3.0)
+                setattr(self, nombre_w, None)
+            while True:                  # vaciar restos
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
 
         # Informe de la sesion: sirve para saber que tramo hay que mejorar.
         try:

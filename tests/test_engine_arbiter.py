@@ -40,7 +40,7 @@ class Session:
         self.engine = e
         self.calls = []
 
-        def fake_juzgar(cliente, pregunta, respuesta, dijo_tester, anadido):
+        def fake_juzgar(cliente, pregunta, respuesta, dijo_tester, anadido, **_kw):
             self.calls.append((pregunta, respuesta, list(dijo_tester), anadido))
             if error:
                 raise error

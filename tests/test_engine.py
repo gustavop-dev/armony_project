@@ -113,6 +113,7 @@ def subject(monkeypatch):
     result._running = True
     result._stop_event = threading.Event()
     result._coach = FakeCoach()
+    result._coach_pantalla = FakeCoach()
     yield result
     result._cancel_turn_timer()
 
@@ -494,7 +495,10 @@ class TestCommands:
         subject.request_screenshots(images)
         images.clear()
 
-        assert subject._queue.get_nowait() == {"type": "screenshot", "images": ["png-a", "png-b"]}
+        # Screenshots go to the screen lane, never ahead of spoken answers.
+        assert subject._queue_pantalla.get_nowait() == {
+            "type": "screenshot", "images": ["png-a", "png-b"]}
+        assert subject._queue.qsize() == 0
 
     @pytest.mark.parametrize("running,images", [(False, ["png"]), (True, [])])
     def test_unavailable_screenshots_are_not_queued(self, subject, running, images):
@@ -518,7 +522,8 @@ class TestWorker:
 
         run_items(subject, item)
 
-        request = subject._coach.calls[0]
+        coach = subject._coach_pantalla if item["type"] == "screenshot" else subject._coach
+        request = coach.calls[0]
         assert (request["latest"], request["images"], request["note"],
                 request["allow_silence"]) == (latest, images, note, silence)
 
@@ -621,9 +626,9 @@ class TestStreaming:
 
         subject._responder_capturas(["png"])
 
-        assert subject._coach.calls[1]["latest"] == (
+        assert subject._coach_pantalla.calls[0]["latest"] == (
             "(no han dicho nada nuevo desde la ultima respuesta: lo que hay que resolver esta en las capturas)")
-        assert subject._coach.calls[1]["images"] == ["png"]
+        assert subject._coach_pantalla.calls[0]["images"] == ["png"]
 
     def test_capture_uses_unanswered_turn(self, subject):
         """Catch captures pairing with an older question instead of current speech."""
@@ -631,8 +636,9 @@ class TestStreaming:
 
         subject._responder_capturas(["png"])
 
-        assert subject._coach.calls[0]["latest"] == "Mira esto"
-        assert subject._coach.calls[0]["allow_silence"] is False
+        assert subject._coach_pantalla.calls[0]["latest"] == "Mira esto"
+        assert subject._coach_pantalla.calls[0]["allow_silence"] is False
+        assert subject._coach.calls == []
 
 
 class TestContext:

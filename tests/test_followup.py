@@ -140,3 +140,37 @@ def test_score_reports_failed_calls_as_keep():
     report = followup_eval.score(followup_eval.judge_cases(None, [case], judge=boom))
     assert report["errors"][0]["id"] == "x"
     assert report["rows"][0]["action"] == MANTENER
+
+
+# --- the screen solution question -------------------------------------------
+def test_screen_question_only_when_a_solution_is_on_screen():
+    assert "targets_screen_solution" not in followup.preguntas()
+    q = followup.preguntas(con_pantalla=True)["targets_screen_solution"]
+    assert "`screen_solution`" in q.instructions and "`follow_up`" in q.instructions
+
+
+def test_state_carries_a_bounded_screen_solution():
+    st = followup.construir_estado("", "", [], "hay un error",
+                                   solucion_pantalla="x" * 10_000)
+    assert st["interviewer_question"] == followup.SIN_PREGUNTA
+    assert len(st["screen_solution"]) == followup.MAX_SOLUCION_PANTALLA
+    assert "screen_solution" not in followup.construir_estado("q", "a", [], "f")
+
+
+class FakeScreenClient(FakeClient):
+    def system_one(self, state, questions):
+        r = super().system_one(state, questions)
+        if "targets_screen_solution" in questions:
+            r.answers["targets_screen_solution"] = SimpleNamespace(noul=0.9)
+        return r
+
+
+def test_juzgar_reads_the_screen_probability():
+    client = FakeScreenClient("extends_question", 0.8, 0.2)
+    j = followup.juzgar(client, "q", "a", [], "hay un error",
+                        solucion_pantalla="def f(): ...")
+    assert j.pantalla == 0.9 and followup.apunta_a_pantalla(j)
+    assert "screen_solution" in client.calls[0][0]
+
+    sin = followup.juzgar(client, "q", "a", [], "hay un error")
+    assert sin.pantalla == 0.0 and not followup.apunta_a_pantalla(sin)
