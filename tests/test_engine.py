@@ -860,3 +860,46 @@ class TestPersistence:
 
         assert result is None
         assert blocked.read_text(encoding="utf-8") == "file"
+
+
+def log_entries(caplog):
+    return [(r.name, r.levelname, r.getMessage()) for r in caplog.records]
+
+
+class TestLogging:
+    """Failures the engine used to swallow now leave a log record (ERR-005)."""
+
+    def test_stop_save_failure_is_logged(self, subject, monkeypatch, caplog):
+        def broken_save(_folder):
+            raise OSError("disk full")
+        monkeypatch.setattr(metricas, "guardar", broken_save)
+
+        subject.stop()
+
+        assert log_entries(caplog) == [
+            ("armony.engine", "ERROR", "Saving session metrics or transcript failed")]
+
+    def test_worker_item_failure_is_logged(self, subject, caplog):
+        run_items(subject, {"type": "utterance"})
+
+        assert [(r.name, r.levelname, r.exc_info[0]) for r in caplog.records] == [
+            ("armony.engine", "ERROR", KeyError)]
+
+    def test_start_failure_is_logged(self, subject, cfg, dependencies, monkeypatch, caplog):
+        monkeypatch.setattr(dependencies.llm, "Coach", fail_load)
+
+        subject._init_and_run(cfg)
+
+        assert log_entries(caplog) == [
+            ("armony.engine", "ERROR",
+             "Engine start-up failed: No se pudo iniciar Claude: load failed")]
+
+    def test_transcript_io_error_is_logged(self, subject, tmp_path, caplog):
+        subject._registro = [("Ellos", "Hello")]
+        blocked = tmp_path / "blocked"
+        blocked.write_text("file", encoding="utf-8")
+
+        subject._guardar_acta(str(blocked))
+
+        assert log_entries(caplog) == [
+            ("armony.engine", "WARNING", f"Session transcript not written under {blocked}")]

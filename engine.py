@@ -12,6 +12,7 @@ Hay dos caminos de transcripcion, y cambian bastante el comportamiento:
   se transcribe entera. No hay texto en vivo y se nota mas retardo, pero no sale
   nada del equipo y funciona sin internet.
 """
+import logging
 import os
 import re
 import time
@@ -24,6 +25,8 @@ from PySide6 import QtCore
 
 import intent
 from metrics import E2E, LLM_CALENTAMIENTO, STT_LATENCIA, metricas
+
+log = logging.getLogger("armony.engine")
 
 # Palabra con la que el modelo avisa de que no le han preguntado nada. Nunca
 # llega a pintarse: se usa solo para decidir que no hay nada que sugerir.
@@ -138,6 +141,9 @@ class CoachEngine(QtCore.QObject):
     def _init_failed(self, msg):
         """Start-up failed: mark the session stopped, release the transcription
         stream if it was already opened (billed per connected second), report."""
+        # msg is a fixed UI string plus a library exception message; no config
+        # values or keys.
+        log.error("Engine start-up failed: %s", msg)
         self._running = False
         if self._stt is not None:
             self._stt.stop()
@@ -505,6 +511,8 @@ class CoachEngine(QtCore.QObject):
                     self._respond(self._last_question, images=None,
                                   note=item.get("note", ""))
             except Exception as e:
+                log.exception("Worker failed on a %r item",
+                              item.get("type") if isinstance(item, dict) else None)
                 self.error.emit(str(e))
 
     def _responder_capturas(self, images):
@@ -678,7 +686,7 @@ class CoachEngine(QtCore.QObject):
             if ruta:
                 self.status.emit(f"Métricas de la sesión guardadas en {ruta}")
         except Exception:
-            pass
+            log.exception("Saving session metrics or transcript failed")
 
     def _guardar_acta(self, carpeta):
         """Deja la conversacion en un .md para poder repasarla despues.
@@ -703,4 +711,6 @@ class CoachEngine(QtCore.QObject):
                         f.write(f"**{quien}:** {texto.strip()}\n\n")
             return ruta
         except OSError:
+            log.warning("Session transcript not written under %s", carpeta,
+                        exc_info=True)
             return None

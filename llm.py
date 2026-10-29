@@ -8,9 +8,12 @@ es como se empaqueta la peticion y de donde se sacan los trozos de texto, asi
 que el resto de la app no sabe cual esta configurado.
 """
 
+import logging
 import time
 
 from metrics import LLM_PRIMERA, LLM_TOTAL, metricas
+
+log = logging.getLogger("armony.llm")
 
 ANTHROPIC = "anthropic"
 OPENAI = "openai"
@@ -40,6 +43,25 @@ def _reintentable(error):
         return True              # includes APITimeoutError
     texto = f"{type(error).__name__} {error}".lower()
     return any(p in texto for p in _REINTENTABLES)
+
+
+# Longest provider error message kept in the log.
+_MAX_LOG_MESSAGE = 300
+
+
+def _describe_error(error, secret):
+    """Log-safe summary of a provider error: type, HTTP status, message.
+
+    The message is truncated and any occurrence of ``secret`` (the API key) is
+    masked; prompts and model output are never part of SDK error messages.
+    """
+    mensaje = str(error)
+    if secret:
+        mensaje = mensaje.replace(secret, "[redacted]")
+    if len(mensaje) > _MAX_LOG_MESSAGE:
+        mensaje = mensaje[:_MAX_LOG_MESSAGE] + "..."
+    status = getattr(error, "status_code", None)
+    return f"{type(error).__name__} status={status}: {mensaje}"
 
 
 def _timeout(sdk):
@@ -94,6 +116,8 @@ class Coach:
         # responder algo que fallar por configuracion incompleta.
         self.model_vision = model_vision or model_voice
         self.tokens_vision = int(tokens_vision or tokens_voice)
+        # Kept only to mask the key in logged error messages.
+        self._secret = api_key
         # Importe perezoso: solo se exige tener instalado el proveedor que se usa.
         if self.provider == OPENAI:
             import openai
@@ -234,9 +258,15 @@ class Coach:
             except Exception as e:
                 if intento == 0 and not escrito["algo"] and _reintentable(e):
                     metricas.contar("reintentos_llm")
+                    log.info("LLM request failed, retrying once: %s",
+                             _describe_error(e, self._secret))
                     time.sleep(0.6)
                     continue
                 metricas.contar("errores_llm")
+                log.error("LLM request failed after %d attempt(s), %.0f ms "
+                          "(model=%s, text received=%s): %s", intento + 1,
+                          (time.monotonic() - t0) * 1000, modelo, escrito["algo"],
+                          _describe_error(e, self._secret))
                 if on_error:
                     on_error(str(e))
                 return
@@ -273,7 +303,8 @@ class Coach:
                     system=self.system_prompt,
                     messages=[{"role": "user", "content": "Responde solo: ok"}])
             return (time.monotonic() - t0) * 1000
-        except Exception:
+        except Exception as e:
+            log.warning("LLM warm-up failed: %s", _describe_error(e, self._secret))
             return None
 
     def elegir_modelo(self, images):

@@ -21,6 +21,7 @@ Detalles del protocolo que condicionan el codigo:
   - la sesion caduca a las 3 horas -> hay reconexion automatica
 """
 import json
+import logging
 import queue
 import threading
 import time
@@ -36,6 +37,8 @@ except ImportError as e:      # pragma: no cover
     raise ImportError(
         "Falta websocket-client. Instala con: pip install websocket-client"
     ) from e
+
+log = logging.getLogger("armony.stt_stream")
 
 ENDPOINT = "wss://streaming.assemblyai.com/v3/ws"
 SAMPLE_RATE = 16000
@@ -122,11 +125,11 @@ class StreamingSTT:
                 with self._send_lock:
                     ws.send(json.dumps({"type": "Terminate"}))
             except Exception:
-                pass
+                log.debug("Sending Terminate failed", exc_info=True)
             try:
                 ws.close()
             except Exception:
-                pass
+                log.debug("Closing the WebSocket failed", exc_info=True)
         for t in self._threads:
             t.join(timeout=2.0)
         self._threads = []
@@ -172,6 +175,8 @@ class StreamingSTT:
                 # sentido reintentar: seguiria fallando igual y llenando la UI de
                 # avisos. Se para y se dice que hacer.
                 codigo = getattr(e, "status_code", None)
+                log.warning("AssemblyAI handshake rejected: status=%s (%s)",
+                            codigo, type(e).__name__)
                 if codigo in (400, 401, 402, 403):
                     self._running = False
                     self._on_error(
@@ -185,6 +190,8 @@ class StreamingSTT:
             except Exception as e:
                 if not self._running:
                     break
+                log.warning("Transcription stream dropped: %s: %s",
+                            type(e).__name__, e)
                 self._on_error(f"Transcripcion en vivo: {e}")
             if not self._running:
                 break
@@ -228,7 +235,7 @@ class StreamingSTT:
             try:
                 ws.close()
             except Exception:
-                pass
+                log.debug("Closing the WebSocket failed", exc_info=True)
             emisor.join(timeout=1.0)
 
     def _enviar_audio(self, ws):
@@ -242,8 +249,13 @@ class StreamingSTT:
                     ws.send_binary(datos)
                 self._audio_ms += CHUNK_MS
                 self._t_ultimo_envio = time.monotonic()
-            except Exception:
-                break            # la conexion cayo: el hilo lector lo gestiona
+            except Exception as e:
+                # la conexion cayo: el hilo lector lo gestiona. After stop()
+                # the socket is closed on purpose: not worth a warning.
+                log.log(logging.WARNING if self._running else logging.DEBUG,
+                        "Audio send failed after %.0f ms of audio: %s: %s",
+                        self._audio_ms, type(e).__name__, e)
+                break
 
     # -- mensajes del servidor ----------------------------------------------
     def _procesar(self, msg):
@@ -273,6 +285,7 @@ class StreamingSTT:
             # conectar. Reintentar con la misma key no arreglaria nada.
             codigo = msg.get("error_code")
             detalle = msg.get("error") or "error desconocido"
+            log.warning("AssemblyAI server error: code=%s detail=%s", codigo, detalle)
             if codigo == 1008 or "api key" in detalle.lower():
                 self._running = False
                 self._on_error(

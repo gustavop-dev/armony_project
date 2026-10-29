@@ -6,6 +6,7 @@
 Cada fuente corre en su propio hilo, calcula el nivel RMS (para las barras) y, en el caso
 del loopback, segmenta el audio en "frases" por silencio para mandarlas al transcriptor.
 """
+import logging
 import time
 import threading
 import numpy as np
@@ -17,6 +18,8 @@ except ImportError as e:  # pragma: no cover
     raise ImportError(
         "Falta PyAudioWPatch. Instala con: pip install PyAudioWPatch"
     ) from e
+
+log = logging.getLogger("armony.audio")
 
 TARGET_RATE = 16000     # Whisper trabaja a 16 kHz mono
 CHUNK = 1024            # frames por lectura
@@ -101,7 +104,8 @@ class _Segmenter:
                 try:
                     self.on_utterance(utt, reason)
                 except Exception:
-                    pass
+                    log.exception("Utterance callback failed (%d samples, %s); "
+                                  "utterance dropped", utt.size, reason)
             self._reset()
 
     def _reset(self):
@@ -157,12 +161,16 @@ class AudioEngine:
         self._p = None
         self._running = False
         self._threads = []
+        # Live transcription feed failures are logged once per capture session:
+        # the callback runs ~47 times per second.
+        self._pcm_error_logged = False
 
     def start(self):
         if self._running:
             return
         self._p = pyaudio.PyAudio()
         self._running = True
+        self._pcm_error_logged = False
 
         try:
             lb = _pick_loopback_device(self._p)
@@ -208,7 +216,7 @@ class AudioEngine:
                 try:
                     self._p.terminate()
                 except Exception:
-                    pass
+                    log.warning("PortAudio terminate failed", exc_info=True)
                 self._p = None
 
     def _capture(self, device, is_loopback):
@@ -230,6 +238,8 @@ class AudioEngine:
 
         self.on_status(f"Escuchando {name}: {device['name'][:40]} ({rate} Hz)")
         ultimo_chequeo = time.monotonic()
+        # The default-device check runs every 2 s; log its failure only once.
+        chequeo_fallo_registrado = False
         while self._running:
             # Si cambias de altavoces a auriculares a media reunion, Windows
             # cambia la salida por defecto y este dispositivo se queda mudo. Sin
@@ -246,13 +256,20 @@ class AudioEngine:
                             stream.stop_stream()
                             stream.close()
                         except Exception:
-                            pass
+                            log.warning("Closing the previous loopback stream failed",
+                                        exc_info=True)
                         return self._capture(ahora, True)
                 except Exception:
-                    pass
+                    if not chequeo_fallo_registrado:
+                        chequeo_fallo_registrado = True
+                        log.warning("Default output device check failed",
+                                    exc_info=True)
             try:
                 data = stream.read(CHUNK, exception_on_overflow=False)
             except Exception:
+                if self._running:
+                    log.warning("Capture read failed on %s device; capture "
+                                "stopped", name, exc_info=True)
                 break
             arr = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
             if ch > 1:
@@ -277,7 +294,10 @@ class AudioEngine:
                     try:
                         self.on_system_pcm(block16)
                     except Exception:
-                        pass
+                        if not self._pcm_error_logged:
+                            self._pcm_error_logged = True
+                            log.exception("Live transcription feed failed; further "
+                                          "failures in this session are not logged")
                 if self._seg_sys is not None:
                     self._seg_sys.process(block16)
             else:
@@ -294,4 +314,4 @@ class AudioEngine:
             stream.stop_stream()
             stream.close()
         except Exception:
-            pass
+            log.warning("Closing the %s stream failed", name, exc_info=True)

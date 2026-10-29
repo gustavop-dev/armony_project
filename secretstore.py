@@ -15,7 +15,11 @@ de los que aun estan en claro y migrarlos sin que el usuario haga nada.
 """
 import base64
 import ctypes
+import logging
 from ctypes import wintypes
+
+# Only exception types and Win32 outcomes are logged: never the values.
+log = logging.getLogger("armony.secretstore")
 
 PREFIJO = "dpapi:"
 
@@ -49,9 +53,12 @@ def proteger(texto):
             ctypes.byref(entrada), None, None, None, None,
             _CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(salida))
         if not ok:
+            log.warning("CryptProtectData failed; value kept unencrypted")
             return texto
         return PREFIJO + base64.b64encode(_leer(salida)).decode("ascii")
-    except Exception:
+    except Exception as e:
+        log.warning("Encryption failed (%s); value kept unencrypted",
+                    type(e).__name__)
         return texto
 
 
@@ -69,9 +76,12 @@ def revelar(texto):
         if not ok:
             # Otra cuenta u otro equipo: la clave no sirve aqui. Mejor vacia que
             # un churro ilegible que acabaria mandandose a la API.
+            log.warning("CryptUnprotectData failed (other user or machine); "
+                        "key cleared")
             return ""
         return _leer(salida).decode("utf-8")
-    except Exception:
+    except Exception as e:
+        log.warning("Decryption failed (%s); key cleared", type(e).__name__)
         return ""
 
 

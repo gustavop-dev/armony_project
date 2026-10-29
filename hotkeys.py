@@ -34,10 +34,13 @@ RegisterHotKey se mantiene como red de seguridad: si el hook no se puede instala
 ese caso el Alt vuelva a filtrarse.
 """
 import ctypes
+import logging
 import threading
 from ctypes import wintypes
 
 from PySide6 import QtCore
+
+log = logging.getLogger("armony.hotkeys")
 
 user32 = ctypes.windll.user32
 
@@ -232,6 +235,8 @@ class AltInterceptor:
         self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
         self._ready.set()
         if not self._hook:
+            log.warning("SetWindowsHookExW(WH_KEYBOARD_LL) failed; Alt shortcuts "
+                        "fall back to RegisterHotKey")
             return
         try:
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -284,7 +289,8 @@ class AltInterceptor:
                 if swallow:
                     return 1
         except Exception:
-            pass   # ante cualquier fallo, dejar pasar la tecla
+            # ante cualquier fallo, dejar pasar la tecla
+            log.exception("Keyboard hook callback failed; key passed through")
         return user32.CallNextHookEx(None, nCode, wParam, lParam)
 
     def _handle(self, wParam, lParam):
@@ -388,7 +394,7 @@ class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
             try:
                 user32.UnregisterHotKey(None, hk_id)
             except Exception:
-                pass
+                log.debug("UnregisterHotKey(%d) failed", hk_id, exc_info=True)
         self._registered = []
 
     def set_alt_capture(self, on):

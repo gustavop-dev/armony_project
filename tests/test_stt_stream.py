@@ -4,6 +4,7 @@ message handling, latency estimation and connection lifecycle.
 The WebSocket is replaced with in-memory fakes; nothing connects to AssemblyAI.
 """
 import json
+import logging
 import queue
 import urllib.parse
 
@@ -515,3 +516,81 @@ def test_connect_survives_close_failure(stt, fake_connect):
     stt._conectar_y_escuchar()
 
     assert stt.connected is False
+
+
+# ------------------------------------------ logged failures (ERR-005)
+def log_entries(caplog):
+    return [(r.name, r.levelname, r.getMessage()) for r in caplog.records]
+
+
+def test_send_failure_is_logged(stt, caplog):
+    ws = FakeWS()
+    ws.send_binary = lambda _d: (_ for _ in ()).throw(OSError("broken pipe"))
+    stt._running = True
+    stt._connected.set()
+    stt._audio_q.put(b"\x01")
+
+    stt._enviar_audio(ws)
+
+    assert log_entries(caplog) == [
+        ("armony.stt_stream", "WARNING",
+         "Audio send failed after 0 ms of audio: OSError: broken pipe")]
+
+
+def test_rejected_handshake_is_logged_with_status(stt, caplog, monkeypatch):
+    def reject():
+        raise websocket.WebSocketBadStatusException("Handshake status %d", 401)
+    monkeypatch.setattr(stt, "_conectar_y_escuchar", reject)
+    stt._running = True
+
+    stt._run()
+
+    assert log_entries(caplog) == [
+        ("armony.stt_stream", "WARNING",
+         "AssemblyAI handshake rejected: status=401 (WebSocketBadStatusException)")]
+
+
+def test_dropped_connection_is_logged(stt, caplog, monkeypatch):
+    def drop():
+        raise ConnectionError("reset by peer")
+    monkeypatch.setattr(stt, "_conectar_y_escuchar", drop)
+    stt._on_status = lambda _m: setattr(stt, "_running", False)
+    stt._running = True
+
+    stt._run()
+
+    assert log_entries(caplog) == [
+        ("armony.stt_stream", "WARNING",
+         "Transcription stream dropped: ConnectionError: reset by peer")]
+
+
+def test_server_error_message_is_logged(stt, caplog):
+    stt._procesar({"type": "Error", "error_code": 3005, "error": "too fast"})
+
+    assert log_entries(caplog) == [
+        ("armony.stt_stream", "WARNING", "AssemblyAI server error: code=3005 detail=too fast")]
+
+
+def test_stop_close_failure_is_logged_at_debug(stt, caplog):
+    caplog.set_level(logging.DEBUG, logger="armony")
+    ws = FakeWS()
+    ws.close = lambda: (_ for _ in ()).throw(OSError("already closed"))
+    stt._ws, stt._running = ws, True
+
+    stt.stop()
+
+    assert log_entries(caplog) == [
+        ("armony.stt_stream", "DEBUG", "Closing the WebSocket failed")]
+
+
+def test_connect_close_failure_is_logged_at_debug(stt, fake_connect, caplog):
+    caplog.set_level(logging.DEBUG, logger="armony")
+    ws = FakeWS()
+    ws.close = lambda: (_ for _ in ()).throw(OSError("already closed"))
+    fake_connect(ws)
+    stt._running = True
+
+    stt._conectar_y_escuchar()
+
+    assert log_entries(caplog) == [
+        ("armony.stt_stream", "DEBUG", "Closing the WebSocket failed")]
