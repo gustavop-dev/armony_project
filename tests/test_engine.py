@@ -343,6 +343,27 @@ class TestLifecycle:
         assert subject._worker is None
         assert events[-1] == ("error", "No se pudo iniciar Claude: load failed")
 
+    def test_coach_load_failure_closes_transcription_stream(self, subject, cfg, dependencies,
+                                                            monkeypatch):
+        """Catch a failed start leaving the per-second billed STT socket open."""
+        import stt_stream
+        created = []
+        monkeypatch.setattr(stt_stream, "StreamingSTT",
+                            lambda **kw: created.append(FakeDevice(**kw)) or created[-1])
+        monkeypatch.setattr(dependencies.llm, "Coach", fail_load)
+
+        subject._init_and_run(cfg)
+
+        assert (created[0].started, created[0].stopped, subject._stt) == (True, True, None)
+
+    def test_failed_start_reports_not_running(self, subject, cfg, dependencies, monkeypatch):
+        """Catch the public running flag disagreeing with a failed start."""
+        monkeypatch.setattr(dependencies.llm, "Coach", fail_load)
+
+        subject._init_and_run(cfg)
+
+        assert subject.running is False
+
     def test_coach_receives_bilingual_prompt(self, subject, cfg, dependencies):
         """Catch initialization dropping English rules or model token limits."""
         subject._init_and_run(cfg)

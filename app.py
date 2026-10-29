@@ -409,6 +409,10 @@ class OverlayApp(QtCore.QObject):
         # Nada de set_hint: vaciaria el panel y perderias la sugerencia que
         # estabas leyendo, justo en el peor momento. El error va en el badge y
         # en la pastilla, que no tocan la respuesta.
+        if self._running and not self.engine.running:
+            # The engine failed to start: return the UI to idle (stop_meeting
+            # hides the pill, so the error is shown again below).
+            self.stop_meeting()
         self.panel.set_status("Error")
         self.panel.show_skip(f"Error: {msg[:80]}")
 

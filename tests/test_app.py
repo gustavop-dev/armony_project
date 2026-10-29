@@ -29,14 +29,17 @@ class FakeEngine(QtCore.QObject):
         self.answers = 0
         self.screenshots = []
         self.start_error = None
+        self.running = False
 
     def start(self, cfg, test_mode=False):
         self.starts.append((dict(cfg), test_mode))
+        self.running = self.start_error is None
         if self.start_error is not None:
             self.error.emit(self.start_error)
 
     def stop(self):
         self.stops += 1
+        self.running = False
 
     def answer_now(self):
         self.answers += 1
@@ -224,8 +227,6 @@ class TestMeeting:
 
         assert ui.top.lbl_timer.text() == expected
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError,
-                       reason="[KNOWN-003] Engine initialization errors leave the UI running")
     def test_initialization_error_restores_idle(self, ui):
         """Catch a failed engine initialization leaving a false running UI."""
         ui.engine.start_error = "No se pudo cargar Whisper: load failed"
@@ -234,6 +235,34 @@ class TestMeeting:
 
         assert (ui._running, ui._timer.isActive(), ui.top.lbl_meeting.text(),
                 ui.panel._state) == (False, False, "Start meeting", "idle")
+
+
+    def test_initialization_error_stays_visible(self, ui):
+        """Catch the idle reset hiding the start-up error from the user."""
+        ui.engine.start_error = "No se pudo iniciar Claude: bad key"
+
+        ui.start_meeting()
+
+        assert (badge(ui), ui.panel.skip_pill.text()) == (
+            "Error", "Error: No se pudo iniciar Claude: bad key")
+
+    def test_start_after_initialization_error_starts_engine(self, ui):
+        """Catch the first Start press after a failure only stopping the UI."""
+        ui.engine.start_error = "No se pudo iniciar Claude: bad key"
+        ui.start_meeting()
+        ui.engine.start_error = None
+
+        ui.toggle_meeting()
+
+        assert (len(ui.engine.starts), ui._running) == (2, True)
+
+    def test_runtime_error_keeps_meeting_running(self, ui):
+        """Catch a transient LLM error ending a healthy meeting."""
+        ui.start_meeting()
+
+        ui.engine.error.emit("Error code: 529 overloaded")
+
+        assert (ui._running, ui._timer.isActive()) == (True, True)
 
 
 class TestActions:

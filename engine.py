@@ -130,6 +130,20 @@ class CoachEngine(QtCore.QObject):
         self._turn_timer = None
         self._turn_gap = 0.7
 
+    @property
+    def running(self):
+        """True while a session is active; False again after a failed start."""
+        return self._running
+
+    def _init_failed(self, msg):
+        """Start-up failed: mark the session stopped, release the transcription
+        stream if it was already opened (billed per connected second), report."""
+        self._running = False
+        if self._stt is not None:
+            self._stt.stop()
+            self._stt = None
+        self.error.emit(msg)
+
     def start(self, cfg, test_mode=False):
         """test_mode: solo audio + transcripcion (sin API key, sin llamar a Claude)."""
         if self._running:
@@ -183,16 +197,14 @@ class CoachEngine(QtCore.QObject):
                 )
                 self.status.emit(f"Whisper listo en {self._transcriber.device.upper()}.")
             except Exception as e:
-                self.error.emit(f"No se pudo cargar Whisper: {e}")
-                self._running = False
+                self._init_failed(f"No se pudo cargar Whisper: {e}")
                 return
         else:
             from stt_stream import StreamingSTT
             if not cfg.get("assemblyai_api_key"):
-                self.error.emit(
+                self._init_failed(
                     "Falta la API key de AssemblyAI. Ponla en Ajustes, o activa "
                     "el modo offline para transcribir con Whisper local.")
-                self._running = False
                 return
             self._stt = StreamingSTT(
                 api_key=cfg["assemblyai_api_key"],
@@ -233,8 +245,7 @@ class CoachEngine(QtCore.QObject):
                     tokens_vision=int(cfg[f"{p}_tokens_vision"]),
                 )
             except Exception as e:
-                self.error.emit(f"No se pudo iniciar Claude: {e}")
-                self._running = False
+                self._init_failed(f"No se pudo iniciar Claude: {e}")
                 return
 
             # Calentar la conexion mientras te acomodas: la primera peticion

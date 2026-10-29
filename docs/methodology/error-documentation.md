@@ -14,7 +14,8 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P1 | ~~KNOWN-201~~ ERR-201, ~~KNOWN-202~~ ERR-202 | Corrupt `config.json` aborts startup (`--noconsole`: no message) | `fix/…-safe-config-io` |
 | P2 | ~~KNOWN-501~~ ERR-501 | Every streamed suggestion is painted twice | `fix/…-answer-repaint-timer` |
 | P2 | ~~KNOWN-203~~ ERR-203 | One non-UTF-8 context blocks Settings and leaves the meeting UI running without engine | `fix/…-safe-config-io` |
-| P2 | KNOWN-003 | Engine init failure leaves the UI in running state | `fix/…-start-failure-state` |
+| P2 | ~~KNOWN-003~~ ERR-003 | Engine init failure leaves the UI in running state | `fix/…-start-failure-state` |
+| P2 | ERR-006 | Failed start left the billed STT WebSocket open (found during ERR-003) | `fix/…-start-failure-state` |
 | P2 | KNOWN-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
 | P2 | KNOWN-005 | No logging; background-thread failures discarded | `feat/…-file-logging` |
 | P2 | KNOWN-103 | Code spans in suggestions rendered with bold/italic (`__init__` → **init**) | `fix/…-inline-code-render` |
@@ -139,13 +140,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** in offline mode the saved transcript contains only `### Sugerido` blocks, none of the spoken turns; in cloud mode, turns forced with Alt+5 while someone is still speaking are missing.
 - **Proposed fix:** a single `_record(speaker, text)` helper that appends to both `_history` and `_registro`, used at every turn-closing site. Note: if `refactor/28102026-remove-offline-whisper` removes offline mode, only the `answer_now` part remains.
 - **Test:** `tests/test_engine.py::TestTurns::test_manual_answer_records_pending_turn`, `tests/test_engine.py::TestWorker::test_offline_utterance_is_recorded`
-### [KNOWN-003] UI stays in running state when engine start-up fails
-- **Where:** `app.py:185-190` set `_running = True`, start the top bar state and the 1 s timer before `engine.start` (`app.py:203`); `on_error` (`app.py:408-413`) only updates the badge and skip pill. Engine-side failures at `engine.py:187`, `195`, `237` set only the engine's `_running = False`.
-- **Trigger:** any init failure reported through `error`: missing AssemblyAI key at engine level, Whisper load failure, `Coach` construction failure (invalid provider SDK, bad key format), contexts read failure (KNOWN-203).
-- **Reproduced (2026-10-28) through `OverlayApp`:** after the error `_running=True`, timer active, badge `Error`. First Start press (Alt+4) calls `stop_meeting` (engine `stop` count 1, no start); only the second press calls `engine.start`.
-- **Impact:** the UI shows a running meeting with an advancing timer and no audio/STT/LLM; the user must press Start twice to recover.
-- **Proposed fix:** add an engine signal for init outcome (e.g. `started(bool)`) or treat errors received while the engine reports `not running` as a start failure: call `stop_meeting()` (UI-only reset) and keep the error visible.
-- **Test:** `tests/test_app.py::TestMeeting::test_initialization_error_restores_idle`
 ### [KNOWN-701] Capture context budget ignores line separators
 - **Where:** `engine.py:538-545` (`_contexto`, capture branch sums `len(linea)` but the result is joined with `"\n"`).
 - **Repro:** two history lines of 4000 chars → 8001-char context (limit 8000).
@@ -262,3 +256,18 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** every streamed suggestion appears twice in the thread; doubles render work per answer (`pintado_ms`).
 - **Resolution (2026-10-28):** `TranscriptPanel` owns a single-shot `QTimer` (`_timer_repintado`) instead of `QTimer.singleShot`; `_repintar` and `limpiar_hilo` stop it, so no repaint fires after the answer is closed or the thread is cleared. Verified through `OverlayApp` signal wiring: 34/34 streams (1 delta; 2-12 deltas at 10/25/40 ms; `respDone` right after the last delta) render one bubble (was 34/34 duplicated).
 - **Regression tests:** `tests/test_overlay_ui_thread.py::test_cerrar_respuesta_does_not_duplicate_answer`, `::test_streamed_answer_closed_immediately_renders_once`, `::test_limpiar_hilo_cancels_pending_repaint`
+
+### [ERR-003] UI stays in running state when engine start-up fails
+- **Where:** `app.py:185-190` set `_running = True`, start the top bar state and the 1 s timer before `engine.start` (`app.py:203`); `on_error` (`app.py:408-413`) only updates the badge and skip pill. Engine-side failures at `engine.py:187`, `195`, `237` set only the engine's `_running = False`.
+- **Trigger:** any init failure reported through `error`: missing AssemblyAI key at engine level, Whisper load failure, `Coach` construction failure (invalid provider SDK, bad key format), contexts read failure (KNOWN-203).
+- **Reproduced (2026-10-28) through `OverlayApp`:** after the error `_running=True`, timer active, badge `Error`. First Start press (Alt+4) calls `stop_meeting` (engine `stop` count 1, no start); only the second press calls `engine.start`.
+- **Impact:** the UI shows a running meeting with an advancing timer and no audio/STT/LLM; the user must press Start twice to recover.
+- **Resolution (2026-10-28):** `CoachEngine` exposes `running`; every start-up failure goes through `_init_failed` (sets `_running = False` before emitting `error`). `OverlayApp.on_error` calls `stop_meeting()` when the UI is running but the engine is not, then re-shows the error. Runtime errors during a healthy session do not stop the meeting. Verified with the real `CoachEngine` thread and a failing `Coach`: UI idle, timer stopped, badge `Error`, pill shows the message.
+- **Regression tests:** `tests/test_app.py::TestMeeting::test_initialization_error_restores_idle`, `::test_initialization_error_stays_visible`, `::test_start_after_initialization_error_starts_engine`, `::test_runtime_error_keeps_meeting_running`, `tests/test_engine.py::TestLifecycle::test_failed_start_reports_not_running`
+
+### [ERR-006] Failed start leaves the AssemblyAI WebSocket open
+- **Where:** `engine.py` `_init_and_run`: `StreamingSTT.start()` runs before the `Coach` construction; on a `Coach` failure the method returned with `_running = False`, and `stop()` returns early when not running, so `_stt.stop()` was never called.
+- **Found:** 2026-10-28 while fixing KNOWN-003 (code reading), confirmed by test.
+- **Impact:** the transcription session stays connected until the process exits; AssemblyAI bills streaming by connection time.
+- **Resolution (2026-10-28):** `_init_failed` stops and clears `_stt` before reporting. Verified with the real engine thread: stream started/stopped = True/True.
+- **Regression tests:** `tests/test_engine.py::TestLifecycle::test_coach_load_failure_closes_transcription_stream`
