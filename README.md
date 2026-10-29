@@ -248,17 +248,18 @@ desde la última palabra hasta el texto final. A eso se le suma la pausa de fin 
 (ajuste *Pausa de fin de turno*, 0.7 s por defecto) y el primer token del modelo de voz. Coste aproximado: **$0.45 por hora de reunión** — se factura el tiempo conectado,
 no el audio enviado, y la conexión solo existe mientras la reunión está en marcha.
 
-### Dos modelos, uno por cada uso
+### Un modelo, dos niveles de razonamiento
 
-En *Configuración → Conexión* se eligen **dos modelos** de OpenAI, porque los dos usos
-no se parecen en nada:
+Todo va con **GPT-6.1 sol**: un solo modelo para que la caché de prompt no se pierda al
+pasar de una pregunta hablada a una captura. Lo que se ajusta en *Configuración →
+Conexión* es **cuánto razona** en cada uso:
 
-| Uso | Qué manda | Por defecto |
+| Uso | Qué manda | Razonamiento por defecto |
 |---|---|---|
-| **Preguntas habladas** | La latencia: la respuesta tiene que estar antes de que el silencio se note | `gpt-6.1-terra` |
-| **Capturas de pantalla** | La capacidad: suele haber código que resolver, y unos segundos de más no se notan porque estás leyendo | `gpt-6.1-sol` |
+| **Preguntas habladas** | La latencia: la respuesta tiene que estar antes de que el silencio se note | `low` |
+| **Capturas de pantalla** | La capacidad: suele haber código que resolver, y unos segundos de más no se notan porque estás leyendo | `medium` |
 
-Cada uno con su propia **longitud máxima de respuesta**, justo debajo del modelo:
+Cada uno con su propia **longitud máxima de respuesta**, justo debajo:
 400 tokens bastan para una respuesta hablada, pero el código se queda corto ahí, así
 que las capturas van con 1200.
 

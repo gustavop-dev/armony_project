@@ -79,7 +79,7 @@ def main(argv=None):
     coaches = {}
     for spec in args.configs:
         model, effort = spec.split(":")
-        coaches[spec] = Coach(key, system_prompt=prompt, model_voice=model,
+        coaches[spec] = Coach(key, system_prompt=prompt, model=model,
                               tokens_voice=cfg["openai_tokens_voice"],
                               effort_voice=effort)
         coaches[spec].calentar()        # as the app does at meeting start

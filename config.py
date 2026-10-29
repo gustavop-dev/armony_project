@@ -80,18 +80,18 @@ DEFAULT_SYSTEM_PROMPT = DEFAULT_PROMPT_ES   # compatibilidad
 
 DEFAULTS = {
     # --- Modelo de las respuestas (OpenAI) ---
-    # Hay DOS modelos porque los dos usos no se parecen:
+    # UN modelo para todo (la cache de prompt es por modelo: con dos se perdia
+    # en cada salto). Lo que cambia entre los dos usos es cuanto razona:
     #   voz     -> alguien pregunta hablando. Manda la latencia: la respuesta
     #              tiene que estar antes de que el silencio se note.
     #   captura -> hay un ejercicio o codigo en pantalla. Manda la capacidad, y
     #              un par de segundos de mas no se notan porque estas leyendo.
-    # Los ultimos de OpenAI, priorizando calidad y rapidez: terra para hablar
-    # (el rapido de la 6.1) y sol para capturas (el fuerte de la 6.1).
+    # Medido con 12 preguntas habladas: sol 'low' da la primera palabra en
+    # ~1,05 s (terra ~0,9 s) con respuestas claramente mejores.
     "openai_api_key": "",
-    "openai_model_voice": "gpt-6.1-terra",
+    "openai_model": "gpt-6.1-sol",
     "openai_effort_voice": "low",
     "openai_tokens_voice": 400,
-    "openai_model_vision": "gpt-6.1-sol",
     "openai_effort_vision": "medium",
     # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
     # 1200 se quedaba a medias.
@@ -125,11 +125,14 @@ DEFAULTS = {
     "silence_hang": 0.7,
 }
 
-# Ajustes del antiguo modo offline (Whisper local). Ya no hacen nada; se borran
-# del config.json al cargarlo para que no queden de recuerdo.
+# Ajustes que ya no hacen nada; se borran del config.json al cargarlo para que
+# no queden de recuerdo:
+#   - los del antiguo modo offline (Whisper local)
+#   - el modelo de voz y el de capturas por separado: ahora hay uno solo, y
+#     conservarlos dejaria a cada usuario con los modelos viejos que guardo.
 OBSOLETAS = ("offline_mode", "whisper_size", "whisper_device", "auto_normalize",
              "transcribe_mic", "speech_threshold", "mic_echo_gate",
-             "max_utterance")
+             "max_utterance", "openai_model_voice", "openai_model_vision")
 
 
 def load_config():
@@ -149,12 +152,7 @@ def load_config():
     if legacy and cfg.get("system_prompt_es") == DEFAULT_PROMPT_ES:
         cfg["system_prompt_es"] = legacy
 
-    # Migracion: antes habia UN modelo y un unico max_tokens. Lo guardado se
-    # conserva como modelo de voz, para no cambiarle la configuracion a nadie por
-    # debajo; el de capturas se queda con el valor por defecto.
-    anterior = cfg.pop("openai_model", None)
-    if anterior:
-        cfg["openai_model_voice"] = anterior
+    # Migracion: antes habia un unico max_tokens; pasa a ser el de voz.
     tokens = cfg.pop("max_tokens", None)
     if tokens:
         cfg["openai_tokens_voice"] = int(tokens)

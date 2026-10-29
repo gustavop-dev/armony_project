@@ -142,8 +142,9 @@ class CoachEngine(QtCore.QObject):
         metricas.iniciar()
         metricas.nota("proveedor: openai")
         metricas.nota(f"transcripcion: {cfg.get('assemblyai_model')}")
-        metricas.nota(f"voz: {cfg.get('openai_model_voice')} · "
-                      f"capturas: {cfg.get('openai_model_vision')}")
+        metricas.nota(f"modelo: {cfg.get('openai_model')} · esfuerzo voz "
+                      f"{cfg.get('openai_effort_voice')} · capturas "
+                      f"{cfg.get('openai_effort_vision')}")
         # La inicializacion (conectar, preparar el coach) puede tardar: en un hilo.
         threading.Thread(target=self._init_and_run, args=(cfg,), daemon=True).start()
 
@@ -183,14 +184,13 @@ class CoachEngine(QtCore.QObject):
                 extra = ctx_mod.active_text("auto")     # 'auto' = todos
                 if extra:
                     sys_prompt += "\n\n# Contexto de esta reunion\n" + extra
-                # Dos modelos: uno para las preguntas habladas y otro, mas
-                # capaz, para las capturas.
+                # Un modelo; las preguntas habladas razonan poco y las
+                # capturas mas.
                 self._coach = Coach(
                     api_key=cfg["openai_api_key"],
                     system_prompt=sys_prompt,
-                    model_voice=cfg["openai_model_voice"],
+                    model=cfg["openai_model"],
                     tokens_voice=int(cfg["openai_tokens_voice"]),
-                    model_vision=cfg["openai_model_vision"],
                     tokens_vision=int(cfg["openai_tokens_vision"]),
                     effort_voice=cfg.get("openai_effort_voice", "low"),
                     effort_vision=cfg.get("openai_effort_vision", "medium"),

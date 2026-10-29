@@ -49,31 +49,31 @@ _RESERVA_RAZONAMIENTO = 1000
 
 
 class Coach:
-    """Cliente del coach. Usa un modelo distinto segun de donde venga la pregunta.
+    """Cliente del coach. UN modelo para todo; lo que cambia es cuanto piensa.
 
     Hablada: manda la latencia, la respuesta tiene que llegar antes de que el
-    silencio se note. Con captura de pantalla: manda la capacidad, porque suele
-    haber codigo que resolver, y un par de segundos de mas no molestan porque
-    estas leyendo.
+    silencio se note -> poco razonamiento. Con captura de pantalla: manda la
+    capacidad, porque suele haber codigo que resolver, y un par de segundos de
+    mas no molestan porque estas leyendo -> mas razonamiento.
+
+    Un solo modelo porque la cache de prompt es por modelo: con dos, cada salto
+    entre voz y captura volvia a procesar la reunion entera desde cero.
     """
 
-    def __init__(self, api_key, system_prompt="", model_voice="gpt-6.1-terra",
-                 tokens_voice=400, model_vision=None, tokens_vision=None,
+    def __init__(self, api_key, system_prompt="", model="gpt-6.1-sol",
+                 tokens_voice=400, tokens_vision=None,
                  effort_voice="low", effort_vision="medium"):
         from openai import OpenAI
         self.client = OpenAI(api_key=api_key)
         self.system_prompt = system_prompt
-        self.model_voice = model_voice
+        self.model = model
         self.tokens_voice = int(tokens_voice)
+        self.tokens_vision = int(tokens_vision or tokens_voice)
         # Razonamiento explicito: sin el, los gpt-6 usan 'medium' y la primera
         # palabra de una respuesta hablada tardaba 3,4 s. 'low' en voz aun piensa
         # lo justo para no decir tonterias; en capturas compensa pensar mas.
         self.effort_voice = effort_voice
         self.effort_vision = effort_vision
-        # Sin modelo de capturas configurado se usa el mismo que para voz: mejor
-        # responder algo que fallar por configuracion incompleta.
-        self.model_vision = model_vision or model_voice
-        self.tokens_vision = int(tokens_vision or tokens_voice)
 
     # ------------------------------------------------------------------ prompt
     def _prompt(self, context_text, latest, images, note, allow_silence):
@@ -176,7 +176,7 @@ class Coach:
             quiere una sugerencia si o si.
         """
         prompt = self._prompt(context_text, latest, images, note, allow_silence)
-        modelo, tokens, esfuerzo = self.elegir_modelo(images)
+        tokens, esfuerzo = self.ajustes(images)
         # Un 429 o un corte de red no puede costarte la sugerencia: en una
         # reunion no hay tiempo de pedirla otra vez a mano. Se reintenta una vez,
         # y solo si no habia empezado a llegar texto (si ya se pinto algo,
@@ -193,7 +193,7 @@ class Coach:
                     on_delta(txt)
 
             try:
-                self._stream_openai(prompt, images, delta, modelo, tokens, esfuerzo)
+                self._stream_openai(prompt, images, delta, tokens, esfuerzo)
                 metricas.medir(LLM_TOTAL, (time.monotonic() - t0) * 1000)
                 metricas.contar("respuestas")
                 if on_done:
@@ -225,27 +225,29 @@ class Coach:
         """
         t0 = time.monotonic()
         try:
-            kw = dict(model=self.model_voice, instructions=self.system_prompt,
+            kw = dict(model=self.model, instructions=self.system_prompt,
                       input="Responde solo: ok", max_output_tokens=16)
             try:
-                # Sin razonar: aqui no interesa la respuesta, solo abrir la
-                # conexion y que el prompt pase una primera vez. Medido:
-                # 4,5 s razonando por defecto contra 1,0 s asi.
-                self.client.responses.create(reasoning={"effort": "none"}, **kw)
+                # Lo minimo que piense: aqui no interesa la respuesta, solo abrir
+                # la conexion y que el prompt pase una primera vez. Medido: 4,5 s
+                # razonando por defecto contra 1,0 s asi. Se usa el esfuerzo de
+                # voz y no 'none' porque gpt-6.1-sol no acepta 'none'.
+                self.client.responses.create(
+                    reasoning={"effort": self.effort_voice}, **kw)
             except Exception:
                 self.client.responses.create(**kw)   # modelo sin ese ajuste
             return (time.monotonic() - t0) * 1000
         except Exception:
             return None
 
-    def elegir_modelo(self, images):
-        """(modelo, tokens, esfuerzo) segun haya captura de pantalla o no."""
+    def ajustes(self, images):
+        """(tokens, esfuerzo) segun haya captura de pantalla o no."""
         if images:
-            return self.model_vision, self.tokens_vision, self.effort_vision
-        return self.model_voice, self.tokens_voice, self.effort_voice
+            return self.tokens_vision, self.effort_vision
+        return self.tokens_voice, self.effort_voice
 
     # ----------------------------------------------------------------- backend
-    def _stream_openai(self, prompt, images, on_delta, modelo, tokens, esfuerzo):
+    def _stream_openai(self, prompt, images, on_delta, tokens, esfuerzo):
         content = []
         for img in (images or []):
             content.append({"type": "input_image",
@@ -253,7 +255,7 @@ class Coach:
         content.append({"type": "input_text", "text": prompt})
 
         with self.client.responses.stream(
-            model=modelo,
+            model=self.model,
             instructions=self.system_prompt,
             input=[{"role": "user", "content": content}],
             max_output_tokens=tokens + _RESERVA_RAZONAMIENTO,

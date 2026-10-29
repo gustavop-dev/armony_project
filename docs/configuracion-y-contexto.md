@@ -20,8 +20,9 @@ desarrollo).
 | Clave (`config.json`) | Etiqueta UI | Tipo | Valores / Rango | Default | Qué hace |
 |---|---|---|---|---|---|
 | `openai_api_key` | API key de OpenAI | Texto (oculto) | `sk-proj-...` | *(vacío)* | Credencial del modelo de respuestas. Sin ella no arranca la reunión (salvo Modo prueba). |
-| `openai_model_voice` | Modelo · preguntas habladas | Desplegable | `gpt-6-luna`, `gpt-6.1-terra`, `gpt-6.1-sol` (y los 5.x) | `gpt-6.1-terra` | Modelo para lo que te preguntan hablando. Manda la latencia. |
-| `openai_model_vision` | Modelo · capturas de pantalla | Desplegable | igual que arriba | `gpt-6.1-sol` | Modelo para las capturas, donde suele haber código. Manda la capacidad. |
+| `openai_model` | *(no visible)* | Fijo | `gpt-6.1-sol` | `gpt-6.1-sol` | Un único modelo para voz y capturas: la caché de prompt es por modelo. |
+| `openai_effort_voice` | Razonamiento · preguntas habladas | Desplegable | `low`, `medium`, `high` | `low` | Cuánto razona en las preguntas habladas. Manda la latencia. |
+| `openai_effort_vision` | Razonamiento · capturas de pantalla | Desplegable | `low`, `medium`, `high` | `medium` | Cuánto razona con capturas, donde suele haber código. |
 | `language` | Idioma | Desplegable | `es`, `en`, `auto` | `es` | Idioma del reconocimiento de voz. `auto` = detección automática. |
 
 ## 🪟 Overlay

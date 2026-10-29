@@ -77,15 +77,17 @@ Local facts:
 - Tests: config defaults and migration (`llm_provider` ignored, anthropic keys
   preserved).
 
-0.3 **Models (decided, no benchmark; latest models, quality and speed first).**
-- Voice: `gpt-6.1-terra`, `reasoning.effort = "low"`. The provider's default
-  (`medium`) gave a 3.4 s first token; `low` gives ~1.5 s on a warm
-  connection (smoke check, 2026-10-28).
-- Screenshots: `gpt-6.1-sol`, `reasoning.effort = "medium"`. Stronger model,
-  and the tester is reading anyway.
-- Both are configurable (`openai_effort_voice`, `openai_effort_vision`).
-- Users who saved older models in `config.json` keep them until they change
-  them in Settings.
+0.3 **Model (decided by the product owner, 2026-10-28): `gpt-6.1-sol` for
+everything. Only the reasoning effort changes per use.**
+- Config key `openai_model`. It is no longer in Settings. The old
+  `openai_model_voice` / `openai_model_vision` keys are purged on load, so
+  saved 5.x choices do not survive.
+- Voice: `openai_effort_voice = "low"`. Screenshots:
+  `openai_effort_vision = "medium"`. Both are selectable in Settings
+  (low / medium / high). `gpt-6.1-sol` does not accept `none`.
+- One model means one prompt cache for the whole meeting (phase 4). In phase
+  4 the per-use effort switch must go through `configuration_update` items so
+  the cached prefix survives.
 
 0.4 **Spoken-question latency with the real prompt** (2026-10-28,
 `python -m stt_eval.voice_latency`; 12 Spanish technical questions in

@@ -152,17 +152,12 @@ class BilingualPrompt(QtWidgets.QWidget):
         self._on_change(self._lang, self._texts[self._lang])
 
 
-# Modelos ofrecidos. Los tiempos de la generacion 5.x son medianas de 5 llamadas
-# medidas desde este equipo, hasta la primera palabra en pantalla; los de la 6.x
-# se anotaran al medirlos (plan, fase 0.3). Los 5.x siguen en la lista para que
-# una configuracion guardada con ellos no cambie sola al abrir Ajustes.
-GPT = [("gpt-6-luna", "GPT-6 luna — el más eficiente"),
-       ("gpt-6.1-terra", "GPT-6.1 terra — rápido"),
-       ("gpt-6.1-sol", "GPT-6.1 sol — el más capaz"),
-       ("gpt-5.4-mini", "GPT-5.4 mini — 0,7 s"),
-       ("gpt-5.6-terra", "GPT-5.6 terra — 0,8 s"),
-       ("gpt-5.6-luna", "GPT-5.6 luna — 1,2 s"),
-       ("gpt-5.6-sol", "GPT-5.6 sol — 1,3 s")]
+# El modelo es fijo (config: openai_model, gpt-6.1-sol); lo que se elige es
+# cuanto razona en cada uso. gpt-6.1-sol no acepta 'none'. Medido con 12
+# preguntas habladas: 'low' da la primera palabra en ~1,05 s.
+ESFUERZO = [("low", "low — el más rápido"),
+            ("medium", "medium — piensa más"),
+            ("high", "high — el más profundo, tarda más")]
 
 
 def _schema():
@@ -173,19 +168,19 @@ def _schema():
             dict(key="openai_api_key", label="API key de OpenAI", type="text",
                  secret=True, placeholder="sk-proj-…",
                  hint="Sin ella no arranca la reunión (salvo Modo prueba)."),
-            dict(key="openai_model_voice", label="Modelo · preguntas habladas",
+            dict(key="openai_effort_voice", label="Razonamiento · preguntas habladas",
                  type="select",
-                 hint="Para lo que te preguntan hablando. El tiempo es hasta la "
-                      "PRIMERA palabra en pantalla, medido desde este equipo.",
-                 options=GPT),
+                 hint="Para lo que te preguntan hablando: manda la rapidez. "
+                      "Modelo: GPT-6.1 sol.",
+                 options=ESFUERZO),
             dict(key="openai_tokens_voice", label="Longitud máx. · habladas",
                  type="number", min=100, max=1000, step=50, unit=" tok",
                  hint="Cuánto puede extenderse la respuesta hablada."),
-            dict(key="openai_model_vision", label="Modelo · capturas de pantalla",
+            dict(key="openai_effort_vision", label="Razonamiento · capturas de pantalla",
                  type="select",
                  hint="Para los pantallazos, donde suele haber código que resolver. "
-                      "Aquí compensa uno más capaz aunque tarde algo más.",
-                 options=GPT),
+                      "Aquí compensa que piense más aunque tarde algo más.",
+                 options=ESFUERZO),
             dict(key="openai_tokens_vision", label="Longitud máx. · capturas",
                  type="number", min=200, max=4000, step=100, unit=" tok",
                  hint="El código ocupa: quedarse corto lo deja cortado a medias."),
