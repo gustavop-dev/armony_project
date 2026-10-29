@@ -10,8 +10,10 @@ import html
 import math
 
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 
 import icons
+from feedanchor import ANCLADO, FeedAnchor
 import richtext
 import theme as T
 from metrics import PINTADO, metricas
@@ -324,7 +326,9 @@ class StatusBadge(QtWidgets.QWidget):
 
 
 class _AutoScroll:
-    """Mantiene un area pegada al final mientras no subas a leer.
+    """Decide donde se queda un area con scroll (la decision vive en
+    feedanchor.FeedAnchor): pegada al final, donde la dejaste, o anclada a la
+    respuesta que estas leyendo.
 
     Dos detalles que parecen tonterias y no lo son:
 
@@ -336,11 +340,16 @@ class _AutoScroll:
     """
 
     MARGEN = 8      # pixeles de tolerancia para considerarse "al final"
+    # Si la pregunta que precede a la respuesta ocupa menos que esto (fraccion
+    # del alto visible), se ancla la pregunta: se lee que te preguntaron y
+    # debajo que contestar, como en un chat.
+    PREGUNTA_VISIBLE = 0.4
 
-    def __init__(self, scroll):
+    def __init__(self, scroll, on_nuevo_abajo=None):
         self.scroll = scroll
-        self.seguir = True
-        self.objetivo = None
+        self.ancla = FeedAnchor(margen_final=self.MARGEN)
+        self._on_nuevo_abajo = on_nuevo_abajo or (lambda hay: None)
+        self._anclados = None            # (respuesta, pregunta o None)
         self._ajustando = False
         sb = scroll.verticalScrollBar()
         sb.rangeChanged.connect(lambda *_: self.restaurar())
@@ -349,27 +358,71 @@ class _AutoScroll:
         # el texto nuevo te devolveria abajo justo cuando subiste a releer.
         sb.valueChanged.connect(self._movido_a_mano)
 
+    # -- anclado ---------------------------------------------------------------
+    def anclar(self, respuesta, pregunta=None):
+        """Desde ya, lo que se lee es esta respuesta: no se mueve de arriba."""
+        self._anclados = (respuesta, pregunta)
+        self.ancla.anclar()
+        self._avisar()
+
+    def ir_al_final(self):
+        self._anclados = None
+        self.ancla.ir_al_final()
+        self.restaurar()
+        self._avisar()
+
+    def contenido_nuevo(self):
+        self.ancla.contenido_nuevo()
+        self._avisar()
+
+    def _avisar(self):
+        self._on_nuevo_abajo(self.ancla.nuevo_abajo)
+
+    def _y_ancla(self):
+        """y (en el contenido) de lo que se ancla, o None si ya no existe."""
+        if not self._anclados:
+            return None
+        respuesta, pregunta = self._anclados
+        cont = self.scroll.widget()
+        if not isValid(respuesta) or cont is None:
+            return None
+        y = respuesta.mapTo(cont, QtCore.QPoint(0, 0)).y()
+        if pregunta is not None and isValid(pregunta):
+            yp = pregunta.mapTo(cont, QtCore.QPoint(0, 0)).y()
+            if 0 <= y - yp <= self.scroll.viewport().height() * self.PREGUNTA_VISIBLE:
+                y = yp
+        return y
+
+    # -- seguimiento -----------------------------------------------------------
     def _movido_a_mano(self, valor):
         if self._ajustando:
             return
-        sb = self.scroll.verticalScrollBar()
-        self.seguir = valor >= sb.maximum() - self.MARGEN
-        self.objetivo = valor
+        anclado_antes = self._anclados is not None
+        self.ancla.movido_a_mano(valor, self.scroll.verticalScrollBar().maximum())
+        self._anclados = None
+        if anclado_antes:
+            self.restaurar()             # quita el hueco reservado debajo
+        self._avisar()
 
     def anotar(self):
         """Antes de repintar: recuerda donde estabas y si venias siguiendo."""
         sb = self.scroll.verticalScrollBar()
-        self.seguir = sb.value() >= sb.maximum() - self.MARGEN
-        self.objetivo = sb.value()
+        self.ancla.anotar(sb.value(), sb.maximum())
 
     def restaurar(self):
         sb = self.scroll.verticalScrollBar()
         self._ajustando = True       # lo que movamos aqui no es "a mano"
         try:
-            if self.seguir:
-                sb.setValue(sb.maximum())
-            elif self.objetivo is not None:
-                sb.setValue(min(self.objetivo, sb.maximum()))
+            if self._anclados is not None:
+                self.ancla.ubicar(self._y_ancla())
+                if self.ancla.modo != ANCLADO:
+                    self._anclados = None
+            cont = self.scroll.widget()
+            if cont is not None:
+                alto = self.ancla.alto_minimo(self.scroll.viewport().height())
+                if cont.minimumHeight() != alto:
+                    cont.setMinimumHeight(alto)    # vuelve por rangeChanged
+            sb.setValue(self.ancla.valor(sb.maximum()))
         finally:
             self._ajustando = False
 
@@ -382,10 +435,13 @@ class _AutoScroll:
         """
         sb = self.scroll.verticalScrollBar()
         salto = max(80, int(self.scroll.viewport().height() * 0.28))
-        sb.setValue(sb.value() - muescas * salto)
-        # Si te quedas al final se vuelve a seguir; si subes, se deja de seguir.
-        self.seguir = sb.value() >= sb.maximum() - self.MARGEN
-        self.objetivo = sb.value()
+        self._ajustando = True
+        try:
+            sb.setValue(sb.value() - muescas * salto)
+        finally:
+            self._ajustando = False
+        # La rueda es mover a mano: suelta el anclado y decide por posicion.
+        self._movido_a_mano(sb.value())
 
     def zona(self):
         """Rectangulo en pantalla, para el desviador de rueda."""
@@ -662,6 +718,31 @@ class Burbuja(QtWidgets.QFrame):
                     self.cuerpo.addWidget(vinetas(bloque[1]))
                 else:
                     self.cuerpo.addWidget(parrafo(bloque[1]))
+
+
+class NewBelowChip(QtWidgets.QPushButton):
+    """'nuevo ↓': hay conversacion por debajo de la respuesta que estas leyendo.
+
+    Mientras lees, lo nuevo NO te mueve el texto: entra abajo y solo se avisa
+    aqui. Pulsarlo baja al final y vuelve a seguir la conversacion.
+    """
+
+    def __init__(self):
+        super().__init__("nuevo ↓")
+        f = self.font(); f.setPixelSize(11); self.setFont(f)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Maximum,
+                           QtWidgets.QSizePolicy.Fixed)
+        self.setStyleSheet(
+            "QPushButton {"
+            f"  color: {T.GOLD_LABEL};"
+            "   background: rgba(242,201,76,0.10);"
+            "   border: 1px solid rgba(242,201,76,0.35);"
+            "   border-radius: 9px;"
+            "   padding: 3px 10px;"
+            "}"
+            "QPushButton:hover { background: rgba(242,201,76,0.18); }")
+        self.setVisible(False)
 
 
 class SkipPill(QtWidgets.QLabel):
@@ -1057,6 +1138,8 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         """
         zonas = ([self._drag_header, self.scroll.verticalScrollBar(),
                   self.resize_grip] + self._copy_buttons)
+        if self.nuevo_chip.isVisible():
+            zonas.append(self.nuevo_chip)
         # La horizontal solo esta cuando el codigo no cabe de ancho; si no se
         # puede arrastrar, el trozo que sobresale seguiria sin poder leerse.
         if self.scroll.horizontalScrollBar().isVisible():
@@ -1147,17 +1230,22 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self.feed.addStretch()          # el hueco sobrante, siempre al final
         self.scroll.setWidget(cont)
         # El seguimiento del final se crea aqui: set_hint ya lo usa.
-        self._auto["feed"] = _AutoScroll(self.scroll)
+        self.nuevo_chip = NewBelowChip()
+        self._auto["feed"] = _AutoScroll(self.scroll,
+                                         on_nuevo_abajo=self.nuevo_chip.setVisible)
+        self.nuevo_chip.clicked.connect(self._auto["feed"].ir_al_final)
         lay.addWidget(self.scroll, 1)
 
-        # Aviso de "no voy a responder": va pegado al hilo, no dentro de el, para
-        # que no se pierda hacia arriba cuando siga entrando conversacion.
+        # Avisos pegados al hilo, no dentro de el, para que no se pierdan hacia
+        # arriba cuando siga entrando conversacion: "no voy a responder" a la
+        # izquierda y "hay algo nuevo debajo" a la derecha.
         self.skip_pill = SkipPill()
         pie = QtWidgets.QWidget()
         pl = QtWidgets.QHBoxLayout(pie)
         pl.setContentsMargins(18, 0, 18, 10)
         pl.addWidget(self.skip_pill)
         pl.addStretch()
+        pl.addWidget(self.nuevo_chip)
         lay.addWidget(pie)
 
         self.set_hint("Start the meeting to capture the participant "
@@ -1187,6 +1275,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
             fl.addStretch()
         self.feed.insertWidget(self.feed.count() - 1, fila)   # antes del hueco
         self._podar()
+        self._auto["feed"].contenido_nuevo()
         return fila
 
     def _podar(self):
@@ -1348,10 +1437,18 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
 
     # ---------------- el hilo: sugerencias
     def clear_answer(self):
-        """Empieza una sugerencia nueva: se abre otra burbuja, no se borra nada."""
+        """Empieza una sugerencia nueva: se abre otra burbuja, no se borra nada.
+
+        Y se ancla: desde aqui la sugerencia (con su pregunta encima, si cabe)
+        se queda arriba mientras la lees, crezca lo que crezca y llegue lo que
+        llegue por debajo.
+        """
         self._raw = ""
+        pregunta = next((b for b in reversed(self._burbujas)
+                         if b.quien == "ellos" and isValid(b)), None)
         self._auto["feed"].anotar()
         self._burbuja_resp = self._nueva_burbuja("tu")
+        self._auto["feed"].anclar(self._burbuja_resp, pregunta)
         QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
     def append_answer(self, delta):
@@ -1404,6 +1501,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._burbuja_resp = None
         self._burbujas = []
         self._raw = ""
+        self._auto["feed"].ir_al_final()
         while self.feed.count() > 1:
             it = self.feed.takeAt(0)
             w = it.widget()

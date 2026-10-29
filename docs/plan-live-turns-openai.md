@@ -136,6 +136,20 @@ Acceptance:
 Acceptance: in the scripted sequence (answer, interviewer follow-up partials,
 second card), the pinned answer never moves.
 
+Status (2026-10-28): **done**.
+- `feedanchor.FeedAnchor` holds the decision and `overlay_ui._AutoScroll`
+  applies it.
+- A new answer anchors with its question above it if that fits in 40% of the
+  viewport. The content gets a minimum height so a short answer can sit at
+  the top, ChatGPT-style.
+- `NewBelowChip` ("nuevo ↓") lives in the footer and is added to the
+  interactive zones while visible.
+- Tests:
+  - `tests/test_feedanchor.py`: 10 unit tests
+  - `tests/test_feed_pinning_qt.py`: 3 offscreen tests with the real panel.
+    With the anchor disabled the first one fails: the answer moved 96 px up as
+    soon as the interviewer kept talking.
+
 ## Phase 2: The tester's mic and the question's state
 
 - Audio and STT:
