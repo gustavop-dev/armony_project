@@ -3,12 +3,16 @@
 Detecta GPU NVIDIA (CUDA) si esta disponible; si no, usa CPU con int8 (mas ligero).
 El modelo se descarga la primera vez que se usa.
 """
+import logging
+
 from cuda_setup import register_cuda_dlls
 
 # Debe ejecutarse antes de cargar cualquier modelo en GPU (busca cuBLAS/cuDNN de pip).
 register_cuda_dlls()
 
 from faster_whisper import WhisperModel  # noqa: E402
+
+log = logging.getLogger("armony.transcribe")
 
 
 class Transcriber:
@@ -24,8 +28,9 @@ class Transcriber:
                 self.model = WhisperModel(size, device="cuda", compute_type="float16")
                 self.device = "cuda"
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                log.info("Whisper CUDA load failed (%s: %s); using CPU int8",
+                         type(e).__name__, e)
             self.model = WhisperModel(size, device="cpu", compute_type="int8")
             self.device = "cpu"
         elif device == "cuda":

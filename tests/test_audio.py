@@ -714,3 +714,82 @@ def test_stop_warns_while_thread_blocked(clock, es, pyaudio_factory, release):
 
     assert ("Aviso: un hilo de audio no respondio; no se libero PortAudio."
             in es.statuses)
+
+
+# --- logging of swallowed failures (ERR-005) ---------------------------------
+
+PCM_FEED_LOG = ("Live transcription feed failed; further failures in this "
+                "session are not logged")
+
+
+def failing_pcm(block):
+    raise ValueError("stream consumer failed")
+
+
+def messages(caplog):
+    return [record.getMessage() for record in caplog.records]
+
+
+def test_segmenter_callback_failure_is_logged(caplog):
+    def failing(utt, reason):
+        raise ValueError("consumer failed")
+
+    seg = audio._Segmenter(failing, **SEG_PARAMS)
+
+    feed(seg, *blocks(speech, 3), *blocks(silence, 5))
+
+    assert [(r.name, r.levelname, r.exc_info[0]) for r in caplog.records] == [
+        ("armony.audio", "ERROR", ValueError)]
+
+
+def test_system_pcm_failure_is_logged_once_per_session(clock, es, caplog):
+    engine = make_engine(es, on_system_pcm=failing_pcm)
+    p = FakePyAudio(streams=[FakeStream([pcm(8192)] * 3)])
+
+    run_capture(engine, p, SPEAKERS_LB, True)
+
+    assert messages(caplog).count(PCM_FEED_LOG) == 1
+
+
+def test_start_rearms_system_pcm_failure_log(clock, es, pyaudio_factory):
+    pyaudio_factory.next = FakePyAudio(loopbacks=())
+    engine = make_engine(es, on_system_pcm=failing_pcm)
+    engine._pcm_error_logged = True
+
+    engine.start()
+    engine.stop()
+
+    assert engine._pcm_error_logged is False
+
+
+def test_capture_read_failure_is_logged(clock, es, caplog):
+    engine = make_engine(es)
+
+    run_capture(engine, FakePyAudio(streams=[FakeStream()]), SPEAKERS_LB, True)
+
+    assert messages(caplog) == ["Capture read failed on sistema device; capture stopped"]
+
+
+def test_default_output_check_failure_is_logged_once(clock, es, caplog):
+    engine = make_engine(es)
+    # Index 99 is unknown: both 2 s checks in this loop raise OSError.
+    p, _ = reattach_setup(clock, default_output=99)
+
+    run_capture(engine, p, SPEAKERS_LB, True)
+
+    assert messages(caplog).count("Default output device check failed") == 1
+
+
+def test_terminate_failure_is_logged(clock, es, pyaudio_factory, caplog):
+    def broken_terminate():
+        raise OSError("PortAudio not initialized")
+
+    pyaudio_factory.next = FakePyAudio(loopbacks=())
+    pyaudio_factory.next.terminate = broken_terminate
+    engine = make_engine(es)
+    engine.start()
+
+    engine.stop()
+
+    assert ("PortAudio terminate failed", "WARNING") in [
+        (r.getMessage(), r.levelname) for r in caplog.records]

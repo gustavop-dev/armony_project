@@ -15,6 +15,7 @@ contexts/*.md
 
 # Archivos generados en runtime
 assets/_chevron.png
+logs/
 
 # Fuentes propietarias (descargar aparte, ver assets/fonts/LEEME.txt)
 assets/fonts/*.ttf

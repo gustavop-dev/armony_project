@@ -8,11 +8,14 @@ invisible".
 config.json esta en .gitignore: las claves nunca salen del equipo.
 """
 import json
+import logging
 import os
 import sys
 import time
 
 import secretstore
+
+log = logging.getLogger("armony.config")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -178,10 +181,12 @@ def read_user_text(path):
 
 def _quarantine(path):
     """Rename an unparseable file so the next save cannot overwrite it."""
+    destino = f"{path}.bad-{time.strftime('%Y%m%d-%H%M%S')}"
     try:
-        os.replace(path, f"{path}.bad-{time.strftime('%Y%m%d-%H%M%S')}")
-    except OSError:
-        pass
+        os.replace(path, destino)
+        log.warning("Unparseable config moved to %s", destino)
+    except OSError as e:
+        log.warning("Quarantine of %s failed: %s", path, type(e).__name__)
 
 
 def load_config():
@@ -189,13 +194,23 @@ def load_config():
     if os.path.exists(CONFIG_PATH):
         try:
             data = json.loads(read_user_text(CONFIG_PATH))
-        except OSError:
-            data = {}          # unreadable now (e.g. locked): keep the file as is
-        except ValueError:
-            data = None        # not JSON
+        except OSError as e:
+            # unreadable now (e.g. locked): keep the file as is
+            log.warning("Config not readable (%s): %s; using defaults",
+                        type(e).__name__, CONFIG_PATH)
+            data = {}
+        except ValueError as e:
+            # not JSON; position only, never the file content
+            log.warning("Config is not valid JSON (%s at line %s column %s): %s",
+                        type(e).__name__, getattr(e, "lineno", None),
+                        getattr(e, "colno", None), CONFIG_PATH)
+            data = None
         if isinstance(data, dict):
             cfg.update(data)
         else:
+            if data is not None:
+                log.warning("Config top level is %s, not an object: %s",
+                            type(data).__name__, CONFIG_PATH)
             _quarantine(CONFIG_PATH)
     # Las claves se guardan cifradas; el resto de la app las usa en claro.
     for k in CLAVES_SECRETAS:
@@ -228,7 +243,8 @@ def save_config(cfg):
             a_disco[k] = secretstore.proteger(a_disco[k])
     try:
         texto = json.dumps(a_disco, ensure_ascii=False, indent=2)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
+        log.warning("Config not serializable (%s); not saved", type(e).__name__)
         return False
     # Write to a temp file and swap it in: config.json is never left truncated.
     tmp = CONFIG_PATH + ".tmp"
@@ -240,9 +256,10 @@ def save_config(cfg):
             os.fsync(f.fileno())
         os.replace(tmp, CONFIG_PATH)
         return True
-    except OSError:
+    except OSError as e:
+        log.warning("Config save failed (%s): %s", type(e).__name__, CONFIG_PATH)
         try:
             os.remove(tmp)
         except OSError:
-            pass
+            log.debug("Temp config not removed: %s", tmp)
         return False

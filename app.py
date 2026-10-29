@@ -8,10 +8,12 @@ Atajos (convertidos de Mac a Windows):
     Ctrl+H      captura de pantalla y consulta al modelo
     Ctrl+Enter  generar respuesta
 """
+import logging
 import sys
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import applog
 import config as cfg_mod
 import theme as T
 from engine import CoachEngine
@@ -20,6 +22,8 @@ from wheelscroll import WheelForwarder
 from overlay_ui import TopBar, TranscriptPanel, CollapsedButton
 from settings_window import SettingsWindow
 import hotkeys as HK
+
+log = logging.getLogger("armony.app")
 
 
 class OverlayApp(QtCore.QObject):
@@ -437,6 +441,14 @@ class OverlayApp(QtCore.QObject):
 
 
 def main():
+    # File log first: failures while building the UI must already reach disk.
+    try:
+        ruta_log = applog.setup(cfg_mod.data_dir())
+        log.info("Session log started: %s (frozen=%s)", ruta_log,
+                 bool(getattr(sys, "frozen", False)))
+    except OSError as e:
+        print(f"File logging disabled: {e}", file=sys.stderr)
+
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)   # son ventanas tipo Tool
 

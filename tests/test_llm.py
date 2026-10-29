@@ -3,6 +3,7 @@
 The provider SDK clients are replaced with in-memory fakes; no request leaves
 the process.
 """
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -404,3 +405,64 @@ def test_failed_suggestion_http_attempts(coach, status, expected_requests):
     out = _run(coach)
 
     assert (len(hits), len(out["errors"])) == (expected_requests, 1)
+
+
+# ------------------------------------------- logged failures (ERR-005)
+def _api_error(status, message):
+    """SDK-shaped error: class name APIStatusError with a status_code."""
+    return type("APIStatusError", (Exception,), {"status_code": status})(message)
+
+
+@pytest.fixture
+def frozen_clock(monkeypatch):
+    monkeypatch.setattr(llm.time, "monotonic", lambda: 10.0)
+
+
+def _log_entries(caplog):
+    return [(r.name, r.levelname, r.getMessage()) for r in caplog.records]
+
+
+def test_final_error_is_logged_with_status_code(coach, frozen_clock, caplog):
+    coach.client = FakeAnthropic(
+        _Stream([], fail_after=0, error=_api_error(401, "invalid x-api-key")))
+
+    _run(coach)
+
+    assert _log_entries(caplog) == [
+        ("armony.llm", "ERROR",
+         "LLM request failed after 1 attempt(s), 0 ms (model=voice-model, "
+         "text received=False): APIStatusError status=401: invalid x-api-key")]
+
+
+def test_retry_is_logged_at_info(coach, caplog):
+    caplog.set_level(logging.INFO, logger="armony")
+    coach.client = FakeAnthropic(
+        _Stream([], fail_after=0, error=_api_error(529, "overloaded")),
+        _Stream(["ok"]))
+
+    _run(coach)
+
+    assert _log_entries(caplog) == [
+        ("armony.llm", "INFO",
+         "LLM request failed, retrying once: APIStatusError status=529: overloaded")]
+
+
+def test_warmup_failure_is_logged(coach, caplog):
+    coach.client = FakeAnthropic()
+    coach.client.create_error = ConnectionError("down")
+
+    coach.calentar()
+
+    assert _log_entries(caplog) == [
+        ("armony.llm", "WARNING", "LLM warm-up failed: ConnectionError status=None: down")]
+
+
+def test_error_log_does_not_contain_api_key(caplog):
+    secret = "sk-test-SECRET-0123456789"
+    c = Coach(api_key=secret, model_voice="voice-model")
+    c.client = FakeAnthropic(_Stream([], fail_after=0, error=_api_error(
+        401, f"Incorrect API key provided: {secret}")))
+
+    _run(c)
+
+    assert secret not in caplog.text

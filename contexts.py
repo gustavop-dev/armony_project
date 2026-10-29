@@ -13,10 +13,13 @@ Cada contexto es un archivo contexts/<id>.md con cabecera (frontmatter):
   en el system prompt de Claude al iniciar la reunion.
 - El contenido se congela al iniciar (para no romper el cache a media llamada).
 """
+import logging
 import os
 import re
 
 import config as cfg_mod
+
+log = logging.getLogger("armony.contexts")
 
 # Junto a config.json: en el .exe eso es %APPDATA%\Armony, que es escribible y
 # sobrevive a las actualizaciones (ver config.data_dir).
@@ -63,7 +66,9 @@ def list_contexts():
         try:
             # Decoding never fails: a skipped file would be deleted by write_all.
             texto = cfg_mod.read_user_text(os.path.join(CONTEXTS_DIR, fn))
-        except OSError:
+        except OSError as e:
+            log.warning("Context file not readable (%s); skipped: %s",
+                        type(e).__name__, fn)
             continue
         name, active, lang, body = _parse(texto)
         out.append({"id": cid, "name": name or cid, "active": active,
@@ -100,8 +105,9 @@ def write_all(contexts):
         if fn.lower().endswith(".md") and os.path.normcase(fn) not in vivos:
             try:
                 os.remove(os.path.join(CONTEXTS_DIR, fn))
-            except OSError:
-                pass
+            except OSError as e:
+                log.warning("Deleted context file not removed (%s): %s",
+                            type(e).__name__, fn)
 
 
 def _matches_lang(ctx_lang, meeting_lang):
