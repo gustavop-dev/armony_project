@@ -224,8 +224,6 @@ def test_cerrar_respuesta_renders_pending_text(panel):
     assert "Final words" in joined(bubbles(panel, "tu")[0])
 
 
-@pytest.mark.xfail(strict=True, reason="[KNOWN-501] cerrar_respuesta leaves the "
-                   "throttle timer armed, which later repaints into a new bubble")
 def test_cerrar_respuesta_does_not_duplicate_answer(qtbot, panel):
     panel.clear_answer()
     panel.append_answer("Final words")
@@ -426,3 +424,25 @@ def test_limpiar_hilo_drops_copy_buttons(panel):
     panel.limpiar_hilo()
 
     assert btn not in panel.interactive_widgets()
+
+
+@pytest.mark.parametrize("chunks", [["Yes."], ["## Answer\n", "We ship ", "on Friday."]])
+def test_streamed_answer_closed_immediately_renders_once(qtbot, panel, chunks):
+    panel.clear_answer()
+    for chunk in chunks:
+        panel.append_answer(chunk)
+    panel.cerrar_respuesta()
+
+    qtbot.wait(overlay_ui.INTERVALO_REPINTADO + 150)
+
+    assert len(bubbles(panel, "tu")) == 1
+
+
+def test_limpiar_hilo_cancels_pending_repaint(qtbot, panel):
+    panel.clear_answer()
+    panel.append_answer("pending")
+    panel.limpiar_hilo()
+
+    qtbot.wait(overlay_ui.INTERVALO_REPINTADO + 150)
+
+    assert bubbles(panel, "tu") == []

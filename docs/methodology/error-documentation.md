@@ -12,7 +12,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P1 | ~~KNOWN-204~~ ERR-204 | Settings → Save deletes contexts with an upper-case `.MD` extension | `fix/…-contexts-case-insensitive` |
 | P1 | ~~KNOWN-205~~ ERR-205, ~~KNOWN-206~~ ERR-206 | Unreadable/BOM `config.json` → keys blanked and persisted; non-atomic save truncates the file | `fix/…-safe-config-io` |
 | P1 | ~~KNOWN-201~~ ERR-201, ~~KNOWN-202~~ ERR-202 | Corrupt `config.json` aborts startup (`--noconsole`: no message) | `fix/…-safe-config-io` |
-| P2 | KNOWN-501 | Every streamed suggestion is painted twice | `fix/…-answer-repaint-timer` |
+| P2 | ~~KNOWN-501~~ ERR-501 | Every streamed suggestion is painted twice | `fix/…-answer-repaint-timer` |
 | P2 | ~~KNOWN-203~~ ERR-203 | One non-UTF-8 context blocks Settings and leaves the meeting UI running without engine | `fix/…-safe-config-io` |
 | P2 | KNOWN-003 | Engine init failure leaves the UI in running state | `fix/…-start-failure-state` |
 | P2 | KNOWN-004 | 6 HTTP attempts / ~3.4 s per failed suggestion; 600 s read timeout | `fix/…-llm-client-timeouts` |
@@ -104,20 +104,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** low. The displayed value differs from the stored one until the slider is touched; then the threshold becomes 0.013 (≈8% less sensitive voice detection / echo gate, `audio.py:271`).
 - **Proposed fix:** `min=0.002` (grid 0.002…0.100 contains 0.012 and 0.1) or `step=0.001`.
 - **Test:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`
-### [KNOWN-501] Final answer is painted twice after `cerrar_respuesta`
-- **Where:** `overlay_ui.py:1357-1382` (`append_answer` arms a 90 ms `QTimer.singleShot(_repintar)`; `cerrar_respuesta` repaints when `_repintado_pendiente` and sets `_burbuja_resp = None`, but cannot cancel the pending single-shot).
-- **Trigger:** `respDone` delivered less than `INTERVALO_REPINTADO` (90 ms) after the last `respDelta`. The engine emits `respDone` from `on_done` immediately after the stream ends (`engine.py:590-609`), so this is the normal path; short answers (`< len(SENTINEL)`) emit `respStart`, one `respDelta` and `respDone` back to back (`engine.py:595-598`).
-- **Reproduced (2026-10-28) through `OverlayApp` signal wiring** (`app.on_resp_done` → `panel.cerrar_respuesta`), `respDone` right after the last delta:
-
-  | Stream shape | Suggestion bubbles |
-  |---|---|
-  | 1 delta (short answer) | 2 |
-  | 2-12 deltas, 10 / 25 / 40 ms apart | 2 in 33/33 runs |
-  | last delta followed by >= 90 ms of idle before `respDone` | 1 |
-- **Root cause:** the throttle timer is a fire-and-forget `singleShot` on a bound method; when it fires after `cerrar_respuesta`, `_repintar` sees `_burbuja_resp is None` and creates a new bubble from the same `_raw`.
-- **Impact:** every streamed suggestion appears twice in the thread; doubles render work per answer (`pintado_ms`).
-- **Proposed fix:** use one `QTimer` instance (`setSingleShot(True)`) owned by the panel and `stop()` it in `cerrar_respuesta` / `clear_answer` / `limpiar_hilo`; or make `_repintar` a no-op when no answer is open.
-- **Test:** `tests/test_overlay_ui_thread.py::test_cerrar_respuesta_does_not_duplicate_answer`
 ### [KNOWN-502] Question caret never blinks
 - **Where:** `overlay_ui.py:1242` (`_animate` re-renders the caret only when `self._question_text`); `_question_text` is set to `""` at `overlay_ui.py:964` and never assigned again.
 - **Reproduced (2026-10-28):** `set_state("listening"); set_question("Tell me about")`, 1.5 s → caret stays visible.
@@ -261,3 +247,18 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** an empty/partial `config.json`; on the next start KNOWN-205's path blanks every key. `SettingsWindow._save` catches the exception and shows "Error al guardar", but the file is already damaged.
 - **Resolution (2026-10-28):** `save_config` serialises to a string first (returns `False` on `TypeError`/`ValueError`), writes `config.json.tmp`, `flush` + `os.fsync`, then `os.replace`; the temp file is removed on failure.
 - **Regression tests:** `tests/test_config.py::test_failed_save_keeps_previous_config_file`, `::test_failed_save_returns_false`, `::test_save_leaves_no_temp_file`
+
+### [ERR-501] Final answer is painted twice after `cerrar_respuesta`
+- **Where:** `overlay_ui.py:1357-1382` (`append_answer` arms a 90 ms `QTimer.singleShot(_repintar)`; `cerrar_respuesta` repaints when `_repintado_pendiente` and sets `_burbuja_resp = None`, but cannot cancel the pending single-shot).
+- **Trigger:** `respDone` delivered less than `INTERVALO_REPINTADO` (90 ms) after the last `respDelta`. The engine emits `respDone` from `on_done` immediately after the stream ends (`engine.py:590-609`), so this is the normal path; short answers (`< len(SENTINEL)`) emit `respStart`, one `respDelta` and `respDone` back to back (`engine.py:595-598`).
+- **Reproduced (2026-10-28) through `OverlayApp` signal wiring** (`app.on_resp_done` → `panel.cerrar_respuesta`), `respDone` right after the last delta:
+
+  | Stream shape | Suggestion bubbles |
+  |---|---|
+  | 1 delta (short answer) | 2 |
+  | 2-12 deltas, 10 / 25 / 40 ms apart | 2 in 33/33 runs |
+  | last delta followed by >= 90 ms of idle before `respDone` | 1 |
+- **Root cause:** the throttle timer is a fire-and-forget `singleShot` on a bound method; when it fires after `cerrar_respuesta`, `_repintar` sees `_burbuja_resp is None` and creates a new bubble from the same `_raw`.
+- **Impact:** every streamed suggestion appears twice in the thread; doubles render work per answer (`pintado_ms`).
+- **Resolution (2026-10-28):** `TranscriptPanel` owns a single-shot `QTimer` (`_timer_repintado`) instead of `QTimer.singleShot`; `_repintar` and `limpiar_hilo` stop it, so no repaint fires after the answer is closed or the thread is cleared. Verified through `OverlayApp` signal wiring: 34/34 streams (1 delta; 2-12 deltas at 10/25/40 ms; `respDone` right after the last delta) render one bubble (was 34/34 duplicated).
+- **Regression tests:** `tests/test_overlay_ui_thread.py::test_cerrar_respuesta_does_not_duplicate_answer`, `::test_streamed_answer_closed_immediately_renders_once`, `::test_limpiar_hilo_cancels_pending_repaint`

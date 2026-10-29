@@ -969,6 +969,12 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._burbuja_viva = None   # la intervencion que se esta transcribiendo
         self._burbuja_resp = None   # la sugerencia que se esta generando
         self._repintado_pendiente = False
+        # Owned single-shot timer (not QTimer.singleShot) so a pending repaint
+        # can be cancelled when the answer is closed or the thread is cleared.
+        self._timer_repintado = QtCore.QTimer(self)
+        self._timer_repintado.setSingleShot(True)
+        self._timer_repintado.setInterval(INTERVALO_REPINTADO)
+        self._timer_repintado.timeout.connect(self._repintar)
         self._auto = {}             # se llena en _body, al crear el hilo
         self._build()
         # Animacion: pulso del borde (listening) + caret parpadeante.
@@ -1364,9 +1370,10 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._raw += delta
         if not self._repintado_pendiente:
             self._repintado_pendiente = True
-            QtCore.QTimer.singleShot(INTERVALO_REPINTADO, self._repintar)
+            self._timer_repintado.start()
 
     def _repintar(self):
+        self._timer_repintado.stop()
         self._repintado_pendiente = False
         if self._burbuja_resp is None:
             self._burbuja_resp = self._nueva_burbuja("tu")
@@ -1400,6 +1407,8 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
 
     def limpiar_hilo(self):
         """Vacia la conversacion (al empezar una reunion nueva)."""
+        self._timer_repintado.stop()
+        self._repintado_pendiente = False
         self._burbuja_viva = None
         self._burbuja_resp = None
         self._burbujas = []
