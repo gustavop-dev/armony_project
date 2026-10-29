@@ -117,36 +117,24 @@ def native(monkeypatch):
 
 
 @pytest.fixture
-def ui(qtbot, monkeypatch, cfg, native):
+def ui(qtbot, monkeypatch, cfg, native, tmp_path):
+    import icons
+    save_png = icons.save_png
+    # The Home writes its combo arrow icon: keep it in the test's temp dir.
+    monkeypatch.setattr(icons, "save_png", lambda name, color, size, path:
+                        save_png(name, color, size, str(tmp_path / "chevron.png")))
     monkeypatch.setattr(app, "CoachEngine", FakeEngine)
     monkeypatch.setattr(app.cfg_mod, "load_config", lambda: dict(cfg))
     controller = app.OverlayApp()
     for widget in (controller.top, controller.panel, controller.screen,
-                   controller.collapsed):
+                   controller.collapsed, controller.home):
         qtbot.addWidget(widget)
     controller._ct_timer.stop()
     yield controller
-    if controller.settings is not None:
-        controller.settings.close()
+    controller._timer.stop()
     if controller.wheel.installed:
         controller.shutdown()
     QtWidgets.QApplication.processEvents()
-
-
-@pytest.fixture
-def settings_assets(monkeypatch, tmp_path):
-    """Keep the real settings widget's generated icon in its temporary directory."""
-    import icons
-
-    save_png = icons.save_png
-    monkeypatch.setattr(icons, "save_png", lambda name, color, size, path:
-                        save_png(name, color, size, str(tmp_path / "chevron.png")))
-
-
-def open_registered_settings(ui, qtbot):
-    ui.open_settings()
-    qtbot.addWidget(ui.settings)
-    return ui.settings
 
 
 def badge(ui):
@@ -157,11 +145,11 @@ class TestMeeting:
     def test_missing_openai_key_blocks_start(self, ui, cfg):
         """Catch a live session starting without the LLM credential."""
         cfg["openai_api_key"] = ""
-        expected = "Add your OpenAI API key in Settings (⚙) to start"
 
         ui.start_meeting()
 
-        assert badge(ui) == expected
+        assert ui.home._aviso == "Añade tu API key de OpenAI para iniciar la reunión."
+        assert (ui.home.vista, ui.home.isVisible()) == (("ajustes", None), True)
         assert ui.engine.starts == []
         assert ui._running is False
         assert ui._timer.isActive() is False
@@ -173,7 +161,7 @@ class TestMeeting:
 
         ui.start_meeting()
 
-        assert badge(ui) == "Add your AssemblyAI key in Settings (⚙) to start"
+        assert ui.home._aviso == "Añade tu API key de AssemblyAI para iniciar la reunión."
         assert ui.engine.starts == []
         assert ui._running is False
 
@@ -196,6 +184,20 @@ class TestMeeting:
         assert ui.top.lbl_timer.text() == "00:00"
         assert ui.panel._state == "listening"
         assert badge(ui) == "Loading…"
+
+    def test_start_swaps_the_home_for_the_overlay(self, ui):
+        ui.start_meeting()
+
+        assert (ui.home.isVisible(), ui.top.isVisible(), ui.panel.isVisible()) == (
+            False, True, True)
+
+    def test_stop_returns_to_the_home(self, ui):
+        ui.start_meeting()
+
+        ui.stop_meeting()
+
+        assert (ui.home.isVisible(), ui.top.isVisible(), ui.panel.isVisible()) == (
+            True, False, False)
 
     def test_stop_restores_idle(self, ui):
         """Catch stopping a session leaving timer, listening state or latency visible."""
@@ -256,8 +258,9 @@ class TestMeeting:
 
         ui.start_meeting()
 
-        assert (badge(ui), ui.panel.skip_pill.text()) == (
-            "Error", "Error: No se pudo iniciar OpenAI: bad key")
+        assert ui.home._aviso == ("No se pudo iniciar la reunión: "
+                                  "No se pudo iniciar OpenAI: bad key")
+        assert ui.home.isVisible() is True
 
     def test_start_after_initialization_error_starts_engine(self, ui):
         """Catch the first Start press after a failure only stopping the UI."""
@@ -284,7 +287,7 @@ class TestActions:
         """Catch model or screen actions proceeding before a meeting starts."""
         getattr(ui, action)()
 
-        assert badge(ui) == "Start the meeting first"
+        assert badge(ui) == "Idle"
         assert ui._shots == []
         assert ui.engine.screenshots == []
         assert ui.engine.answers == 0
@@ -309,7 +312,9 @@ class TestActions:
         decoded = QtGui.QImage.fromData(raw, "PNG")
         assert (decoded.width(), decoded.height()) == expected
         assert decoded.pixelColor(0, 0).name() == "#ff0000"
-        assert ui.screen.badge._lbl.text() == "1 screenshot ready — Caps+D to generate"
+        assert ui.screen.badge._lbl.text() == "Pending"
+        assert ui.screen.skip_pill.text() == "1 screenshot ready — Caps+D to solve"
+        assert ui.screen.titulo.text() == "Screen · 1 shot"
         assert ui.top.keys_gen.isEnabled() is True
         assert ui.engine.screenshots == []
 
@@ -319,7 +324,7 @@ class TestActions:
 
         ui.generate()
 
-        assert badge(ui) == "Take a screenshot first"
+        assert ui.panel.skip_pill.text() == "Take a screenshot first (Caps+S)"
         assert ui.engine.screenshots == []
 
     def test_generate_transfers_snapshot(self, ui):
@@ -348,6 +353,7 @@ class TestActions:
 
     def test_toggle_hides_overlay(self, ui):
         """Catch hiding the overlay also hiding the restore control."""
+        ui.start_meeting()
         ui.toggle_overlay()
 
         assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == (False, False, True)
@@ -355,6 +361,7 @@ class TestActions:
 
     def test_toggle_restores_overlay(self, ui):
         """Catch the restore control failing to restore both overlay windows."""
+        ui.start_meeting()
         ui.toggle_overlay()
 
         ui.toggle_overlay()
@@ -368,8 +375,9 @@ class TestEvents:
         ("Cargando modelo de transcripcion...", "Loading model…"),
         ("Escuchando la reunion.", "Listening"),
         ("Sigue hablando...", "Still talking…"),
-        ("Sin pregunta todavia: guardado como contexto.", "Context saved"),
-        ("Aun no hay nada que responder.", "Nothing to answer yet"),
+        # not states: the pill already explains them, the badge keeps its state
+        ("Sin pregunta todavia: guardado como contexto.", "Loading…"),
+        ("Aun no hay nada que responder.", "Loading…"),
         ("Modelo listo.", "Loading…"),
     ])
     def test_engine_status_maps_to_badge(self, ui, message, expected):
@@ -474,21 +482,29 @@ class TestEvents:
         assert len(ui.panel._burbujas) == count
         assert first._raw == "Revised draft."
 
-    def test_latency_signal_updates_label(self, ui):
-        """Catch STT latency signals disconnected from their displayed value."""
+    def test_fast_latency_stays_out_of_sight(self, ui):
         ui.start_meeting()
 
         ui.engine.sttLatency.emit(250)
+        ui.engine.e2eLatency.emit(1250)
 
-        assert ui.panel.lat.text() == "250 ms"
+        assert (ui.panel.lat.isHidden(), ui.panel.e2e.isHidden()) == (True, True)
 
-    def test_e2e_signal_updates_label(self, ui):
+    def test_slow_latency_signal_updates_label(self, ui):
+        """Catch STT latency signals disconnected from their displayed value."""
+        ui.start_meeting()
+
+        ui.engine.sttLatency.emit(2000)
+
+        assert (ui.panel.lat.text(), ui.panel.lat.isHidden()) == ("2.0 s", False)
+
+    def test_slow_e2e_signal_updates_label(self, ui):
         """Catch end-to-end latency signals disconnected from their displayed value."""
         ui.start_meeting()
 
-        ui.engine.e2eLatency.emit(1250)
+        ui.engine.e2eLatency.emit(3500)
 
-        assert ui.panel.e2e.text() == "⚡ 1.2 s"
+        assert ui.panel.e2e.text() == "⚡ 3.5 s"
 
     def test_error_preserves_existing_answer(self, ui):
         """Catch an error erasing the suggestion already visible to the user."""
@@ -543,77 +559,47 @@ class TestLateEvents:
         assert ui._responding is False
 
 
-class TestSettings:
-    def test_running_meeting_blocks_settings(self, ui):
-        """Catch configuration opening while an audio session is active."""
-        ui.start_meeting()
+class TestHome:
+    def test_app_lands_on_the_home(self, ui):
+        assert ui.home.isVisible() is True
+        assert (ui.top.isVisible(), ui.panel.isVisible()) == (False, False)
 
-        ui.open_settings()
+    def test_home_starts_the_meeting_with_its_agent(self, ui):
+        ui.home.startMeeting.emit("grok")
 
-        assert ui.settings is None
-        assert badge(ui) == "Stop the meeting to open settings"
+        assert ui.engine.starts[-1][0]["agent"] == "grok"
+        assert ui.panel.agent_chip.activo == "grok"
 
-    def test_settings_hides_overlay(self, ui, qtbot, settings_assets, cfg):
-        """Catch settings opening with stale configuration or overlapping overlays."""
-        cfg["language"] = "en"
+    def test_shortcut_starts_with_the_agent_open_in_the_home(self, ui):
+        ui.home.abrir_agente("senior")
 
-        window = open_registered_settings(ui, qtbot)
+        ui.toggle_meeting()
 
-        assert window.cfg["language"] == "en"
-        assert window.isVisible() is True
-        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == (False, False, False)
-        assert ui._ct_timer.isActive() is False
+        assert ui.engine.starts[-1][0]["agent"] == "senior"
 
-    @pytest.mark.parametrize("action", ["toggle_meeting", "toggle_overlay", "answer_now", "open_settings"])
-    def test_settings_blocks_overlay_action(self, ui, qtbot, settings_assets, action):
-        """Catch shortcuts acting on the hidden overlay while settings is open."""
-        window = open_registered_settings(ui, qtbot)
+    def test_overlay_toggle_does_nothing_outside_a_meeting(self, ui):
+        ui.toggle_overlay()
 
-        getattr(ui, action)()
+        assert (ui.top.isVisible(), ui.collapsed.isVisible(), ui._visible) == (
+            False, False, True)
 
-        assert ui.settings is window
-        assert ui.engine.starts == []
-        assert ui.engine.answers == 0
-        assert ui._visible is True
-        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == (False, False, False)
-
-    @pytest.mark.parametrize("visible,expected", [(True, (True, True, False)),
-                                                (False, (False, False, True))])
-    def test_settings_closed_restores_visibility(self, ui, qtbot, settings_assets, visible, expected):
-        """Catch closing settings losing the previous expanded/collapsed state."""
-        ui._visible = visible
-        window = open_registered_settings(ui, qtbot)
-        ui._ct_state[ui.top] = True
-        window.close()
-
-        window.closed.emit()
-
-        assert ui.settings is None
-        assert (ui.top.isVisible(), ui.panel.isVisible(), ui.collapsed.isVisible()) == expected
-        assert ui._ct_timer.interval() == 30
-        assert ui._ct_timer.isActive() is True
-        assert ui._ct_state == {}
-
-    def test_settings_saved_reloads_configuration(self, ui, qtbot, settings_assets, cfg):
+    def test_home_saved_reloads_configuration(self, ui, cfg):
         """Catch saved configuration leaving the controller's cache stale."""
-        window = open_registered_settings(ui, qtbot)
         cfg["window_opacity"] = 0.8
 
-        window.saved.emit()
+        ui.home.saved.emit()
 
         assert ui.cfg["window_opacity"] == 0.8
 
-    def test_quit_from_settings_releases_resources(self, ui, qtbot, settings_assets, monkeypatch):
-        """Catch the settings close-app action leaving engine or mouse hook alive."""
-        window = open_registered_settings(ui, qtbot)
+    def test_quit_from_home_releases_resources(self, ui, monkeypatch):
+        """Catch the close-app action leaving engine or mouse hook alive."""
         quits = []
         monkeypatch.setattr(QtWidgets.QApplication, "quit", lambda: quits.append("quit"))
 
-        window.closeApp.emit()
+        ui.home.closeApp.emit()
 
         assert quits == ["quit"]
-        assert ui.settings is None
-        assert window.isVisible() is False
+        assert ui.home.isVisible() is False
         assert ui.engine.stops == 1
         assert ui.wheel.installed is False
 
@@ -633,12 +619,13 @@ class TestWindows:
     def test_constructor_protects_all_windows(self, ui, native):
         """Catch a new overlay window missing capture protection or no-activate styling."""
         ventanas = [int(w.winId()) for w in (ui.top, ui.panel, ui.screen, ui.collapsed)]
-        assert native["capture"] == [(w, True) for w in ventanas]
+        assert native["capture"] == [(w, True) for w in ventanas] + [(int(ui.home.winId()), True)]
         assert native["activate"] == ventanas
         assert ui.wheel.installed is True
 
     def test_click_through_only_writes_on_change(self, ui, native):
         """Catch redundant Win32 style writes on every polling tick."""
+        ui.start_meeting()
         ui._update_click_through()
 
         ui._update_click_through()
@@ -646,10 +633,11 @@ class TestWindows:
         assert native["click"] == [(int(ui.top.winId()), True), (int(ui.panel.winId()), True)]
 
     def test_interactive_control_disables_click_through(self, ui, native, monkeypatch):
-        """Catch the settings control remaining click-through under the cursor."""
+        """Catch the drag handle remaining click-through under the cursor."""
+        ui.start_meeting()
         ui._update_click_through()
         native["click"].clear()
-        position = ui.top.btn_cfg.mapToGlobal(ui.top.btn_cfg.rect().center())
+        position = ui.top.drag_zone.mapToGlobal(ui.top.drag_zone.rect().center())
         monkeypatch.setattr(QtGui.QCursor, "pos", lambda: position)
 
         ui._update_click_through()
@@ -667,6 +655,7 @@ class TestWindows:
 
     def test_interactive_panel_disables_wheel_forwarding(self, ui, monkeypatch):
         """Catch Qt and the mouse hook both processing the same wheel event."""
+        ui.start_meeting()
         position = ui.panel._drag_header.mapToGlobal(ui.panel._drag_header.rect().center())
         monkeypatch.setattr(QtGui.QCursor, "pos", lambda: position)
 
@@ -887,14 +876,16 @@ class TestAgents:
         ui.choose_agent("grok")
 
         assert ui.engine.agents == ["grok"]
-        assert ui.panel.badge._lbl.text() == "Agent: Grok"
+        assert ui.panel.skip_pill.isHidden() is True
 
-    def test_choosing_an_agent_mid_meeting_switches_the_engine(self, ui):
+    def test_choosing_an_agent_mid_meeting_says_so_without_touching_the_state(self, ui):
+        ui.start_meeting()
         ui.engine.set_agent = lambda aid: {"grok": "Grok"}[aid]
 
         ui.choose_agent("grok")
 
-        assert ui.panel.badge._lbl.text() == "Agent: Grok — next answer uses it"
+        assert ui.panel.skip_pill.text() == "Grok answers from now on"
+        assert badge(ui) == "Loading…"
 
     def test_menu_lists_agents_and_emits_the_choice(self, ui, qtbot):
         chip = ui.panel.agent_chip

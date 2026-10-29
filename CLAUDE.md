@@ -306,7 +306,7 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 - `config.py` — defaults, `config.json` load/save, legacy key migration; `secretstore.py` encrypts API keys with DPAPI (`dpapi:` prefix).
 - `contexts.py` — `contexts/*.md` files with frontmatter (`name`, `active`, `lang`); concatenated into the system prompt at session start.
 - `overlay.py`, `wheelscroll.py`, `hotkeys.py` — Win32 via `ctypes`: display affinity / extended styles, `WH_MOUSE_LL` wheel forwarding, `WH_KEYBOARD_LL` Caps Lock layer (Caps+A/S/D/F/Q/Esc) with `RegisterHotKey` Alt+1..6 fallback.
-- `overlay_ui.py`, `settings_window.py`, `theme.py`, `icons.py` — Qt widgets and styling. `settings_dialog.py` is not imported anywhere.
+- `overlay_ui.py` (meeting overlay), `home_window.py` (landing Home: agents, history, settings), `neu.py`, `theme.py`, `icons.py` — Qt widgets and styling. `agents.py` and `sesiones.py` store agents and meeting history. `settings_dialog.py` is not imported anywhere.
 - `build_exe.py`, `make_icon.py` — packaging and icon generation.
 
 ## Architecture invariants
@@ -319,7 +319,7 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 ## Working rules
 - Follow existing project patterns over generic framework advice.
 - Existing code mixes Spanish and English identifiers and comments in Spanish. In existing files, follow the file's identifier style; new identifiers, docstrings and comments are in English.
-- Keep edits localized in large files (`overlay_ui.py`, `settings_window.py`, `engine.py`).
+- Keep edits localized in large files (`overlay_ui.py`, `home_window.py`, `engine.py`).
 - Do not read or print `%APPDATA%\Armony\config.json` or `contexts/*.md`: they contain API keys and user data.
 
 ## Stack adaptations (differences from the fleet)

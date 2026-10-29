@@ -12,6 +12,7 @@ import pytest
 
 import config
 import engine
+import sesiones
 from metrics import metricas
 
 
@@ -694,17 +695,18 @@ class TestPersistence:
         assert len(reports) == 1
         assert json.loads(reports[0].read_text(encoding="utf-8"))["cuentas"] == {"intervenciones": 2}
 
-    def test_stop_persists_transcript(self, subject, tmp_path, monkeypatch):
-        """Catch missing speaker labels or stripped code in the saved Markdown."""
+    def test_stop_persists_transcript(self, subject, tmp_path):
+        """Catch missing speaker labels, agent or stripped code in the saved Markdown."""
         subject._registro = [("Ellos", " Pregunta "), ("Sugerido", " ```py\nx = 1\n``` ")]
-        formats = {"%Y%m%d-%H%M%S": "20261028-123000", "%d/%m/%Y %H:%M": "28/10/2026 12:30"}
-        monkeypatch.setattr(engine.time, "strftime", lambda fmt: formats[fmt])
+        subject._agente = ("grok", "Grok")
 
         subject.stop()
 
-        assert (tmp_path / "sesiones" / "sesion-20261028-123000.md").read_text(encoding="utf-8") == (
-            "# Reunion del 28/10/2026 12:30\n\n**Ellos:** Pregunta\n\n"
-            "### Sugerido\n\n```py\nx = 1\n```\n\n")
+        (acta,) = (tmp_path / "sesiones").glob("sesion-*.md")
+        texto = acta.read_text(encoding="utf-8")
+        assert texto.startswith("---\nagent: grok\nagent_name: Grok\ntitle: Pregunta\n---\n"
+                                "# Reunion del ")
+        assert texto.endswith("**Ellos:** Pregunta\n\n### Sugerido\n\n```py\nx = 1\n```\n\n")
 
     def test_stop_when_idle_writes_nothing(self, subject, tmp_path):
         """Catch repeated stop saving a spurious second session."""
@@ -716,18 +718,19 @@ class TestPersistence:
 
     def test_empty_transcript_writes_nothing(self, subject, tmp_path):
         """Catch an empty meeting creating a transcript file."""
-        result = subject._guardar_acta(str(tmp_path))
+        result = subject._guardar_acta()
 
         assert result is None
         assert list(tmp_path.iterdir()) == []
 
-    def test_transcript_io_error_is_nonfatal(self, subject, tmp_path):
+    def test_transcript_io_error_is_nonfatal(self, subject, tmp_path, monkeypatch):
         """Catch an unwritable transcript destination raising during shutdown."""
         subject._registro = [("Ellos", "Hello")]
         blocked = tmp_path / "blocked"
         blocked.write_text("file", encoding="utf-8")
+        monkeypatch.setattr(sesiones, "SESIONES_DIR", str(blocked))
 
-        result = subject._guardar_acta(str(blocked))
+        result = subject._guardar_acta()
 
         assert result is None
         assert blocked.read_text(encoding="utf-8") == "file"
@@ -765,12 +768,13 @@ class TestLogging:
             ("armony.engine", "ERROR",
              "Engine start-up failed: No se pudo iniciar el modelo de respuestas: load failed")]
 
-    def test_transcript_io_error_is_logged(self, subject, tmp_path, caplog):
+    def test_transcript_io_error_is_logged(self, subject, tmp_path, caplog, monkeypatch):
         subject._registro = [("Ellos", "Hello")]
         blocked = tmp_path / "blocked"
         blocked.write_text("file", encoding="utf-8")
+        monkeypatch.setattr(sesiones, "SESIONES_DIR", str(blocked))
 
-        subject._guardar_acta(str(blocked))
+        subject._guardar_acta()
 
         assert log_entries(caplog) == [
-            ("armony.engine", "WARNING", f"Session transcript not written under {blocked}")]
+            ("armony.sesiones", "WARNING", f"Session transcript not written under {blocked}")]

@@ -22,7 +22,7 @@ from overlay import (set_acrylic, set_capture_protection, set_click_through,
                      set_no_activate, vidrio_disponible)
 from wheelscroll import WheelForwarder
 from overlay_ui import TopBar, TranscriptPanel, CollapsedButton
-from settings_window import SettingsWindow
+from home_window import HomeWindow
 import hotkeys as HK
 
 log = logging.getLogger("armony.app")
@@ -52,8 +52,8 @@ class OverlayApp(QtCore.QObject):
         self._elapsed = 0
         self._responding = False
         self._shots = []          # capturas acumuladas, pendientes de enviar
+        self._capturas_reunion = 0  # todas las de la reunion (titulo del panel)
         self._answer_lleva_capturas = False   # la respuesta en curso las ilustra
-        self.settings = None      # ventana de configuracion abierta (o None)
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -63,10 +63,19 @@ class OverlayApp(QtCore.QObject):
         self._protect()
         self._apply_opacity()
 
-        self.top.show()
-        self.panel.show()
         self.panel.set_status("Idle")
         self._refresh_agents()
+
+        # Se aterriza en la Home (agentes, historial, ajustes); el overlay solo
+        # aparece durante la reunion.
+        agents_mod.migrar_contextos(self.cfg.get("agent"))
+        self.home = HomeWindow(self.cfg)
+        self.home.startMeeting.connect(self.start_meeting)
+        self.home.closeApp.connect(self._quit_app)
+        self.home.saved.connect(self._on_home_saved)
+        set_capture_protection(self.home.winId(),
+                               bool(self.cfg.get("invisible_on_share", True)))
+        self.home.show()
 
         # Click-through: la app es "de cristal" salvo en los controles (grip,
         # engranaje, boton de restaurar). Un temporizador comprueba donde esta el
@@ -172,7 +181,7 @@ class OverlayApp(QtCore.QObject):
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
             return
         zonas_rueda = ((self.panel.wheel_zones() + self.screen.wheel_zones())
-                       if self.settings is None else [])
+                       if self._running else [])
         objetivos = [
             (self.top, self.top.interactive_widgets()),
             (self.panel, self.panel.interactive_widgets()),
@@ -199,7 +208,6 @@ class OverlayApp(QtCore.QObject):
         self.top.startStopClicked.connect(self.toggle_meeting)
         self.top.screenshotClicked.connect(self.take_shot)
         self.top.toggleClicked.connect(self.toggle_overlay)
-        self.top.settingsClicked.connect(self.open_settings)
         self.top.generateClicked.connect(self.generate)
         self.top.answerNowClicked.connect(self.answer_now)
         self.collapsed.clicked.connect(self.toggle_overlay)
@@ -248,36 +256,47 @@ class OverlayApp(QtCore.QObject):
         cfg = cfg_mod.load_config()
         cfg["agent"] = agent_id
         if not cfg_mod.save_config(cfg):
-            self.panel.set_status("Could not save the agent choice")
+            self.panel.aviso("Could not save the agent choice")
         self.cfg = cfg
         self._refresh_agents()
-        nombre = self.engine.set_agent(agent_id)
-        if nombre:
-            self.panel.set_status(f"Agent: {nombre} — next answer uses it")
-        else:
-            self.panel.set_status(f"Agent: {agents_mod.get(agent_id)['name']}")
+        # Es un aviso de paso, no un estado: el badge sigue diciendo que hace.
+        if self.engine.set_agent(agent_id):
+            self.panel.aviso(f"{agents_mod.get(agent_id)['name']} answers from now on")
 
     # ------------------------------------------------ acciones
     def toggle_meeting(self):
-        if self.settings is not None:
-            return                       # con settings abierta, los atajos no actuan
         if self._running:
             self.stop_meeting()
         else:
-            self.start_meeting()
+            self.start_meeting(self.home.agente_actual())
 
-    def start_meeting(self):
+    def start_meeting(self, agent_id=None):
+        """Desde la Home (boton o Bloq Mayus+Esc): la Home se oculta y queda el
+        overlay. Sin claves no arranca: se vuelve a Ajustes con el aviso."""
+        self.home.guardar_ya()
         self.cfg = cfg_mod.load_config()
+        if agent_id and agent_id != self.cfg.get("agent"):
+            self.cfg["agent"] = agent_id
+            cfg_mod.save_config(self.cfg)
         test = bool(self.cfg.get("test_mode", False))
-        # En Modo prueba NO se necesita API key: arranca directo.
-        # Sin key y sin modo prueba: solo avisa (no salta a settings de golpe).
+        falta = None
+        # En Modo prueba NO se necesita la key de OpenAI: arranca directo.
         if not test and not self.cfg.get("openai_api_key"):
-            self.panel.set_status("Add your OpenAI API key in Settings (⚙) to start")
+            falta = "Añade tu API key de OpenAI para iniciar la reunión."
+        elif not self.cfg.get("assemblyai_api_key"):
+            falta = "Añade tu API key de AssemblyAI para iniciar la reunión."
+        if falta:
+            self.home.mostrar_aviso(falta)
+            self.home.ir_a_ajustes()
+            self._mostrar_home()
             return
-        # La transcripcion en la nube necesita su propia key.
-        if not self.cfg.get("assemblyai_api_key"):
-            self.panel.set_status("Add your AssemblyAI key in Settings (⚙) to start")
-            return
+        self.home.mostrar_aviso("")
+        self.home.hide()
+        self._visible = True
+        self.collapsed.hide()
+        self.top.show()
+        self.panel.show()
+        self._refresh_agents()
         self._running = True
         self._elapsed = 0
         self.top.set_meeting(True)
@@ -289,12 +308,12 @@ class OverlayApp(QtCore.QObject):
         self.panel.hide_skip()
         self.screen.limpiar_hilo()
         self.screen.show_suggestion("")
+        self._capturas_reunion = 0
+        self.screen.set_shots(0)
         self.set_screen_mode(False)     # vuelve a haber solo el hablado
         self._answer_lleva_capturas = False
-        import contexts as ctx_mod
-        # Todos los activos, sin filtrar por idioma: es lo que se le manda.
-        n = ctx_mod.active_count("auto")
-        chip = f"{n} context{'s' if n != 1 else ''} loaded · " if n else ""
+        n = len(agents_mod.get(self.cfg.get("agent"))["conocimiento"])
+        chip = f"{n} document{'s' if n != 1 else ''} loaded · " if n else ""
         if test:
             self.panel.set_hint("TEST MODE — audio + transcription only (no AI).")
         else:
@@ -312,15 +331,26 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_status("Idle")
         self.panel.clear_latency()
         self.panel.hide_skip()
-        self.engine.stop()
+        self.engine.stop()          # deja la reunion en el historial
+        # Fin de la reunion: fuera el overlay y de vuelta a la Home, con la
+        # reunion recien terminada abierta.
+        for w in (self.top, self.panel, self.screen, self.collapsed):
+            w.hide()
+        self.home.refrescar(abrir_ultima=True)
+        self._mostrar_home()
+
+    def _mostrar_home(self):
+        self.home.show()
+        self.home.raise_()
+        self.home.activateWindow()
 
     def _tick(self):
         self._elapsed += 1
         self.top.set_timer(f"{self._elapsed // 60:02d}:{self._elapsed % 60:02d}")
 
     def toggle_overlay(self):
-        if self.settings is not None:
-            return
+        if not self._running:
+            return                       # fuera de la reunion no hay overlay
         self._visible = not self._visible
         if self._visible:
             self.collapsed.hide()
@@ -342,7 +372,6 @@ class OverlayApp(QtCore.QObject):
         sola pantalla.
         """
         if not self._running:
-            self.panel.set_status("Start the meeting first")
             return
         # Sin destello ni aviso de ningun tipo: la captura tiene que ser
         # indistinguible de no hacer nada. El unico acuse de recibo es la
@@ -363,17 +392,19 @@ class OverlayApp(QtCore.QObject):
         self.set_screen_mode(True)
         self.screen.add_shot(pm)
         self.top.set_generate_enabled(True)
+        self._capturas_reunion += 1
+        self.screen.set_shots(self._capturas_reunion)
         n = len(self._shots)
-        self.screen.set_status(
-            f"{n} screenshot{'s' if n != 1 else ''} ready — Caps+D to generate")
+        # Estado: hay capturas sin resolver. Lo que hay que hacer, de paso.
+        self.screen.set_status("Pending")
+        self.screen.aviso(f"{n} screenshot{'s' if n != 1 else ''} ready — Caps+D to solve")
 
     def generate(self, _=""):
         """Envia las capturas acumuladas y pide la respuesta."""
         if not self._running:
-            self.panel.set_status("Start the meeting first")
             return
         if not self._shots:
-            self.panel.set_status("Take a screenshot first")
+            self.panel.aviso("Take a screenshot first (Caps+S)")
             return
         self.engine.request_screenshots(list(self._shots))
         self._shots.clear()
@@ -384,7 +415,7 @@ class OverlayApp(QtCore.QObject):
 
     def relaunch_screen(self):
         """Bloq Mayus+F: actualiza la solucion en pantalla con lo que acaban de decir."""
-        if self.settings is not None or not self._running:
+        if not self._running:
             return
         self.screen.show_suggestion("")
         self.engine.relaunch_screen()
@@ -395,65 +426,22 @@ class OverlayApp(QtCore.QObject):
         Sirve cuando preguntaron pero la transcripcion no puso los signos y el
         filtro lo tomo por contexto.
         """
-        if self.settings is not None:
-            return
         if not self._running:
-            self.panel.set_status("Start the meeting first")
             return
         self.panel.hide_skip()
         self.panel.set_status("Answering…")
         self.engine.answer_now()
 
-    def open_settings(self):
-        # No se puede abrir la configuracion con la reunion en curso.
-        if self._running:
-            self.panel.set_status("Stop the meeting to open settings")
-            return
-        if self.settings is not None:
-            return
-        # Releer del disco, no usar la copia cargada al arrancar: al guardar se
-        # escribe el formulario entero, y una copia vieja borraria cualquier
-        # ajuste cambiado por fuera mientras la app estaba abierta.
-        self.cfg = cfg_mod.load_config()
-        # La configuracion es una vista aparte: el overlay desaparece mientras esta.
-        self.top.hide(); self.panel.hide(); self.collapsed.hide()
-        self.screen.hide()
-        self._ct_timer.stop()
-        self.settings = SettingsWindow(self.cfg)
-        set_capture_protection(self.settings.winId(),
-                               bool(self.cfg.get("invisible_on_share", True)))
-        self.settings.saved.connect(self._on_settings_saved)
-        self.settings.closed.connect(self._on_settings_closed)
-        self.settings.closeApp.connect(self._quit_app)
-        self.settings.show()
-        self.settings.raise_()
-        self.settings.activateWindow()
-
     def _quit_app(self):
-        # Boton X de la configuracion: cierra el programa entero.
-        if self.settings is not None:
-            self.settings.close()
-            self.settings = None
+        # Boton X de la Home: cierra el programa entero.
+        self.home.close()
         self.shutdown()
         QtWidgets.QApplication.quit()
 
-    def _on_settings_saved(self):
+    def _on_home_saved(self):
         self.cfg = cfg_mod.load_config()
         self._refresh_agents()
-
-    def _on_settings_closed(self):
-        # Restaurar el overlay tal y como estaba.
-        if self._visible:
-            self.top.show(); self.panel.show()
-            if self._modo_pantalla:
-                self.screen.show()
-        else:
-            self.collapsed.show()
-        self._protect()
         self._apply_opacity()
-        self._ct_state.clear()
-        self._ct_timer.start(30)
-        self.settings = None
 
     # ------------------------------------------------ eventos del motor
     # Se ignoran si la reunion ya se detuvo, para que un evento en cola no deje
@@ -556,21 +544,18 @@ class OverlayApp(QtCore.QObject):
             self.panel.set_status("Listening")
         elif "sigue hablando" in bajo:
             self.panel.set_status("Still talking…")
-        elif "sin pregunta" in bajo:
-            # El aviso visible es la pastilla (on_no_answer); aqui solo el badge.
-            # Nada de set_hint: borraria la respuesta anterior del panel.
-            self.panel.set_status("Context saved")
-        elif "nada que responder" in bajo:
-            self.panel.set_status("Nothing to answer yet")
+        # "Sin pregunta" / "nada que responder" no son estados: el aviso ya va
+        # en la pastilla (on_no_answer) y el badge sigue en Listening.
 
     def on_error(self, msg):
         # Nada de set_hint: vaciaria el panel y perderias la sugerencia que
         # estabas leyendo, justo en el peor momento. El error va en el badge y
         # en la pastilla, que no tocan la respuesta.
         if self._running and not self.engine.running:
-            # The engine failed to start: return the UI to idle (stop_meeting
-            # hides the pill, so the error is shown again below).
+            # The engine failed to start: back to the Home, with the reason.
             self.stop_meeting()
+            self.home.mostrar_aviso(f"No se pudo iniciar la reunión: {msg[:160]}")
+            return
         self.panel.set_status("Error")
         self.panel.show_skip(f"Error: {msg[:80]}")
 
@@ -629,10 +614,10 @@ def main():
     if not hk.caps_layer:
         # Sin el hook no hay Bloq Mayus: quedan los Alt+1..6 de respaldo, y ahi
         # si estorba que otra aplicacion tenga la combinacion tomada.
-        aviso = "Caps Lock shortcuts unavailable — use Alt+1…6"
+        aviso = "Los atajos con Bloq Mayús no están disponibles: usa Alt+1…6"
         if fallidos:
-            aviso += " (in use: " + ", ".join(fallidos) + ")"
-        ui.panel.set_status(aviso)
+            aviso += " (ocupados: " + ", ".join(fallidos) + ")"
+        ui.home.mostrar_aviso(aviso + ".")
 
     faltan = T.fonts_missing()
     if faltan:

@@ -24,8 +24,8 @@ al compartir pantalla** (privacidad total).
 
 - Windows 10 (build 19041+) u 11.
 - Python 3.10 u 3.11 recomendado.
-- API key de **OpenAI** (se pone en la interfaz, en *Configuración*).
-- API key de AssemblyAI para la transcripción en vivo (también en *Configuración*).
+- API key de **OpenAI** (se pone en la interfaz, en *Ajustes*).
+- API key de AssemblyAI para la transcripción en vivo (también en *Ajustes*).
 
 ## Ejecutable (.exe)
 
@@ -68,7 +68,7 @@ python app.py
 
 ### Modo prueba (sin API key)
 
-Es una herramienta de desarrollo, sin interruptor en Configuración: pon
+Es una herramienta de desarrollo, sin interruptor en Ajustes: pon
 `"test_mode": true` en `config.json` y pulsa *Iniciar*. No requiere la API key de OpenAI ni genera respuestas: solo
 captura audio y transcribe **ambas** fuentes, etiquetadas, para verificar el montaje:
 
@@ -82,9 +82,12 @@ Desmárcalo y añade la API key para las sugerencias reales.
 > En operación normal solo se transcribe el audio del sistema (lo que dicen los demás);
 > tu micrófono es únicamente un medidor de nivel.
 
-1. Abre **Configuración** y pega tus API keys de **OpenAI** y **AssemblyAI** (y, si
-   la tienes, la de **TypeSafe**). Guarda.
-2. Pulsa **Iniciar**.
+1. La app se abre en la **Home**. En **Ajustes** (abajo a la izquierda) pega tus API
+   keys de **OpenAI** y **AssemblyAI** (y, si la tienes, la de **TypeSafe**). Se
+   guardan solas.
+2. Elige un agente a la izquierda y pulsa **Iniciar reunión** (o `Bloq Mayús+Esc`):
+   la Home se oculta y aparece el overlay. Al terminar la reunión vuelves a la Home,
+   con la reunión recién terminada abierta.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
 4. Cuando alguien hable en la reunión, verás la transcripción **en vivo** y, cuando
    te pregunten algo, la **respuesta sugerida**.
@@ -286,8 +289,8 @@ escribe—, y uno justo dejaba el código cortado a medias.
 
 Nada de esto se configura: modelo, razonamiento, longitud, detección de turnos y
 audio ya están decididos y medidos, y van fijos en el código (`config.FIJAS`). En
-*Configuración* quedan tus claves (OpenAI, AssemblyAI y, opcional, TypeSafe), el
-idioma, la opacidad, tus agentes y tus contextos.
+*Ajustes* quedan tus claves (OpenAI, AssemblyAI y, opcional, TypeSafe), el idioma y
+la opacidad; tus agentes y su conocimiento, en la Home.
 
 Tiempos de GPT medidos desde este equipo (mediana de 5 llamadas, hasta la primera
 palabra en pantalla): `gpt-5.4-mini` 0,7 s · `gpt-5.6-terra` 0,8 s ·
@@ -298,15 +301,31 @@ Ojo con los modelos GPT-5: razonan antes de responder y ese razonamiento gasta d
 mismo presupuesto de tokens, así que `llm.py` reserva margen aparte para que el
 límite de longitud siga refiriéndose a la respuesta y no llegue vacía.
 
+## La Home: tus agentes y su historial
+
+Como en ChatGPT, Claude o Grok, la app se abre en una Home:
+
+- **A la izquierda**, tus agentes y, debajo de cada uno, sus reuniones pasadas (las
+  cinco últimas). Arriba, *Nuevo agente*; abajo, *Ajustes*.
+- **En el centro**, el agente elegido, con *Iniciar reunión* y tres pestañas. O,
+  si abres una reunión pasada, su transcripción.
+- Todo se **guarda solo** (el estado se ve arriba a la izquierda) y borrar un agente,
+  un documento o una reunión pide un segundo clic.
+
+Las reuniones se guardan al terminar en `sesiones/sesion-AAAAMMDD-HHMMSS.md`, con su
+agente y, como título, lo primero que preguntaron.
+
 ## Agentes: quién te sopla
 
-Un agente es una personalidad del coach con su system prompt **entero y editable**,
-en *Configuración → Agentes*:
+Un agente es una personalidad del coach con su system prompt **entero y editable**:
 
 - **Instrucciones**: personalidad, tono, longitud, humor. Lo que pongas manda.
-- **Reglas de funcionamiento**: cómo funciona la conversación (Ellos / Yo), el
-  formato con secciones `##`, el código y las capturas. También se pueden cambiar,
-  pero la app depende de ellas: tocarlas puede estropear cómo se pinta la respuesta.
+- **Reglas**: cómo funciona la conversación (Ellos / Yo), el formato con secciones
+  `##`, el código y las capturas. También se pueden cambiar, pero la app depende de
+  ellas: tocarlas puede estropear cómo se pinta la respuesta.
+- **Conocimiento**: sus documentos (tu CV, la oferta, el producto…), como los de un
+  GPT o un proyecto. Se le dan enteros al empezar la reunión. Los contextos activos
+  de versiones anteriores pasaron, una sola vez, al agente que estaba en uso.
 
 Vienen cuatro de ejemplo: **Coach** (el de siempre), **Directo**, **Grok**
 (ingenioso e irreverente, sin pasarse en una reunión) y **Senior técnico**. Uno
@@ -314,8 +333,8 @@ nuevo empieza como copia del Coach, para ver lo que ya hay y decidir qué cambia
 *Restaurar* devuelve cada parte al texto de su agente de ejemplo. Se guardan como
 `agents/<id>.json` junto a `config.json`.
 
-El mismo agente responde en los dos paneles. Se elige en Configuración y, en plena
-reunión, desde el selector de la cabecera del panel hablado: la conversación sigue
+El mismo agente responde en los dos paneles. Se elige en la Home y, en plena
+reunión, desde su nombre en la cabecera del panel hablado: la conversación sigue
 con todo lo hablado y la siguiente respuesta ya sale con el nuevo agente (esa
 respuesta pierde una vez la caché, así que tarda un poco más). Los avisos de cada
 turno ("responde a esto", "puedes callarte") los pone la app y no son del agente.

@@ -103,89 +103,13 @@ def test_set_status_shows_text(panel):
     assert badge_text(panel) == "Listening"
 
 
-@pytest.mark.parametrize("texto, color", [
-    ("Listening", "#3ddc84"),
-    ("Loading model…", "#93a8ff"),
-    ("Starting", "#93a8ff"),
-    ("Cargando", "#93a8ff"),
-    ("Idle", "#7d869c"),
-    ("Transcribing…", "#7c95ff"),
-    ("Drafting…", "#7c95ff"),
-    ("Analyzing…", "#7c95ff"),
-    ("Error", "#e0554b"),
-    ("API key required", "#e0554b"),
-    ("Context saved", "#7d869c"),
-])
-def test_set_status_infers_kind_from_text(panel, texto, color):
-    panel.set_status(texto)
-
-    assert f"background: {color};" in badge_dot_style(panel)
 
 
-def test_set_status_explicit_kind_wins_over_text(panel):
-    panel.set_status("Listening", "error")
-
-    assert "background: #e0554b;" in badge_dot_style(panel)
 
 
-# --------------------------------------------------------------- skip pill
-
-def test_skip_pill_starts_hidden(panel):
-    assert panel.skip_pill.isHidden()
 
 
-def test_show_skip_uses_default_text(panel):
-    panel.show_skip()
 
-    assert panel.skip_pill.text() == "No question — Caps+A to answer"
-
-
-def test_show_skip_uses_given_text(panel):
-    panel.show_skip("Not a question — Caps+A to answer")
-
-    assert panel.skip_pill.text() == "Not a question — Caps+A to answer"
-
-
-def test_show_skip_makes_pill_visible(panel):
-    panel.show_skip()
-
-    assert not panel.skip_pill.isHidden()
-
-
-def test_hide_skip_hides_pill(panel):
-    panel.show_skip()
-
-    panel.hide_skip()
-
-    assert panel.skip_pill.isHidden()
-
-
-# --------------------------------------------------------------- levels
-
-@pytest.mark.parametrize("level, color", [
-    (0, PARTICIPANT_DOT_OFF),
-    (8, PARTICIPANT_DOT_OFF),
-    (9, GOLD),
-    (100, GOLD),
-])
-def test_set_level_lights_participant_dot(panel, level, color):
-    panel.set_level(level)
-
-    assert f"background: {color};" in panel.part_dot.styleSheet()
-
-
-def test_set_level_dims_dot_when_audio_stops(panel):
-    panel.set_level(60)
-
-    panel.set_level(2)
-
-    assert f"background: {PARTICIPANT_DOT_OFF};" in panel.part_dot.styleSheet()
-
-
-def test_set_mic_level_leaves_participant_dot_off(panel):
-    panel.set_mic_level(100)
-
-    assert f"background: {PARTICIPANT_DOT_OFF};" in panel.part_dot.styleSheet()
 
 
 # --------------------------------------------------------------- latency
@@ -194,59 +118,22 @@ def test_latency_labels_start_hidden(panel):
     assert (panel.lat.isHidden(), panel.e2e.isHidden()) == (True, True)
 
 
-@pytest.mark.parametrize("ms, text", [
-    (250, "250 ms"),
-    (999, "999 ms"),
-    (1000, "1.0 s"),
-    (2345, "2.3 s"),
-])
-def test_set_latency_formats_value(panel, ms, text):
-    panel.set_latency(ms)
-
-    assert panel.lat.text() == text
 
 
-@pytest.mark.parametrize("ms, color", [
-    (599, "#3ddc84"),
-    (600, "#93a8ff"),
-    (1499, "#93a8ff"),
-    (1500, "#e0554b"),
-])
-def test_set_latency_colors_by_speed(panel, ms, color):
-    panel.set_latency(ms)
-
-    assert f"color: {color};" in panel.lat.styleSheet()
 
 
-def test_set_latency_shows_label(panel):
-    panel.set_latency(300)
-
-    assert not panel.lat.isHidden()
 
 
-@pytest.mark.parametrize("ms, text", [(1234, "⚡ 1.2 s"), (450, "⚡ 0.5 s")])
-def test_set_e2e_formats_seconds(panel, ms, text):
-    panel.set_e2e(ms)
-
-    assert panel.e2e.text() == text
 
 
-@pytest.mark.parametrize("ms, color", [
-    (1499, "#3ddc84"),
-    (1500, "#93a8ff"),
-    (2999, "#93a8ff"),
-    (3000, "#e0554b"),
-])
-def test_set_e2e_colors_by_speed(panel, ms, color):
-    panel.set_e2e(ms)
-
-    assert f"color: {color};" in panel.e2e.styleSheet()
 
 
-def test_set_e2e_shows_label(panel):
-    panel.set_e2e(1200)
 
-    assert not panel.e2e.isHidden()
+
+
+
+
+
 
 
 def test_clear_latency_hides_both_meters(panel):
@@ -480,3 +367,82 @@ def test_header_drag_stops_after_release(shown_panel):
                                 button=QtCore.Qt.NoButton))
 
     assert shown_panel.pos() == QtCore.QPoint(100, 100)
+
+
+# ------------------------------------------------------- latency: only when slow
+@pytest.mark.parametrize("ms", [250, 1499])
+def test_fast_transcription_latency_stays_hidden(panel, ms):
+    panel.set_latency(ms)
+
+    assert panel.lat.isVisibleTo(panel) is False
+
+
+@pytest.mark.parametrize("ms, texto, color", [(1500, "1.5 s", "#e9a23b"),
+                                              (3000, "3.0 s", "#e0554b")])
+def test_slow_transcription_latency_is_shown(panel, ms, texto, color):
+    panel.set_latency(ms)
+
+    assert (panel.lat.text(), panel.lat.isVisibleTo(panel)) == (texto, True)
+    assert f"color: {color};" in panel.lat.styleSheet()
+
+
+def test_fast_answer_hides_a_previous_slow_one(panel):
+    panel.set_e2e(4000)
+
+    panel.set_e2e(1200)
+
+    assert panel.e2e.isVisibleTo(panel) is False
+
+
+@pytest.mark.parametrize("ms, texto, color", [(3000, "⚡ 3.0 s", "#e9a23b"),
+                                              (6500, "⚡ 6.5 s", "#e0554b")])
+def test_slow_answer_is_shown(panel, ms, texto, color):
+    panel.set_e2e(ms)
+
+    assert (panel.e2e.text(), panel.e2e.isVisibleTo(panel)) == (texto, True)
+    assert f"color: {color};" in panel.e2e.styleSheet()
+
+
+# ------------------------------------------------------- header: only what is useful
+def test_spoken_header_has_no_decorative_title(panel):
+    textos = [lab.text() for lab in panel._drag_header.findChildren(QtWidgets.QLabel)
+              if lab.isVisibleTo(panel)]
+
+    assert "Live Transcription" not in textos
+
+
+def test_spoken_header_title_is_the_agent(panel):
+    panel.set_agents([("grok", "Grok")], "grok")
+
+    assert panel.agent_chip.isVisibleTo(panel) and panel.agent_chip.text().startswith("Grok")
+
+
+def test_screen_header_counts_the_shots(qtbot):
+    pantalla = overlay_ui.TranscriptPanel(modo="pantalla")
+    qtbot.addWidget(pantalla)
+
+    pantalla.set_shots(2)
+
+    assert pantalla.titulo.text() == "Screen · 2 shots"
+    assert pantalla.agent_chip.isVisibleTo(pantalla) is False
+    # same drain as the panel fixture: pending single-shot timers die with it
+    qtbot.wait(overlay_ui.INTERVALO_REPINTADO + 20)
+
+
+def test_passing_notice_hides_itself(panel, qtbot):
+    panel._aviso_fugaz.setInterval(10)
+
+    panel.aviso("Grok answers from now on")
+
+    assert panel.skip_pill.text() == "Grok answers from now on"
+    qtbot.waitUntil(lambda: panel.skip_pill.isHidden(), timeout=1000)
+
+
+@pytest.mark.parametrize("nombre", ["Coach", "Grok", "Directo"])
+def test_agent_name_that_fits_is_never_cut(panel, qtbot, nombre):
+    panel.set_agents([("a", nombre)], "a")
+    panel.resize(460, 300)
+    panel.show()
+    qtbot.waitExposed(panel)
+
+    assert panel.agent_chip.text() == f"{nombre} ▾"

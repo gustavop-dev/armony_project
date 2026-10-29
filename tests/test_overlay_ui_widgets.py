@@ -69,7 +69,6 @@ def frame(qtbot):
     ("btn_meeting", "startStopClicked"),
     ("btn_shot", "screenshotClicked"),
     ("btn_toggle", "toggleClicked"),
-    ("btn_cfg", "settingsClicked"),
     ("btn_gen", "generateClicked"),
     ("btn_answer", "answerNowClicked"),
 ])
@@ -144,12 +143,14 @@ def test_set_generate_enabled_dims_label(bar, on, color):
     assert f"color: {color};" in bar.lbl_gen.styleSheet()
 
 
-def test_topbar_interactive_widgets_are_drag_zone_and_settings(bar):
-    assert bar.interactive_widgets() == [bar.drag_zone, bar.btn_cfg]
+def test_topbar_interactive_widget_is_the_drag_zone(bar):
+    assert bar.interactive_widgets() == [bar.drag_zone]
 
 
-def test_topbar_settings_tooltip(bar):
-    assert bar.btn_cfg.toolTip() == "Settings"
+def test_topbar_has_no_brand_or_settings(bar):
+    textos = " ".join(lab.text() for lab in bar.findChildren(QtWidgets.QLabel))
+
+    assert ("Armony" not in textos, hasattr(bar, "btn_cfg")) == (True, False)
 
 
 def test_topbar_is_frameless_tool_window_on_top(bar):
@@ -202,8 +203,8 @@ def test_topbar_button_press_does_not_move_window(qtbot, bar):
     qtbot.waitExposed(bar)
     bar.move(100, 100)
 
-    send(bar.btn_cfg, mouse(QtCore.QEvent.MouseButtonPress, (110, 110)))
-    send(bar.btn_cfg, mouse(QtCore.QEvent.MouseMove, (160, 140), button=QtCore.Qt.NoButton))
+    send(bar.btn_shot, mouse(QtCore.QEvent.MouseButtonPress, (110, 110)))
+    send(bar.btn_shot, mouse(QtCore.QEvent.MouseMove, (160, 140), button=QtCore.Qt.NoButton))
 
     assert bar.pos() == QtCore.QPoint(100, 100)
 

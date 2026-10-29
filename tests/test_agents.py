@@ -124,11 +124,14 @@ def test_missing_fields_take_the_preset_text(isolated_data_dir):
     assert corto["instrucciones"] == agents.preset("directo")["instrucciones"]
 
 
-def test_system_prompt_adds_the_meeting_context():
-    agente = {"instrucciones": " Sé breve. "}
+def test_system_prompt_adds_the_agent_knowledge():
+    agente = {"instrucciones": " Sé breve. ", "conocimiento": [
+        {"id": "doc-1", "name": "CV", "body": " Backend 6 años "},
+        {"id": "doc-2", "name": "Vacío", "body": "  "},
+        {"id": "doc-3", "name": "Oferta", "body": "Fintech"}]}
 
-    assert agents.system_prompt(agente, "Producto X") == (
-        "Sé breve.\n\n# Contexto de esta reunion\nProducto X")
+    assert agents.system_prompt(agente) == (
+        "Sé breve.\n\n# Contexto de esta reunion\nBackend 6 años\n\nFintech")
 
 
 def test_system_prompt_without_context_is_just_the_instructions():

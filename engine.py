@@ -110,7 +110,7 @@ class CoachEngine(QtCore.QObject):
         # su cola y su worker, para que una solucion de codigo larga no deje
         # esperando a las preguntas habladas.
         self._coach_pantalla = None
-        self._contexto = ""             # contextos activos, congelados al empezar
+        self._agente = None             # el que responde (id, nombre) para el acta
         self._queue_pantalla = queue.Queue()
         self._worker_pantalla = None
         self._generando_pantalla = False
@@ -208,16 +208,13 @@ class CoachEngine(QtCore.QObject):
 
         if not self._test_mode:
             try:
-                # El agente elegido y TODOS los contextos activos, sin filtrar
-                # por idioma: en una reunion real se cambia de idioma a media
-                # frase, y filtrando se quedaria sin la mitad de lo que necesita
-                # justo al cambiar. Se congela AQUI para no romper el cache a
-                # media llamada.
+                # El agente elegido con TODO su conocimiento, sin filtrar por
+                # idioma: en una reunion real se cambia de idioma a media frase.
+                # Se congela AQUI para no romper el cache a media llamada.
                 import agents as agents_mod
-                import contexts as ctx_mod
                 agente = agents_mod.get(cfg.get("agent"))
-                self._contexto = ctx_mod.active_text("auto")     # 'auto' = todos
-                sys_prompt = agents_mod.system_prompt(agente, self._contexto)
+                self._agente = (agente["id"], agente["name"])
+                sys_prompt = agents_mod.system_prompt(agente)
                 metricas.nota(f"agente: {agente['name']}")
                 # Un modelo y dos conversaciones: la hablada razona poco y la de
                 # la pantalla mas. Empiezan igual (prompt + contextos), asi que
@@ -551,13 +548,14 @@ class CoachEngine(QtCore.QObject):
             return None
         import agents as agents_mod
         agente = agents_mod.get(agent_id)
-        sys_prompt = agents_mod.system_prompt(agente, self._contexto)
+        sys_prompt = agents_mod.system_prompt(agente)
         if (self._coach.system_prompt, self._coach.reglas) == (sys_prompt, agente["reglas"]):
             return agente["name"]           # el mismo: no se tira la cache
         for coach in (self._coach, self._coach_pantalla):
             if coach is not None:
                 coach.cambiar_instrucciones(sys_prompt, agente["reglas"])
         metricas.nota(f"agente: {agente['name']}")
+        self._registro.append(("Agente", f"desde aquí responde {agente['name']}"))
         threading.Thread(target=self._calentar, daemon=True).start()
         return agente["name"]
 
@@ -832,35 +830,19 @@ class CoachEngine(QtCore.QObject):
         try:
             import config as cfg_mod
             ruta = metricas.guardar(cfg_mod.data_dir())
-            self._guardar_acta(cfg_mod.data_dir())
+            self._guardar_acta()
             if ruta:
                 self.status.emit(f"Métricas de la sesión guardadas en {ruta}")
         except Exception:
             log.exception("Saving session metrics or transcript failed")
 
-    def _guardar_acta(self, carpeta):
-        """Deja la conversacion en un .md para poder repasarla despues.
+    def _guardar_acta(self):
+        """Deja la conversacion en el historial (sesiones.py), con su agente.
 
         Sin esto, al terminar la reunion no queda ni rastro de lo que se dijo ni
         de lo que se sugirio, y no hay forma de revisar si las respuestas
-        sirvieron o de afinar el prompt con casos reales.
+        sirvieron o de afinar el agente con casos reales.
         """
-        if not self._registro:
-            return
-        try:
-            destino = os.path.join(carpeta, "sesiones")
-            os.makedirs(destino, exist_ok=True)
-            ruta = os.path.join(destino,
-                                f"sesion-{time.strftime('%Y%m%d-%H%M%S')}.md")
-            with open(ruta, "w", encoding="utf-8") as f:
-                f.write(f"# Reunion del {time.strftime('%d/%m/%Y %H:%M')}\n\n")
-                for quien, texto in self._registro:
-                    if quien.startswith("Sugerido"):
-                        f.write(f"### {quien}\n\n{texto.strip()}\n\n")
-                    else:
-                        f.write(f"**{quien}:** {texto.strip()}\n\n")
-            return ruta
-        except OSError:
-            log.warning("Session transcript not written under %s", carpeta,
-                        exc_info=True)
-            return None
+        import sesiones
+        agente_id, nombre = self._agente or ("", "")
+        return sesiones.guardar(self._registro, agente_id, nombre)

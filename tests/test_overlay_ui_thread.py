@@ -297,9 +297,9 @@ def test_code_copy_button_is_interactive(panel):
 
 # --------------------------------------------------------------- thread rows
 
-def test_new_panel_shows_start_hint(panel):
-    assert ("Start the meeting to capture the participant and draft a "
-            "suggested answer.") in texts(panel.scroll.widget())
+def test_new_panel_shows_waiting_hint(panel):
+    assert ("Waiting for the first question — the answer will draft here."
+            in texts(panel.scroll.widget()))
 
 
 def test_set_hint_adds_row(panel):

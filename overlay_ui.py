@@ -21,6 +21,11 @@ from metrics import PINTADO, metricas
 # Cada cuanto se repinta la respuesta mientras llega. Bastante mas rapido que
 # leer, pero mil veces menos trabajo que reconstruir el panel en cada trozo.
 INTERVALO_REPINTADO = 90    # ms
+# A partir de aqui la latencia se ensena en la cabecera (por debajo no hay nada
+# que mirar): transcripcion y carrera completa pregunta -> primera palabra.
+LATENCIA_LENTA_MS = 1500
+RESPUESTA_LENTA_MS = 3000
+AVISO_MS = 4000              # lo que dura un aviso de paso en la pastilla
 
 # Cuantos mensajes se mantienen vivos en el hilo.
 #
@@ -822,15 +827,18 @@ class AgentChip(QtWidgets.QPushButton):
         # de empujar la columna hablada fuera de su sitio.
         self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         self.nombre = ""
+        # Es el titulo del panel: texto claro, sin caja; al pasar, se ve pulsable.
+        f.setPixelSize(13); f.setWeight(QtGui.QFont.DemiBold); self.setFont(f)
         self.setStyleSheet(
             "QPushButton {"
-            f"  color: {T.ACCENT_LABEL};"
-            "   background: rgba(124,149,255,0.08);"
-            "   border: 1px solid rgba(124,149,255,0.30);"
-            "   border-radius: 9px;"
-            "   padding: 2px 9px;"
+            f"  color: {T.TEXT_BRIGHT};"
+            "   background: transparent;"
+            "   border: none;"
+            "   border-radius: 8px;"
+            "   padding: 2px 6px;"
+            "   text-align: left;"
             "}"
-            "QPushButton:hover { background: rgba(124,149,255,0.18); }")
+            "QPushButton:hover { background: rgba(124,149,255,0.16); }")
         self.menu = QtWidgets.QMenu(self)
         self.menu.setStyleSheet(
             f"QMenu {{ background: {T.PANEL_SOLID}; border: 1px solid {T.PANEL_BORDER}; "
@@ -861,8 +869,10 @@ class AgentChip(QtWidgets.QPushButton):
         ancho = self.width() if ancho is None else ancho
         libre = min(self._ANCHO_MAX, ancho - self._RELLENO
                     - fm.horizontalAdvance(self._FLECHA))
-        self.setText(fm.elidedText(self.nombre, QtCore.Qt.ElideRight, max(0, libre))
-                     + self._FLECHA)
+        # Si cabe, entero: elidedText recorta por redondeo con el ancho justo.
+        nombre = (self.nombre if fm.horizontalAdvance(self.nombre) <= libre
+                  else fm.elidedText(self.nombre, QtCore.Qt.ElideRight, max(0, libre)))
+        self.setText(nombre + self._FLECHA)
 
     def sizeHint(self):
         fm = self.fontMetrics()
@@ -1034,7 +1044,6 @@ class TopBar(_Draggable, QtWidgets.QWidget):
     generateClicked = QtCore.Signal()
     answerNowClicked = QtCore.Signal()
     toggleClicked = QtCore.Signal()
-    settingsClicked = QtCore.Signal()
 
     def __init__(self):
         super().__init__()
@@ -1069,21 +1078,14 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(6)
 
-        # --- marca "Cue." (C dorada, resto blanco), sin icono de limon ---
-        # The brand block is also the drag handle: the grip dots signal it, and
-        # it is listed in interactive_widgets so it does not pass clicks through.
+        # Asa de arrastre: solo los punticos (la marca no aportaba nada en plena
+        # reunion y quitaba sitio en pantallas pequenas). Esta en
+        # interactive_widgets para que no deje pasar el clic.
         marca = QtWidgets.QWidget()
         self.drag_zone = marca
         ml = QtWidgets.QHBoxLayout(marca)
-        ml.setContentsMargins(8, 6, 8, 6)
-        ml.setSpacing(8)
+        ml.setContentsMargins(8, 6, 6, 6)
         ml.addWidget(GripDots(cols=2, rows=3))
-        nombre = QtWidgets.QLabel(
-            f'<span style="color:{T.ACCENT};font-weight:700;">Arm</span>'
-            f'<span style="color:#ffffff;font-weight:700;">ony.</span>')
-        nf = nombre.font(); nf.setPixelSize(15); nombre.setFont(nf)
-        nombre.setStyleSheet("background: transparent;")
-        ml.addWidget(nombre)
         lay.addWidget(marca)
 
         sep = QtWidgets.QFrame()
@@ -1150,16 +1152,11 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         self.btn_toggle = self._pill("Show / Hide", ("Caps", "Q"), icono="eye")
         self.btn_toggle.clicked.connect(self.toggleClicked)
         lay.addWidget(self.btn_toggle)
-
-        # --- ajustes (necesario para la API key; no estaba en el diseno) ---
-        self.btn_cfg = self._pill("", None, icono="cog", ancho=40)
-        self.btn_cfg.setToolTip("Settings")
-        self.btn_cfg.clicked.connect(self.settingsClicked)
-        lay.addWidget(self.btn_cfg)
+        # Los ajustes viven en la Home, que vuelve al terminar la reunion.
 
     def interactive_widgets(self):
         """Zonas que SI responden al mouse (el resto deja pasar el clic)."""
-        return [self.drag_zone, self.btn_cfg]
+        return [self.drag_zone]
 
     def set_generate_enabled(self, on):
         """Encendido = hay capturas listas. Se maneja por Bloq Mayus+D; aqui solo se ve."""
@@ -1266,7 +1263,6 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self._state = "idle"
         self._caret_on = True
         self._anim_phase = 0
-        self._part_last = None
         self._burbujas = []         # todas las del hilo, para los botones copiar
         self._burbuja_viva = None   # la intervencion que se esta transcribiendo
         self._burbuja_resp = None   # la sugerencia que se esta generando
@@ -1279,6 +1275,11 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self._timer_repintado.setInterval(INTERVALO_REPINTADO)
         self._timer_repintado.timeout.connect(self._repintar)
         self._auto = {}             # se llena en _body, al crear el hilo
+        # Los avisos de paso (aviso()) se van solos.
+        self._aviso_fugaz = QtCore.QTimer(self)
+        self._aviso_fugaz.setSingleShot(True)
+        self._aviso_fugaz.setInterval(AVISO_MS)
+        self._aviso_fugaz.timeout.connect(self.hide_skip)
         self._build()
         # Animacion: pulso del borde (listening) + caret parpadeante.
         self._anim = QtCore.QTimer(self)
@@ -1383,6 +1384,14 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
 
     # ---------------- encabezado
     def _header(self):
+        """Solo lo que sirve en plena reunion:
+
+        - hablado: actividad del audio, el agente que responde (pulsable para
+          cambiarlo) y el estado real (Listening, Drafting...).
+        - pantalla: cuantas capturas lleva, el estado y el cierre.
+        La latencia solo aparece cuando va lenta: si va bien, no hay nada que
+        mirar. Los avisos que no son un estado van a la pastilla de abajo.
+        """
         w = DragBar()          # arrastrar desde aqui mueve todo el panel
         self._drag_header = w
         lay = QtWidgets.QHBoxLayout(w)
@@ -1392,38 +1401,33 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.bars = AudioBars()
         lay.addWidget(self.bars)
 
-        nombre = "Screen" if self.modo == "pantalla" else "Live Transcription"
-        base = _tracked(nombre, 13, QtGui.QFont.DemiBold, T.TEXT_BRIGHT, 0)
-        titulo = _TituloElastico(nombre, base.font(), T.TEXT_BRIGHT)
+        # Hablado: el titulo es el agente. Pantalla: "Screen · N shots".
+        self.agent_chip = AgentChip()
+        self.agent_chip.chosen.connect(self.agentChosen.emit)
+        lay.addWidget(self.agent_chip)
+        base = _tracked("Screen", 13, QtGui.QFont.DemiBold, T.TEXT_BRIGHT, 0)
+        self.titulo = _TituloElastico("Screen", base.font(), T.TEXT_BRIGHT)
         base.deleteLater()
-        lay.addWidget(titulo)
+        lay.addWidget(self.titulo)
 
-        # Punto que se ilumina cuando llega audio de la reunion. Antes vivia
-        # sobre la columna del participante, que ya no existe.
-        self.part_dot = QtWidgets.QLabel()
-        self.part_dot.setFixedSize(8, 8)
-        lay.addWidget(self.part_dot)
-        self._paint_part(0)
-
+        lay.addStretch()
         self.badge = StatusBadge()
         lay.addWidget(self.badge)
-        # medidor de latencia de transcripcion (a la derecha del badge)
+        # Latencias: solo cuando van lentas (ver set_latency / set_e2e).
         self.lat = QtWidgets.QLabel("")
         lf = self.lat.font(); lf.setPixelSize(11); self.lat.setFont(lf)
-        self.lat.setToolTip("Transcripción: de la última palabra al texto")
+        self.lat.setToolTip("Transcripción lenta: de la última palabra al texto")
         self.lat.setVisible(False)
         lay.addWidget(self.lat)
-        # El que de verdad se nota: de que terminan de preguntar a que tienes
-        # algo que decir. Lo otro es un tramo; esto es la carrera entera.
         self.e2e = QtWidgets.QLabel("")
         ef = self.e2e.font(); ef.setPixelSize(11); self.e2e.setFont(ef)
-        self.e2e.setToolTip("Total: de la pregunta a la primera palabra sugerida")
+        self.e2e.setToolTip("Respuesta lenta: de la pregunta a la primera palabra sugerida")
         self.e2e.setVisible(False)
         lay.addWidget(self.e2e)
-        lay.addStretch()
+        lay.addWidget(GripDots())
 
-        # El panel de la pantalla no escucha audio: fuera barras, punto y
-        # medidores, y en su lugar un cierre (vuelve a quedar solo el hablado).
+        # El panel de la pantalla no escucha audio: fuera barras y agente, y en
+        # su lugar un cierre (vuelve a quedar solo el hablado).
         self.btn_close = QtWidgets.QPushButton("×")
         self.btn_close.setFixedSize(24, 24)
         self.btn_close.setStyleSheet(
@@ -1434,21 +1438,12 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.btn_close.clicked.connect(self.closeClicked.emit)
         lay.addWidget(self.btn_close)
         if self.modo == "pantalla":
-            for audio in (self.bars, self.part_dot):
-                audio.setVisible(False)
+            self.bars.setVisible(False)
+            self.agent_chip.setVisible(False)
+            self.agent_chip.setEnabled(False)
         else:
+            self.titulo.setVisible(False)
             self.btn_close.setVisible(False)
-
-        # Punticos de agarre: centrados en el hueco libre de la cabecera, no en
-        # su ancho total. Flotando en el centro se montaban encima del estado
-        # ("Listening") en cuanto la columna es estrecha.
-        lay.insertWidget(lay.indexOf(self.btn_close), GripDots())
-        lay.insertStretch(lay.indexOf(self.btn_close))
-
-        # Agente en uso (solo en el hablado: es el mismo para los dos paneles).
-        self.agent_chip = AgentChip()
-        self.agent_chip.chosen.connect(self.agentChosen.emit)
-        lay.insertWidget(lay.indexOf(self.btn_close), self.agent_chip)
 
         # Con selector: sin el, la linea de abajo la hereda cada hijo y sale
         # subrayado el titulo, el estado...
@@ -1520,8 +1515,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
             self.set_hint("Screenshots (Caps+S) and their solutions show up here. "
                           "Caps+D to solve.")
         else:
-            self.set_hint("Start the meeting to capture the participant "
-                          "and draft a suggested answer.")
+            self.set_hint("Waiting for the first question — the answer will "
+                          "draft here.")
         return w
 
     def set_agents(self, agentes, activo):
@@ -1621,18 +1616,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self._apply_border()
         self._render_question()
 
-    def _paint_part(self, nivel):
-        # El punto del participante se ilumina (dorado) cuando llega su audio.
-        encendido = int(nivel) > 8
-        if encendido != self._part_last:
-            col = T.ACCENT if encendido else T.INTERVIEWER_DOT
-            self.part_dot.setStyleSheet(f"background: {col}; border-radius: 4px;")
-            self._part_last = encendido
-
     # ---------------- API publica
     def set_level(self, v):
         self.bars.set_level(v)
-        self._paint_part(v)
 
     def set_mic_level(self, v):
         pass  # el medidor de micro se retiro de la cabecera
@@ -1641,13 +1627,11 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.set_state("listening" if on else "idle")
 
     def set_latency(self, ms):
-        """Muestra la latencia de la última transcripción, con color por rapidez."""
-        if ms < 600:
-            col = "#3ddc84"          # verde: muy rápido
-        elif ms < 1500:
-            col = "#93a8ff"          # ámbar
-        else:
-            col = "#e0554b"          # rojo: lento
+        """Latencia de la transcripcion: solo se ensena si va lenta."""
+        if ms < LATENCIA_LENTA_MS:
+            self.lat.setVisible(False)
+            return
+        col = "#e9a23b" if ms < 2 * LATENCIA_LENTA_MS else "#e0554b"   # ambar / rojo
         txt = f"{ms} ms" if ms < 1000 else f"{ms / 1000:.1f} s"
         self.lat.setText(txt)
         self.lat.setStyleSheet(
@@ -1656,8 +1640,11 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.lat.setVisible(True)
 
     def set_e2e(self, ms):
-        """Total de la carrera: pregunta -> primera palabra en pantalla."""
-        col = "#3ddc84" if ms < 1500 else ("#93a8ff" if ms < 3000 else "#e0554b")
+        """Total de la carrera (pregunta -> primera palabra): solo si va lenta."""
+        if ms < RESPUESTA_LENTA_MS:
+            self.e2e.setVisible(False)
+            return
+        col = "#e9a23b" if ms < 2 * RESPUESTA_LENTA_MS else "#e0554b"   # ambar / rojo
         self.e2e.setText(f"⚡ {ms / 1000:.1f} s")
         self.e2e.setStyleSheet(
             f"color: {col}; font-family: {T.MONO_STACK}; background: "
@@ -1814,7 +1801,20 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
 
     def show_skip(self, texto="No question — Caps+A to answer"):
         """Deja claro que no se esta esperando ninguna respuesta."""
+        self._aviso_fugaz.stop()
         self.skip_pill.show_text(texto)
+
+    def aviso(self, texto):
+        """Mensaje de paso (no es un estado): en la pastilla unos segundos."""
+        self.skip_pill.show_text(texto)
+        self._aviso_fugaz.start()
+
+    def set_shots(self, n):
+        """Panel de pantalla: el titulo cuenta las capturas de la reunion."""
+        texto = "Screen" if not n else f"Screen · {n} shot{'s' if n != 1 else ''}"
+        self.titulo._completo = texto
+        self.titulo.setText(texto)
+        self.titulo.updateGeometry()
 
     def hide_skip(self):
         self.skip_pill.hide_pill()

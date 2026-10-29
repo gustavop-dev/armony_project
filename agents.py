@@ -4,16 +4,19 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
 
     {"name": "Grok", "preset": "grok",
      "instrucciones": "...personalidad, tono, longitud...",
-     "reglas": "...como funciona la conversacion, formato, codigo..."}
+     "reglas": "...como funciona la conversacion, formato, codigo...",
+     "conocimiento": [{"id": "doc-1", "name": "Mi CV", "body": "..."}]}
 
 - Las dos partes se editan enteras desde Configuracion. 'reglas' es la mecanica
   de la que depende la app (secciones '##', formato de codigo, capturas); se
   puede cambiar, pero romperla estropea como se pinta la respuesta.
 - 'preset' dice de que agente de ejemplo salio: "Restaurar" vuelve a su texto.
   Un agente nuevo nace como copia del Coach para que se vea lo que ya hay.
-- El que se usa es config["agent"]. Al empezar la reunion su texto (mas los
-  contextos activos) abre la conversacion del modelo; cambiarlo a mitad la
-  reinicia con el historial (ver CoachEngine.set_agent).
+- 'conocimiento': documentos markdown del agente (CV, oferta, producto...),
+  como los de un GPT o un proyecto. Se le dan enteros al empezar la reunion.
+- El que se usa es config["agent"]. Al empezar la reunion su texto y su
+  conocimiento abren la conversacion del modelo; cambiarlo a mitad la reinicia
+  con el historial (ver CoachEngine.set_agent).
 - Los avisos de cada turno ("responde a esto", "puedes callarte") no son del
   agente: los pone llm.py en cada mensaje.
 """
@@ -96,7 +99,7 @@ def preset(preset_id):
     pid = preset_id if preset_id in PRESETS else DEFAULT_ID
     nombre, instrucciones = PRESETS[pid]
     return {"id": pid, "name": nombre, "preset": pid,
-            "instrucciones": instrucciones, "reglas": REGLAS}
+            "instrucciones": instrucciones, "reglas": REGLAS, "conocimiento": []}
 
 
 def nuevo(existentes, nombre="Nuevo agente"):
@@ -152,11 +155,18 @@ def list_agents():
         if not isinstance(data, dict):
             continue
         base = predeterminado(data)
+        docs = data.get("conocimiento")
         out.append({"id": aid,
                     "name": str(data.get("name") or aid),
                     "preset": base["preset"],
                     "instrucciones": str(data.get("instrucciones", base["instrucciones"])),
-                    "reglas": str(data.get("reglas", base["reglas"]))})
+                    "reglas": str(data.get("reglas", base["reglas"])),
+                    "conocimiento": [
+                        {"id": str(d.get("id") or f"doc-{i + 1}"),
+                         "name": str(d.get("name") or "Documento"),
+                         "body": str(d.get("body") or "")}
+                        for i, d in enumerate(docs if isinstance(docs, list) else [])
+                        if isinstance(d, dict)]})
     if not out:
         out = [preset(pid) for pid in PRESETS]
         try:
@@ -177,7 +187,8 @@ def write_all(agentes):
         vivos.add(os.path.normcase(a["id"] + ".json"))
         datos = {"name": a.get("name", a["id"]), "preset": a.get("preset", DEFAULT_ID),
                  "instrucciones": a.get("instrucciones", ""),
-                 "reglas": a.get("reglas", "")}
+                 "reglas": a.get("reglas", ""),
+                 "conocimiento": a.get("conocimiento", [])}
         with open(os.path.join(AGENTS_DIR, a["id"] + ".json"), "w",
                   encoding="utf-8") as f:
             json.dump(datos, f, ensure_ascii=False, indent=2)
@@ -196,10 +207,52 @@ def get(agent_id):
     return next((a for a in agentes if a["id"] == agent_id), agentes[0])
 
 
-def system_prompt(agente, contexto=""):
-    """Instrucciones del agente mas los contextos activos de la reunion. Las
-    reglas van aparte (Coach las pone detras)."""
+def texto_conocimiento(agente):
+    """Los documentos del agente, juntos, en el orden en que estan."""
+    return "\n\n".join(d["body"].strip() for d in agente.get("conocimiento", [])
+                       if d.get("body", "").strip())
+
+
+def system_prompt(agente):
+    """Instrucciones del agente mas su conocimiento. Las reglas van aparte
+    (Coach las pone detras)."""
     texto = agente["instrucciones"].strip()
+    contexto = texto_conocimiento(agente)
     if contexto:
         texto += "\n\n# Contexto de esta reunion\n" + contexto
     return texto
+
+
+def nuevo_documento(agente, nombre="Nuevo documento"):
+    n = max([_num(d["id"]) for d in agente.get("conocimiento", [])], default=0) + 1
+    return {"id": f"doc-{n}", "name": nombre, "body": ""}
+
+
+_MARCA_MIGRACION = ".contextos-migrados"
+
+
+def migrar_contextos(agent_id):
+    """Una sola vez: los contextos activos de antes (globales) pasan a ser
+    conocimiento del agente en uso. Los archivos de contextos no se tocan."""
+    import contexts as ctx_mod
+    marca = os.path.join(AGENTS_DIR, _MARCA_MIGRACION)
+    if os.path.exists(marca):
+        return 0
+    lista = list_agents()
+    agente = next((a for a in lista if a["id"] == agent_id), lista[0])
+    ya = {(d["name"], d["body"]) for d in agente["conocimiento"]}
+    nuevos = 0
+    for c in ctx_mod.list_contexts():
+        if c["active"] and c["body"].strip() and (c["name"], c["body"]) not in ya:
+            doc = nuevo_documento(agente, c["name"])
+            doc["body"] = c["body"]
+            agente["conocimiento"].append(doc)
+            nuevos += 1
+    try:
+        if nuevos:
+            write_all(lista)
+        with open(marca, "w", encoding="utf-8") as f:
+            f.write("contexts/*.md activos -> conocimiento del agente en uso\n")
+    except OSError as e:
+        log.warning("Context migration not saved (%s)", type(e).__name__)
+    return nuevos

@@ -1,0 +1,327 @@
+"""Home: agents with their meeting history, agent design, knowledge and settings."""
+import datetime as dt
+
+import pytest
+from PySide6 import QtCore, QtWidgets
+
+import agents
+import config
+import home_window as hw
+import sesiones
+
+LEFT = QtCore.Qt.LeftButton
+
+
+@pytest.fixture(autouse=True)
+def chevron_in_tmp(isolated_data_dir, monkeypatch):
+    import icons
+    save_png = icons.save_png
+    monkeypatch.setattr(icons, "save_png", lambda name, color, size, path, *a, **k:
+                        save_png(name, color, size, str(isolated_data_dir / "chevron.png")))
+
+
+@pytest.fixture
+def make_home(qtbot):
+    def _make(**overrides):
+        cfg = config.load_config()
+        cfg.update(overrides)
+        win = hw.HomeWindow(cfg)
+        qtbot.addWidget(win)
+        return win
+    return _make
+
+
+def _page(win):
+    return win.content.widget()
+
+
+def _find(win, cls, name):
+    return _page(win).findChild(cls, name)
+
+
+def _agent_rows(win):
+    return [w for w in win.lista.widget().findChildren(hw.NavItem, "agente")]
+
+
+def _row(win, key):
+    return next(f for f in _page(win).findChildren(QtWidgets.QWidget, "fila")
+                if f.property("clave") == key)
+
+
+def _save_session(agent, nombre, pregunta, cuando):
+    sesiones.guardar([("Ellos", pregunta), ("Sugerido", "respuesta")], agent, nombre, cuando)
+
+
+# ------------------------------------------------------------------ landing
+def test_home_opens_on_the_agent_in_use(make_home):
+    win = make_home(agent="grok")
+
+    assert win.vista == ("agente", "grok")
+    assert _find(win, QtWidgets.QLineEdit, "nombre-agente").text() == "Grok"
+
+
+def test_sidebar_lists_every_agent(make_home):
+    win = make_home()
+
+    assert [r._lab.text() for r in _agent_rows(win)] == [
+        "Coach", "Directo", "Grok", "Senior técnico"]
+
+
+def test_open_agent_is_marked_in_the_sidebar(make_home):
+    win = make_home(agent="directo")
+
+    assert [r._activo for r in _agent_rows(win)] == [False, True, False, False]
+
+
+def test_meetings_are_listed_under_their_agent(make_home):
+    _save_session("grok", "Grok", "¿Pagos duplicados?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+
+    filas = [w for w in win.lista.widget().children()
+             if isinstance(w, (hw.NavItem, hw.SessionItem))]
+    orden = [w._lab.text() if isinstance(w, hw.NavItem) else w.toolTip() or w._titulo.toolTip()
+             for w in filas]
+    assert orden.index("¿Pagos duplicados?") == orden.index("Grok") + 1
+
+
+# ------------------------------------------------------------------ agent design
+@pytest.mark.parametrize("pestana, campo", [("instrucciones", "instrucciones"),
+                                            ("reglas", "reglas")])
+def test_tabs_show_the_full_agent_text(make_home, pestana, campo):
+    win = make_home(agent="grok")
+
+    win.abrir_agente("grok", pestana)
+
+    assert _find(win, QtWidgets.QPlainTextEdit, campo).toPlainText() == agents.preset("grok")[campo]
+
+
+def test_edits_are_saved_automatically(make_home):
+    win = make_home(agent="grok")
+    _find(win, QtWidgets.QPlainTextEdit, "instrucciones").setPlainText("Sarcástico y breve.")
+
+    assert win.saved_lbl.text() == "Guardando…"
+    win.guardar_ya()
+
+    assert agents.get("grok")["instrucciones"] == "Sarcástico y breve."
+    assert win.saved_lbl.text() == "Todo guardado"
+
+
+def test_autosave_fires_on_its_own(make_home, qtbot):
+    win = make_home(agent="grok")
+    win._guardado.setInterval(10)
+
+    _find(win, QtWidgets.QLineEdit, "nombre-agente").setText("Grok 2")
+
+    qtbot.waitUntil(lambda: agents.get("grok")["name"] == "Grok 2", timeout=1000)
+
+
+def test_renaming_updates_the_sidebar_live(make_home):
+    win = make_home(agent="grok")
+
+    _find(win, QtWidgets.QLineEdit, "nombre-agente").setText("Grok 2")
+
+    assert _agent_rows(win)[2]._lab.text() == "Grok 2"
+
+
+def test_new_agent_starts_as_a_copy_of_the_coach(make_home, qtbot):
+    win = make_home()
+
+    win._ag_add()
+
+    assert win.vista == ("agente", "agente-1")
+    assert _find(win, QtWidgets.QPlainTextEdit, "instrucciones").toPlainText() == (
+        agents.preset("coach")["instrucciones"])
+
+
+def test_restore_brings_back_the_preset_text(make_home, qtbot):
+    win = make_home(agent="grok")
+    win.abrir_agente("grok", "reglas")
+    _find(win, QtWidgets.QPlainTextEdit, "reglas").setPlainText("sin reglas")
+    win._mostrar()
+
+    qtbot.mouseClick(_find(win, QtWidgets.QPushButton, "restaurar-reglas"), LEFT)
+
+    assert _find(win, QtWidgets.QPlainTextEdit, "reglas").toPlainText() == agents.preset("grok")["reglas"]
+
+
+def test_deleting_needs_a_second_click(make_home, qtbot):
+    win = make_home(agent="grok")
+    borrar = _find(win, hw.ConfirmDelete, "borrar-agente")
+
+    qtbot.mouseClick(borrar.papelera, LEFT)
+    assert win._ag_get("grok") is not None
+    qtbot.mouseClick(borrar.confirmar, LEFT)
+
+    assert win._ag_get("grok") is None
+    win.guardar_ya()
+    assert "grok" not in [a["id"] for a in agents.list_agents()]
+
+
+def test_unconfirmed_delete_goes_back(make_home, qtbot):
+    win = make_home(agent="grok")
+    borrar = _find(win, hw.ConfirmDelete, "borrar-agente")
+    borrar._vuelta.setInterval(10)
+
+    qtbot.mouseClick(borrar.papelera, LEFT)
+
+    qtbot.waitUntil(lambda: borrar.papelera.isVisibleTo(borrar), timeout=1000)
+    assert win._ag_get("grok") is not None
+
+
+def test_last_agent_cannot_be_deleted(make_home):
+    agents.write_all([agents.preset("coach")])
+    win = make_home()
+
+    win._ag_del("coach")
+
+    assert [a["id"] for a in win.agents] == ["coach"]
+
+
+# ------------------------------------------------------------------ knowledge
+def test_knowledge_documents_are_saved_with_the_agent(make_home):
+    win = make_home(agent="senior")
+    win.abrir_agente("senior", "conocimiento")
+
+    win._doc_add("senior")
+    _find(win, QtWidgets.QLineEdit, "nombre-documento").setText("Mi CV")
+    _find(win, QtWidgets.QPlainTextEdit, "cuerpo-documento").setPlainText("Backend 6 años")
+    win.guardar_ya()
+
+    assert agents.get("senior")["conocimiento"] == [
+        {"id": "doc-1", "name": "Mi CV", "body": "Backend 6 años"}]
+
+
+def test_knowledge_tab_counts_documents(make_home):
+    lista = agents.list_agents()
+    lista[0]["conocimiento"] = [{"id": "doc-1", "name": "CV", "body": "x"}]
+    agents.write_all(lista)
+    win = make_home()
+
+    tabs = _find(win, hw.Segmented, "pestanas")
+
+    assert tabs._btns["conocimiento"].text() == "Conocimiento · 1"
+
+
+def test_old_active_contexts_move_into_the_agent_in_use(isolated_data_dir):
+    carpeta = isolated_data_dir / "contexts"
+    carpeta.mkdir()
+    (carpeta / "ctx-1.md").write_text("---\nname: CV\nactive: true\n---\nBackend", encoding="utf-8")
+    (carpeta / "ctx-2.md").write_text("---\nname: Viejo\nactive: false\n---\nNo", encoding="utf-8")
+
+    assert agents.migrar_contextos("grok") == 1
+    assert agents.migrar_contextos("grok") == 0          # only once
+    assert agents.get("grok")["conocimiento"] == [{"id": "doc-1", "name": "CV", "body": "Backend"}]
+
+
+# ------------------------------------------------------------------ meetings
+def test_opening_a_meeting_shows_its_transcript(make_home):
+    _save_session("grok", "Grok", "¿Pagos duplicados?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+
+    win.abrir_sesion("sesion-20261029-161800")
+
+    texto = _find(win, QtWidgets.QTextBrowser, "transcripcion").toPlainText()
+    assert "¿Pagos duplicados?" in texto and "respuesta" in texto
+
+
+def test_meeting_view_starts_with_its_agent(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home(agent="coach")
+
+    win.abrir_sesion("sesion-20261029-161800")
+
+    assert win.agente_actual() == "grok"
+
+
+def test_deleting_a_meeting_removes_it(make_home, qtbot):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+    win.abrir_sesion("sesion-20261029-161800")
+    borrar = _find(win, hw.ConfirmDelete, "borrar-sesion")
+
+    qtbot.mouseClick(borrar.papelera, LEFT)
+    qtbot.mouseClick(borrar.confirmar, LEFT)
+
+    assert sesiones.listar() == [] and win.vista == ("agente", "grok")
+
+
+def test_refresh_after_a_meeting_opens_the_new_one(make_home):
+    win = make_home()
+    _save_session("coach", "Coach", "¿Recién?", dt.datetime(2026, 10, 29, 17, 0))
+
+    win.refrescar(abrir_ultima=True)
+
+    assert win.vista == ("sesion", "sesion-20261029-170000")
+
+
+# ------------------------------------------------------------------ start
+def test_start_button_emits_the_open_agent(make_home, qtbot):
+    win = make_home(agent="coach")
+    win.abrir_agente("senior")
+
+    with qtbot.waitSignal(win.startMeeting) as senal:
+        qtbot.mouseClick(_find(win, QtWidgets.QPushButton, "iniciar"), LEFT)
+
+    assert senal.args == ["senior"]
+    assert config.load_config()["agent"] == "senior"
+
+
+def test_warning_shows_at_the_top_of_the_page(make_home):
+    win = make_home()
+
+    win.mostrar_aviso("Añade tu API key de OpenAI para iniciar la reunión.")
+
+    assert _find(win, QtWidgets.QLabel, "aviso").text().startswith("Añade tu API key")
+
+
+# ------------------------------------------------------------------ settings
+def test_settings_are_a_separate_view(make_home):
+    win = make_home()
+
+    win.ir_a_ajustes()
+
+    assert win.vista == ("ajustes", None) and win.nav_ajustes._activo is True
+
+
+@pytest.mark.parametrize("key", ["openai_api_key", "assemblyai_api_key", "typesafe_api_key"])
+def test_keys_are_masked_and_saved(make_home, key):
+    win = make_home()
+    win.ir_a_ajustes()
+    campo = _row(win, key).findChild(QtWidgets.QLineEdit)
+
+    campo.setText("  secreto  ")
+    win.guardar_ya()
+
+    assert campo.echoMode() == QtWidgets.QLineEdit.Password
+    assert config.load_config()[key] == "secreto"
+
+
+def test_language_and_opacity_are_saved(make_home):
+    win = make_home()
+    win.ir_a_ajustes()
+    combo = _row(win, "language").findChild(QtWidgets.QComboBox)
+    combo.setCurrentIndex(combo.findData("auto"))
+    _row(win, "window_opacity").findChild(QtWidgets.QSlider).setValue(0)
+
+    win.guardar_ya()
+
+    cfg = config.load_config()
+    assert (cfg["language"], cfg["window_opacity"]) == ("auto", 0.15)
+
+
+@pytest.mark.parametrize("key", config.FIJAS)
+def test_internal_settings_have_no_field(make_home, key):
+    win = make_home()
+    win.ir_a_ajustes()
+
+    assert key not in [f.property("clave") for f in _page(win).findChildren(QtWidgets.QWidget, "fila")]
+
+
+def test_close_saves_and_asks_to_quit(make_home, qtbot):
+    win = make_home(agent="grok")
+    _find(win, QtWidgets.QLineEdit, "nombre-agente").setText("Grok 3")
+
+    with qtbot.waitSignal(win.closeApp):
+        win._cerrar_app()
+
+    assert agents.get("grok")["name"] == "Grok 3"

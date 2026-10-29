@@ -24,26 +24,29 @@ class NoThread:
         NoThread.started.append(self.target)
 
 
-def _engine(monkeypatch, contexto=""):
+def _engine(monkeypatch):
     monkeypatch.setattr(engine.threading, "Thread", NoThread)
     NoThread.started = []
     e = CoachEngine()
     e._running = True
-    e._contexto = contexto
     coach = agents.get("coach")
-    prompt = agents.system_prompt(coach, contexto)
+    prompt = agents.system_prompt(coach)
     e._coach = FakeCoach(prompt, coach["reglas"])
     e._coach_pantalla = FakeCoach(prompt, coach["reglas"])
     return e
 
 
 def test_switch_changes_both_conversations(monkeypatch):
-    e = _engine(monkeypatch, contexto="Producto X")
+    lista = agents.list_agents()
+    lista[2]["conocimiento"] = [{"id": "doc-1", "name": "CV", "body": "Producto X"}]
+    agents.write_all(lista)
+    e = _engine(monkeypatch)
 
     nombre = e.set_agent("grok")
 
     grok = agents.get("grok")
-    esperado = (agents.system_prompt(grok, "Producto X"), grok["reglas"])
+    esperado = (agents.system_prompt(grok), grok["reglas"])
+    assert "Producto X" in esperado[0]
     assert nombre == "Grok"
     assert e._coach.cambios == [esperado] and e._coach_pantalla.cambios == [esperado]
 
@@ -77,3 +80,11 @@ def test_test_mode_has_no_agent_to_switch(monkeypatch):
     e._test_mode = True
 
     assert e.set_agent("grok") is None
+
+
+def test_switch_is_noted_in_the_transcript(monkeypatch):
+    e = _engine(monkeypatch)
+
+    e.set_agent("grok")
+
+    assert e._registro[-1] == ("Agente", "desde aquí responde Grok")
