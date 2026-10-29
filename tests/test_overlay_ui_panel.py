@@ -448,17 +448,37 @@ def test_agent_name_that_fits_is_never_cut(panel, qtbot, nombre):
     assert panel.agent_chip.text() == f"{nombre} ▾"
 
 
-def test_agent_title_carries_its_character(panel):
+def test_spoken_panel_has_the_agent_as_companion(panel):
     panel.set_agents([("grok", "Grok", ("zorro", "coral"))], "grok")
 
-    assert panel.agent_chip.icon().isNull() is False
+    assert (panel.compa.personaje, panel.compa.color) == ("zorro", "coral")
+    assert panel.compa.isVisibleTo(panel) and not panel.bars.isVisibleTo(panel)
+    assert panel.agent_chip.icon().isNull() is True      # the face is the companion
 
 
-def test_character_thinks_while_drafting(panel):
-    panel.set_agents([("grok", "Grok", ("zorro", "coral"))], "grok")
+def test_companion_follows_the_meeting(panel):
+    estados = []
+    panel.set_state("listening"); estados.append(panel.compa.estado)
+    panel.set_state("generating"); estados.append(panel.compa.estado)
+    panel.clear_answer()
+    panel.append_answer("Usaría"); estados.append(panel.compa.estado)
+    panel.cerrar_respuesta()
+    contento = panel.compa.contento
+    panel.set_state("listening"); estados.append(panel.compa.estado)
 
-    panel.set_state("generating")
-    pensando = panel.agent_chip._expresion
-    panel.set_state("listening")
+    assert estados == ["escuchando", "pensando", "hablando", "escuchando"]
+    assert contento is True
 
-    assert (pensando, panel.agent_chip._expresion) == ("pensando", "abiertos")
+
+def test_companion_hears_the_audio_level(panel):
+    panel.set_level(80)
+
+    assert panel.compa.nivel == 80
+
+
+def test_screen_panel_has_no_companion(qtbot):
+    pantalla = overlay_ui.TranscriptPanel(modo="pantalla")
+    qtbot.addWidget(pantalla)
+
+    assert pantalla.compa.isVisibleTo(pantalla) is False
+    qtbot.wait(overlay_ui.INTERVALO_REPINTADO + 20)

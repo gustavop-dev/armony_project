@@ -1,10 +1,21 @@
-"""Personajes de los agentes: minimalistas, de un color, con cara.
+"""Personajes de los agentes: minimalistas, de un color, con cara y vivos.
 
 Se dibujan con QPainter sobre un lienzo de 100x100 (sin imagenes): se ven
 nitidos a cualquier tamano y el color de cada agente es el del cuerpo. La cara
-admite tres expresiones: ojos abiertos, cerrados (parpadeo) y mirando arriba
-(pensando, mientras se redacta la respuesta).
+admite cuatro expresiones: ojos abiertos, cerrados (parpadeo), mirando arriba
+(pensando) y felices (^ ^); y la boca se abre al hablar.
+
+Avatar los anima segun lo que pasa en la reunion, como un companero:
+  reposo     respira y parpadea.
+  escuchando bota con la voz del entrevistador (el nivel de audio).
+  pensando   mira arriba con tres puntitos: se esta preparando la respuesta.
+  hablando   mueve la boca mientras se escribe la sugerencia.
+  contento   ojos felices y un saltito al terminarla (dura un momento).
 """
+import math
+import random
+import time
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 TINTA = QtGui.QColor("#1F2433")          # ojos, boca, nariz
@@ -23,7 +34,12 @@ COLORES = [
 ]
 HEX = {cid: h for cid, _, h in COLORES}
 
-ABIERTOS, CERRADOS, PENSANDO = "abiertos", "cerrados", "pensando"
+ABIERTOS, CERRADOS, PENSANDO, FELIZ = "abiertos", "cerrados", "pensando", "feliz"
+
+# Estados del companero (Avatar vivo).
+REPOSO, ESCUCHANDO, PENSANDO_E, HABLANDO, CONTENTO = (
+    "reposo", "escuchando", "pensando", "hablando", "contento")
+DURACION_CONTENTO = 1.6        # s que dura la alegria al terminar una respuesta
 
 PERSONAJE_POR_DEFECTO = "gota"
 COLOR_POR_DEFECTO = "pervinca"
@@ -122,6 +138,15 @@ PERSONAJES = {
 
 
 def _ojo(p, x, y, t, expresion):
+    if expresion == FELIZ:
+        # ^ ^ : arco hacia arriba
+        p.setPen(QtGui.QPen(TINTA, t * 0.42, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
+        p.setBrush(QtCore.Qt.NoBrush)
+        camino = QtGui.QPainterPath()
+        camino.moveTo(x - t * 0.6, y + t * 0.2)
+        camino.quadTo(x, y - t * 0.7, x + t * 0.6, y + t * 0.2)
+        p.drawPath(camino)
+        return
     if expresion == CERRADOS:
         p.setPen(QtGui.QPen(TINTA, t * 0.42, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
         p.setBrush(QtCore.Qt.NoBrush)
@@ -184,8 +209,49 @@ def _boca(p, tipo, color):
         p.drawPath(c)
 
 
-def pintar(p, rect, personaje, color, expresion=ABIERTOS):
-    """Dibuja el personaje dentro de rect (cuadrado) con el color dado."""
+# Donde se abre la boca al hablar, segun el tipo de boca.
+_BOCA_Y = {"sonrisa": 64, "gato": 71, "recta": 70, "o": 64, "pico": 64,
+           "hocico": 75, "oso": 70}
+
+
+def _boca_abierta(p, tipo, color):
+    if tipo == "pico":
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor("#FFB547"))
+        p.drawPath(_p((45, 58), (55, 58), (50, 63)))
+        p.drawPath(_p((46, 66), (54, 66), (50, 71)))
+        return
+    if tipo == "hocico":
+        _boca(p, "hocico", color)          # el hocico y la nariz se quedan
+    elif tipo == "oso":
+        _boca(p, "oso", color)
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(TINTA)
+    y = _BOCA_Y.get(tipo, 66)
+    p.drawEllipse(QtCore.QPointF(50, y), 6.5, 5.5)
+    p.setBrush(QtGui.QColor(255, 120, 140, 220))          # lengua
+    p.drawEllipse(QtCore.QPointF(50, y + 2.6), 3.8, 2.2)
+
+
+def _puntos(p, fase, color):
+    """Tres puntitos de "estoy pensando", arriba a la derecha, del color del
+    personaje (se ven tanto en la Home clara como en el overlay oscuro)."""
+    p.setPen(QtCore.Qt.NoPen)
+    for i, (x, y, r) in enumerate(((72, 12, 3.6), (81, 7, 4.0), (90, 3, 4.4))):
+        a = 0.35 + 0.65 * max(0.0, math.sin((fase - i * 0.18) * math.tau))
+        c = QtGui.QColor(color)
+        c.setAlpha(int(255 * a))
+        p.setBrush(c)
+        p.drawEllipse(QtCore.QPointF(x, y), r, r)
+
+
+def pintar(p, rect, personaje, color, expresion=ABIERTOS, boca_abierta=False,
+           escala=1.0, dy=0.0, angulo=0.0, puntos=None):
+    """Dibuja el personaje dentro de rect (cuadrado) con el color dado.
+
+    Pose (para animarlo): escala y giro alrededor del centro, dy en unidades
+    del lienzo (100 = alto entero), boca abierta y 'puntos' (fase 0..1 de los
+    puntitos de pensar; None, sin puntitos)."""
     nombre_, cuerpo, ojos, boca, mejillas = PERSONAJES.get(personaje, PERSONAJES["gota"])
     color = QtGui.QColor(HEX.get(color, color))
     p.save()
@@ -193,6 +259,12 @@ def pintar(p, rect, personaje, color, expresion=ABIERTOS):
     lado = min(rect.width(), rect.height())
     p.translate(rect.x() + (rect.width() - lado) / 2, rect.y() + (rect.height() - lado) / 2)
     p.scale(lado / 100, lado / 100)
+    if puntos is not None:
+        _puntos(p, puntos, color)
+    p.translate(50, 50 + dy)
+    p.rotate(angulo)
+    p.scale(escala, escala)
+    p.translate(-50, -50)
     # cuerpo con un degradado suave: mas claro arriba, como si le diera la luz
     g = QtGui.QLinearGradient(0, 0, 0, 100)
     g.setColorAt(0, color.lighter(118))
@@ -212,7 +284,10 @@ def pintar(p, rect, personaje, color, expresion=ABIERTOS):
         y = ojos[2] + ojos[3] * 1.15
         p.drawEllipse(QtCore.QPointF(ojos[0] - 9, y), 5.5, 3.6)
         p.drawEllipse(QtCore.QPointF(ojos[1] + 9, y), 5.5, 3.6)
-    _boca(p, boca, color)
+    if boca_abierta:
+        _boca_abierta(p, boca, color)
+    else:
+        _boca(p, boca, color)
     for x in (ojos[0], ojos[1]):
         _ojo(p, x, ojos[2], ojos[3], expresion)
     p.restore()
@@ -241,21 +316,32 @@ def de_agente(agente):
 
 
 class Avatar(QtWidgets.QWidget):
-    """El personaje como widget. Con 'vivo', parpadea de vez en cuando."""
+    """El personaje como widget. Con 'vivo' respira, parpadea y reacciona a su
+    estado (set_estado) y al nivel de audio (set_nivel); sin 'vivo' es una
+    imagen fija con la expresion de set_expresion."""
     clicked = QtCore.Signal()
+    _FPS_MS = 33               # ~30 fotogramas por segundo mientras se ve
 
-    def __init__(self, personaje, color, lado=64, vivo=False):
+    def __init__(self, personaje, color, lado=64, vivo=False, alegre_al_pasar=False):
         super().__init__()
         self.personaje, self.color = personaje, color
         self.expresion = ABIERTOS
+        self.vivo = vivo
+        self.alegre_al_pasar = alegre_al_pasar
+        self.estado = REPOSO          # el que manda (escuchando, pensando...)
+        self._contento_hasta = 0.0    # alegria pasajera, encima del estado
+        self.nivel = 0.0
+        self._t = 0.0
+        self._parpadeo_hasta = 0.0
+        self._proximo_parpadeo = random.uniform(1.5, 4.0)
         self.setFixedSize(lado, lado)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
-        self._parpadeo = None
-        if vivo:
-            self._parpadeo = QtCore.QTimer(self)
-            self._parpadeo.timeout.connect(self._parpadear)
-            self._parpadeo.start(3600)
+        self._reloj = QtCore.QTimer(self)
+        self._reloj.setInterval(self._FPS_MS)
+        self._reloj.timeout.connect(self._tick)
+        self._ultimo = None
 
+    # ---------------------------------------------------------- estado
     def set_personaje(self, personaje, color):
         self.personaje, self.color = personaje, color
         self.update()
@@ -265,20 +351,82 @@ class Avatar(QtWidgets.QWidget):
             self.expresion = expresion
             self.update()
 
-    def _parpadear(self):
-        if self.expresion != ABIERTOS:
-            return
-        self.set_expresion(CERRADOS)
-        QtCore.QTimer.singleShot(140, self._abrir)
+    def set_estado(self, estado):
+        """reposo | escuchando | pensando | hablando | contento (pasajero)."""
+        if estado == CONTENTO:
+            self._contento_hasta = self._t + DURACION_CONTENTO
+        else:
+            self.estado = estado
+        self.update()
 
-    def _abrir(self):
-        if self.expresion == CERRADOS:
-            self.set_expresion(ABIERTOS)
+    def set_nivel(self, nivel):
+        """Nivel de audio 0..100: sube de golpe y baja suave."""
+        self.nivel = max(float(nivel), self.nivel * 0.8)
+
+    @property
+    def contento(self):
+        return self._t < self._contento_hasta
+
+    # ---------------------------------------------------------- animacion
+    def showEvent(self, e):
+        if self.vivo:
+            self._ultimo = time.monotonic()
+            self._reloj.start()
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        self._reloj.stop()
+        super().hideEvent(e)
+
+    def _tick(self):
+        ahora = time.monotonic()
+        self.avanzar(min(0.1, ahora - (self._ultimo or ahora)))
+        self._ultimo = ahora
+        self.update()
+
+    def avanzar(self, dt):
+        """Mueve el reloj de la animacion dt segundos (los tests lo llaman)."""
+        self._t += dt
+        self.nivel *= 0.9
+        if self._t >= self._proximo_parpadeo:
+            self._parpadeo_hasta = self._t + 0.13
+            self._proximo_parpadeo = self._t + random.uniform(2.5, 5.5)
+
+    def pose(self):
+        """Lo que se dibuja ahora: dict con los argumentos de pintar()."""
+        t = self._t
+        parpadea = self._t < self._parpadeo_hasta
+        pose = dict(expresion=CERRADOS if parpadea else ABIERTOS, boca_abierta=False,
+                    escala=1.0 + 0.025 * math.sin(t * 2.2), dy=0.0, angulo=0.0, puntos=None)
+        if not self.vivo:
+            pose.update(expresion=self.expresion, escala=1.0)
+            return pose
+        if self.contento:
+            hecho = DURACION_CONTENTO - (self._contento_hasta - t)
+            pose.update(expresion=FELIZ,
+                        dy=-7 * abs(math.sin(hecho * 7)) if hecho < 0.6 else 0.0)
+        elif self.estado == PENSANDO_E:
+            pose.update(expresion=PENSANDO, puntos=(t * 1.4) % 1, angulo=-4, escala=1.0)
+        elif self.estado == HABLANDO:
+            pose.update(boca_abierta=int(t * 7) % 2 == 0, dy=-1.5 * abs(math.sin(t * 7)))
+        elif self.estado == ESCUCHANDO:
+            fuerza = min(1.0, self.nivel / 60)
+            pose.update(dy=-8 * fuerza * abs(math.sin(t * 9)),
+                        angulo=3 * fuerza * math.sin(t * 3))
+        return pose
 
     def paintEvent(self, _e):
         p = QtGui.QPainter(self)
-        pintar(p, QtCore.QRectF(self.rect()), self.personaje, self.color, self.expresion)
+        # Margen para el bote y los puntitos, que se salen del cuerpo.
+        m = self.width() * (0.08 if self.vivo else 0.0)
+        pintar(p, QtCore.QRectF(self.rect()).adjusted(m, m, -m, -m),
+               self.personaje, self.color, **self.pose())
         p.end()
+
+    def enterEvent(self, e):
+        if self.alegre_al_pasar:
+            self.set_estado(CONTENTO)
+        super().enterEvent(e)
 
     def mousePressEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton:

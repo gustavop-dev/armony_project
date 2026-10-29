@@ -963,8 +963,9 @@ class HomeWindow(QtWidgets.QWidget):
         return page
 
     def _cara_agente(self, a, lado, vivo=False):
-        """El personaje del agente; al pulsarlo se cambia (personaje y color)."""
-        cara = avatares.Avatar(*avatares.de_agente(a), lado, vivo=vivo)
+        """El personaje del agente; al pulsarlo se cambia (personaje y color).
+        Vivo, respira, parpadea y se alegra al pasarle el raton."""
+        cara = avatares.Avatar(*avatares.de_agente(a), lado, vivo=vivo, alegre_al_pasar=vivo)
         cara.setObjectName("cara")
         cara.setCursor(QtCore.Qt.PointingHandCursor)
         cara.setToolTip("Cambiar personaje y color")

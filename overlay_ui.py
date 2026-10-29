@@ -852,6 +852,7 @@ class AgentChip(QtWidgets.QPushButton):
         self._agentes = []
         self._caras = {}
         self._expresion = avatares.ABIERTOS
+        self.mostrar_cara = True     # el panel hablado la pone en el companero
         self.activo = ""
         self.clicked.connect(self._abrir)
         self.setVisible(False)
@@ -893,7 +894,7 @@ class AgentChip(QtWidgets.QPushButton):
 
     def _pintar_cara(self):
         cara = getattr(self, "_caras", {}).get(self.activo)
-        if cara is None:
+        if cara is None or not getattr(self, "mostrar_cara", True):
             self.setIcon(QtGui.QIcon())
             return
         self.setIcon(QtGui.QIcon(avatares.pixmap(*cara, self._CARA, self._expresion)))
@@ -1428,6 +1429,13 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
 
         self.bars = AudioBars()
         lay.addWidget(self.bars)
+        # El companero: el personaje del agente, vivo. En el hablado sustituye a
+        # las barras: bota con la voz, piensa, habla y se alegra al terminar.
+        self.compa = avatares.Avatar(avatares.PERSONAJE_POR_DEFECTO,
+                                     avatares.COLOR_POR_DEFECTO, 38, vivo=True)
+        self.compa.setObjectName("compa")
+        self.compa.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)  # se arrastra igual
+        lay.addWidget(self.compa)
 
         # Hablado: el titulo es el agente. Pantalla: "Screen · N shots".
         self.agent_chip = AgentChip()
@@ -1467,9 +1475,12 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         lay.addWidget(self.btn_close)
         if self.modo == "pantalla":
             self.bars.setVisible(False)
+            self.compa.setVisible(False)
             self.agent_chip.setVisible(False)
             self.agent_chip.setEnabled(False)
         else:
+            self.bars.setVisible(False)          # el companero ya dice que hay audio
+            self.agent_chip.mostrar_cara = False  # su cara va en el companero
             self.titulo.setVisible(False)
             self.btn_close.setVisible(False)
 
@@ -1551,6 +1562,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         """Agentes para el selector de la cabecera (solo el panel hablado)."""
         if self.modo == "voz":
             self.agent_chip.set_agents(agentes, activo)
+            cara = next((a[2] for a in agentes if a[0] == activo and len(a) > 2), None)
+            if cara is not None:
+                self.compa.set_personaje(*cara)
 
     def show_suggestion(self, texto):
         """Ofrece relanzar la solucion con lo que dijeron; "" la retira."""
@@ -1643,12 +1657,15 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.bars.set_listening(state in ("listening", "generating"))
         if self.modo == "voz":
             self.agent_chip.set_pensando(state == "generating")
+            self.compa.set_estado({"generating": avatares.PENSANDO_E,
+                                   "listening": avatares.ESCUCHANDO}.get(state, avatares.REPOSO))
         self._apply_border()
         self._render_question()
 
     # ---------------- API publica
     def set_level(self, v):
         self.bars.set_level(v)
+        self.compa.set_nivel(v)
 
     def set_mic_level(self, v):
         pass  # el medidor de micro se retiro de la cabecera
@@ -1775,6 +1792,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         y no se toca.
         """
         self._raw += delta
+        if self.compa.estado == avatares.PENSANDO_E:
+            self.compa.set_estado(avatares.HABLANDO)   # llega la respuesta: la dice
         if not self._repintado_pendiente:
             self._repintado_pendiente = True
             self._timer_repintado.start()
@@ -1794,6 +1813,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         if self._repintado_pendiente or self._burbuja_resp is None:
             self._repintar()
         self._burbuja_resp = None
+        if self._raw.strip():
+            self.compa.set_estado(avatares.CONTENTO)   # un saltito: ya esta
 
     # ---------------- el hilo: capturas y notas
     def add_shot(self, pixmap):
