@@ -472,9 +472,9 @@ class SettingsWindow(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(page); v.setContentsMargins(30, 26, 30, 30); v.setSpacing(0)
         v.addWidget(self._heading(label, desc))
         v.addSpacing(16)
-        # Filas que solo aplican a cierta configuracion (p. ej. las de Anthropic
-        # cuando el proveedor elegido es Anthropic): se guardan con su condicion
-        # y se ocultan en cuanto deja de cumplirse.
+        # Filas que solo aplican a cierta configuracion (las que declaran
+        # visible_si=(clave, valor)): se guardan con su condicion y se ocultan en
+        # cuanto deja de cumplirse.
         self._condicionales = []
         for f in fields:
             fila = self._field_row(f)
@@ -559,7 +559,7 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _set_value(self, key, v):
         self.values[key] = v
-        self._aplicar_visibilidad()    # cambiar de proveedor cambia que se ve
+        self._aplicar_visibilidad()    # un valor puede mostrar u ocultar filas
         self._dirty_mark()
 
     def _number_control(self, f, val):

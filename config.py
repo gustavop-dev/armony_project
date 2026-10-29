@@ -1,7 +1,8 @@
 """Carga y guarda la configuracion de la app en config.json (junto a este archivo).
 
-Guarda: API keys (OpenAI y AssemblyAI), modelos, ajustes de transcripcion,
-idioma, prompt de coach y estado de "ventana invisible".
+Guarda: API keys (OpenAI, AssemblyAI y TypeSafe), el modelo y cuanto razona en
+cada uso, ajustes de transcripcion, idioma, prompt de coach y estado de "ventana
+invisible".
 
 config.json esta en .gitignore: las claves nunca salen del equipo.
 """
@@ -36,9 +37,10 @@ def data_dir():
 
 CONFIG_PATH = os.path.join(data_dir(), "config.json")
 
-# Campos que se guardan cifrados con DPAPI (ver secretstore). Los de Anthropic ya
-# no se leen, pero si estan en config.json se conservan tal cual (cifrados): la
-# integracion con Claude se quito "por ahora" y volver no debe exigir reescribirlos.
+# Campos que se cifran con DPAPI al guardar y se descifran al cargar (ver
+# secretstore). La clave de Anthropic ya no esta aqui: no se descifra ni se usa,
+# pero si sigue en config.json se conserva tal cual, cifrada. La integracion con
+# Claude se quito "por ahora" y volver no debe exigir escribirla de nuevo.
 CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key", "typesafe_api_key")
 
 # Prompts por defecto: uno por idioma (cada instruccion va en su idioma).

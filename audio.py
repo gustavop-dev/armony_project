@@ -74,16 +74,17 @@ class AudioEngine:
         self._p = None
         self._running = False
         self._threads = []
-        # Live transcription feed failures are logged once per capture session:
-        # the callback runs ~47 times per second.
-        self._pcm_error_logged = False
+        # Live transcription feed failures are logged once per feed and capture
+        # session (the callback runs ~47 times per second). Per feed: a failing
+        # meeting feed must not hide a failing mic feed, or the reverse.
+        self._pcm_error_logged = set()
 
     def start(self):
         if self._running:
             return
         self._p = pyaudio.PyAudio()
         self._running = True
-        self._pcm_error_logged = False
+        self._pcm_error_logged = set()
 
         try:
             lb = _pick_loopback_device(self._p)
@@ -212,10 +213,11 @@ class AudioEngine:
                     try:
                         destino(block16)
                     except Exception:
-                        if not self._pcm_error_logged:
-                            self._pcm_error_logged = True
-                            log.exception("Live transcription feed failed; further "
-                                          "failures in this session are not logged")
+                        if name not in self._pcm_error_logged:
+                            self._pcm_error_logged.add(name)
+                            log.exception("Live transcription feed failed (%s); further "
+                                          "failures of this feed in this session are "
+                                          "not logged", name)
 
         try:
             stream.stop_stream()
