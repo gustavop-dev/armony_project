@@ -319,7 +319,8 @@ def test_wheel_zones_empty_when_hidden(panel):
 
 
 def test_wheel_zones_name_feed_when_visible(shown_panel):
-    assert [name for _rect, name in shown_panel.wheel_zones()] == ["feed"]
+    # With two panels on screen the zone carries the panel mode in front.
+    assert [name for _rect, name in shown_panel.wheel_zones()] == ["voz:feed"]
 
 
 def test_wheel_zone_rect_matches_scroll_area_size(shown_panel):

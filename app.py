@@ -33,8 +33,12 @@ class OverlayApp(QtCore.QObject):
         self.engine = CoachEngine()
 
         self.top = TopBar()
+        # Dos paneles: la conversacion hablada (siempre) y la pantalla (solo
+        # cuando se usan pantallazos; entonces el hablado se pasa a la izquierda).
         self.panel = TranscriptPanel()
+        self.screen = TranscriptPanel(modo="pantalla")
         self.collapsed = CollapsedButton()
+        self._modo_pantalla = False
 
         self._visible = True
         self._running = False
@@ -66,29 +70,60 @@ class OverlayApp(QtCore.QObject):
 
         # La rueda sobre la respuesta la desvia un hook: con click-through la
         # ventana no recibe raton, ni siquiera la rueda.
-        self.wheel = WheelForwarder(self.panel.scroll_zone)
+        self.wheel = WheelForwarder(self._scroll_zone)
         self.wheel.install()
 
     # ------------------------------------------------ colocacion en pantalla
     def _place(self):
         geo = QtWidgets.QApplication.primaryScreen().availableGeometry()
-        ancho = min(T.PANEL_WIDTH, geo.width() - T.PANEL_MARGIN)
-        self.panel.resize(ancho, 340)
-        self.panel.move(geo.x() + (geo.width() - ancho) // 2,
-                        geo.y() + geo.height() - self.panel.height() - T.BOTTOM_OFFSET)
-
         self.top.adjustSize()
         self.top.move(geo.x() + (geo.width() - self.top.width()) // 2,
                       geo.y() + T.TOP_OFFSET)
+        self._place_columns()
 
         self.collapsed.adjustSize()
         self.collapsed.move(geo.x() + (geo.width() - self.collapsed.width()) // 2,
                             geo.y() + T.TOP_OFFSET)
 
+    def _place_columns(self):
+        """Columnas a los lados; el centro (la llamada, el editor) queda libre.
+
+        Solo el hablado: a la derecha. Con la pantalla activa: el hablado a la
+        izquierda y la pantalla, mas ancha para el codigo, a la derecha.
+        """
+        geo = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        arriba = geo.y() + T.TOP_OFFSET + self.top.height() + T.COLUMN_GAP
+        alto = geo.y() + geo.height() - T.BOTTOM_OFFSET - arriba
+        hueco = geo.width() - 3 * T.SIDE_MARGIN
+        ancho_voz = min(T.COLUMN_WIDTH, hueco // 2)
+        ancho_pant = min(T.SCREEN_WIDTH, hueco - ancho_voz)
+        derecha = geo.x() + geo.width() - T.SIDE_MARGIN
+        if self._modo_pantalla:
+            self.panel.setGeometry(geo.x() + T.SIDE_MARGIN, arriba, ancho_voz, alto)
+            self.screen.setGeometry(derecha - ancho_pant, arriba, ancho_pant, alto)
+        else:
+            self.panel.setGeometry(derecha - ancho_voz, arriba, ancho_voz, alto)
+
+    def set_screen_mode(self, activo):
+        """Muestra (o retira) el panel de la pantalla y recoloca el hablado."""
+        if activo == self._modo_pantalla:
+            return
+        self._modo_pantalla = activo
+        self._place_columns()
+        if activo and self._visible:
+            self.screen.show()
+        elif not activo:
+            self.screen.hide()
+
+    def _scroll_zone(self, nombre, muescas):
+        """La rueda va al panel cuya zona esta bajo el cursor ("modo:zona")."""
+        panel = self.screen if nombre.startswith("pantalla:") else self.panel
+        panel.scroll_zone(nombre, muescas)
+
     def _protect(self):
         """Excluye las ventanas de la captura de pantalla y evita que tomen el foco."""
         activo = bool(self.cfg.get("invisible_on_share", True))
-        for w in (self.top, self.panel, self.collapsed):
+        for w in (self.top, self.panel, self.screen, self.collapsed):
             set_capture_protection(w.winId(), activo)
             # El overlay nunca roba el foco: al pulsar un boton sigues "dentro"
             # de la aplicacion en la que estabas trabajando.
@@ -97,7 +132,7 @@ class OverlayApp(QtCore.QObject):
     def _apply_opacity(self):
         op = float(self.cfg.get("window_opacity", 0.30))
         op = max(0.15, min(1.0, op))
-        for w in (self.top, self.panel, self.collapsed):
+        for w in (self.top, self.panel, self.screen, self.collapsed):
             w.setWindowOpacity(op)
 
     def _cursor_over(self, widgets):
@@ -115,17 +150,19 @@ class OverlayApp(QtCore.QObject):
         # cortar el movimiento a medio camino.
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
             return
-        zonas_rueda = self.panel.wheel_zones() if self.settings is None else []
+        zonas_rueda = ((self.panel.wheel_zones() + self.screen.wheel_zones())
+                       if self.settings is None else [])
         objetivos = [
             (self.top, self.top.interactive_widgets()),
             (self.panel, self.panel.interactive_widgets()),
+            (self.screen, self.screen.interactive_widgets()),
             (self.collapsed, [self.collapsed]),   # el boton de restaurar, entero
         ]
         for win, zonas in objetivos:
             if not win.isVisible():
                 continue
             interactivo = self._cursor_over(zonas)
-            if win is self.panel and interactivo:
+            if win in (self.panel, self.screen) and interactivo:
                 # Con el panel activo, Qt ya recibe la rueda por su cuenta: si
                 # ademas la desviara el hook, cada muesca contaria dos veces.
                 zonas_rueda = []
@@ -158,8 +195,15 @@ class OverlayApp(QtCore.QObject):
         e.respRevise.connect(self.on_resp_revise)
         e.respDelta.connect(self.panel.append_answer)
         e.respDone.connect(self.on_resp_done)
+        e.shotStart.connect(self.on_shot_start)
+        e.shotRevise.connect(self.on_shot_revise)
+        e.shotDelta.connect(self.screen.append_answer)
+        e.shotDone.connect(self.on_shot_done)
+        e.screenSuggest.connect(self.on_screen_suggest)
         e.status.connect(self.on_status)
         e.error.connect(self.on_error)
+        self.screen.relaunchClicked.connect(self.relaunch_screen)
+        self.screen.closeClicked.connect(lambda: self.set_screen_mode(False))
 
     # ------------------------------------------------ acciones
     def toggle_meeting(self):
@@ -191,6 +235,9 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_status("Loading…", "loading")   # feedback inmediato
         self.panel.limpiar_hilo()       # reunion nueva, conversacion nueva
         self.panel.hide_skip()
+        self.screen.limpiar_hilo()
+        self.screen.show_suggestion("")
+        self.set_screen_mode(False)     # vuelve a haber solo el hablado
         self._answer_lleva_capturas = False
         import contexts as ctx_mod
         # Todos los activos, sin filtrar por idioma: es lo que se le manda.
@@ -227,9 +274,12 @@ class OverlayApp(QtCore.QObject):
             self.collapsed.hide()
             self.top.show()
             self.panel.show()
+            if self._modo_pantalla:
+                self.screen.show()
         else:
             self.top.hide()
             self.panel.hide()
+            self.screen.hide()
             self.collapsed.show()
 
     def take_shot(self):
@@ -256,11 +306,13 @@ class OverlayApp(QtCore.QObject):
         pm.save(buf, "PNG")
         self._shots.append(bytes(ba.toBase64()).decode("ascii"))
         # Verla en el panel confirma que se capturo lo que querias, antes de
-        # gastar una llamada al modelo.
-        self.panel.add_shot(pm)
+        # gastar una llamada al modelo. La primera captura abre el panel de la
+        # pantalla (y el hablado se pasa a la izquierda).
+        self.set_screen_mode(True)
+        self.screen.add_shot(pm)
         self.top.set_generate_enabled(True)
         n = len(self._shots)
-        self.panel.set_status(
+        self.screen.set_status(
             f"{n} screenshot{'s' if n != 1 else ''} ready — Alt+3 to generate")
 
     def generate(self, _=""):
@@ -276,7 +328,14 @@ class OverlayApp(QtCore.QObject):
         # Las miniaturas se quedan: acompañan a la respuesta que van a producir.
         self._answer_lleva_capturas = True
         self.top.set_generate_enabled(False)
-        self.panel.set_status("Analyzing…")
+        self.screen.set_status("Analyzing…")
+
+    def relaunch_screen(self):
+        """Alt+6: actualiza la solucion en pantalla con lo que acaban de decir."""
+        if self.settings is not None or not self._running:
+            return
+        self.screen.show_suggestion("")
+        self.engine.relaunch_screen()
 
     def answer_now(self):
         """Alt+5: fuerza la respuesta a lo ultimo que dijeron.
@@ -394,6 +453,35 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_state("generating")
         self.panel.set_status("Updating…")
 
+    # El carril de la pantalla: lo mismo, en su panel.
+    def on_shot_start(self):
+        if not self._running:
+            return
+        self.set_screen_mode(True)
+        self.screen.clear_answer()
+        self.screen.set_state("generating")
+        self.screen.set_status("Solving…")
+
+    def on_shot_revise(self):
+        if not self._running:
+            return
+        self.set_screen_mode(True)
+        self.screen.revisar_respuesta()      # misma solucion, marcada "Updated"
+        self.screen.set_state("generating")
+        self.screen.set_status("Updating…")
+
+    def on_shot_done(self):
+        self.screen.cerrar_respuesta()
+        if not self._running:
+            return
+        self.screen.set_state("idle")
+        self.screen.set_status("Ready")
+
+    def on_screen_suggest(self, texto):
+        if not self._running:
+            return
+        self.screen.show_suggestion(texto)
+
     def on_resp_done(self):
         self._responding = False
         self.panel.cerrar_respuesta()         # pinta el ultimo trozo y cierra
@@ -444,6 +532,11 @@ class OverlayApp(QtCore.QObject):
             self.engine.respRevise.disconnect()
             self.engine.respDelta.disconnect()
             self.engine.respDone.disconnect()
+            self.engine.shotStart.disconnect()
+            self.engine.shotRevise.disconnect()
+            self.engine.shotDelta.disconnect()
+            self.engine.shotDone.disconnect()
+            self.engine.screenSuggest.disconnect()
             self.engine.status.disconnect()
             self.engine.error.disconnect()
         except (RuntimeError, TypeError):
@@ -473,6 +566,7 @@ def main():
         HK.ACTION_GENERATE: ui.generate,
         HK.ACTION_MEETING: ui.toggle_meeting,
         HK.ACTION_ANSWER: ui.answer_now,
+        HK.ACTION_RELAUNCH: ui.relaunch_screen,
     })
     app.installNativeEventFilter(hk)
     ok, fallidos = hk.register()

@@ -763,7 +763,7 @@ def native(gh, message, wparam, event_type=b"windows_generic_MSG"):
 def test_global_register_returns_all_names(global_hotkeys):
     result = global_hotkeys.register()
 
-    assert result == (["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5"], [])
+    assert result == (["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6"], [])
 
 
 def test_global_register_reports_failed_names(global_hotkeys, fake_user32):
@@ -771,7 +771,7 @@ def test_global_register_reports_failed_names(global_hotkeys, fake_user32):
 
     result = global_hotkeys.register()
 
-    assert result == (["Alt+1", "Alt+3", "Alt+4"], ["Alt+2", "Alt+5"])
+    assert result == (["Alt+1", "Alt+3", "Alt+4", "Alt+6"], ["Alt+2", "Alt+5"])
 
 
 def test_global_register_uses_alt_norepeat_digits(global_hotkeys, fake_user32):
@@ -783,6 +783,7 @@ def test_global_register_uses_alt_norepeat_digits(global_hotkeys, fake_user32):
         (None, 3, 0x4001, 0x33),
         (None, 4, 0x4001, 0x34),
         (None, 5, 0x4001, 0x35),
+        (None, 6, 0x4001, 0x36),
     ]
 
 
@@ -860,7 +861,7 @@ def test_global_unregister_releases_registered_ids(global_hotkeys, fake_user32):
 
     global_hotkeys.unregister()
 
-    assert fake_user32.unregister_calls == [(None, 1), (None, 3), (None, 4)]
+    assert fake_user32.unregister_calls == [(None, 1), (None, 3), (None, 4), (None, 6)]
 
 
 def test_global_unregister_removes_keyboard_hook(global_hotkeys, fake_user32):
@@ -885,7 +886,7 @@ def test_global_unregister_tolerates_unregister_errors(global_hotkeys, fake_user
 
     global_hotkeys.unregister()
 
-    assert len(fake_user32.unregister_calls) == 5
+    assert len(fake_user32.unregister_calls) == 6
 
 
 def test_global_second_unregister_releases_nothing(global_hotkeys, fake_user32):
@@ -894,7 +895,7 @@ def test_global_second_unregister_releases_nothing(global_hotkeys, fake_user32):
 
     global_hotkeys.unregister()
 
-    assert len(fake_user32.unregister_calls) == 5
+    assert len(fake_user32.unregister_calls) == 6
 
 
 @pytest.mark.parametrize("hk_id, expected", [

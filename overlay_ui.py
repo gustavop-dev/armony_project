@@ -781,6 +781,42 @@ class NewBelowChip(QtWidgets.QPushButton):
         self.setVisible(False)
 
 
+class SuggestionChip(QtWidgets.QPushButton):
+    """'↻ Update with: «…» — Alt+6': relanzar la solucion en pantalla con lo
+    que acaban de decir. Lo decide el tester; nunca pasa solo."""
+
+    MAX_TEXTO = 60
+
+    def __init__(self):
+        super().__init__("")
+        f = self.font(); f.setPixelSize(11); self.setFont(f)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Maximum,
+                           QtWidgets.QSizePolicy.Fixed)
+        self.setStyleSheet(
+            "QPushButton {"
+            f"  color: {T.GOLD_LABEL};"
+            "   background: rgba(242,201,76,0.12);"
+            "   border: 1px solid rgba(242,201,76,0.45);"
+            "   border-radius: 9px;"
+            "   padding: 3px 10px;"
+            "   text-align: left;"
+            "}"
+            "QPushButton:hover { background: rgba(242,201,76,0.20); }")
+        self.texto = ""
+        self.setVisible(False)
+
+    def mostrar(self, texto):
+        self.texto = texto or ""
+        if not self.texto:
+            self.setVisible(False)
+            return
+        corto = (self.texto if len(self.texto) <= self.MAX_TEXTO
+                 else self.texto[:self.MAX_TEXTO - 1] + "…")
+        self.setText(f"↻ Update with: «{corto}» — Alt+6")
+        self.setToolTip(self.texto)
+        self.setVisible(True)
+
+
 class SkipPill(QtWidgets.QLabel):
     """Aviso de que NO va a haber respuesta.
 
@@ -1077,8 +1113,19 @@ class TopBar(_Draggable, QtWidgets.QWidget):
 # --------------------------------------------------------------- panel principal
 
 class TranscriptPanel(_Draggable, QtWidgets.QWidget):
-    def __init__(self):
+    """Un panel del overlay. Dos modos:
+
+    - "voz": la conversacion hablada (lo que dice el entrevistador y la
+      sugerencia). Lo que dices tu no se pinta: va solo como contexto.
+    - "pantalla": capturas y soluciones de codigo. Solo existe cuando se usan
+      pantallazos; trae la sugerencia de relanzar la solucion y un cierre.
+    """
+    relaunchClicked = QtCore.Signal()
+    closeClicked = QtCore.Signal()
+
+    def __init__(self, modo="voz"):
         super().__init__()
+        self.modo = modo
         _frameless(self)
         self._init_drag()
         self._raw = ""
@@ -1187,6 +1234,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
                   self.resize_grip] + self._copy_buttons)
         if self.nuevo_chip.isVisible():
             zonas.append(self.nuevo_chip)
+        for extra in (self.relanzar_chip, self.btn_close):
+            if extra.isVisible():
+                zonas.append(extra)
         # La horizontal solo esta cuando el codigo no cabe de ancho; si no se
         # puede arrastrar, el trozo que sobresale seguiria sin poder leerse.
         if self.scroll.horizontalScrollBar().isVisible():
@@ -1206,7 +1256,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.bars = AudioBars()
         lay.addWidget(self.bars)
 
-        titulo = _tracked("Live Transcription", 13, QtGui.QFont.DemiBold, T.TEXT_BRIGHT, 0)
+        nombre = "Screen" if self.modo == "pantalla" else "Live Transcription"
+        titulo = _tracked(nombre, 13, QtGui.QFont.DemiBold, T.TEXT_BRIGHT, 0)
         lay.addWidget(titulo)
 
         # Punto que se ilumina cuando llega audio de la reunion. Antes vivia
@@ -1232,6 +1283,23 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.e2e.setVisible(False)
         lay.addWidget(self.e2e)
         lay.addStretch()
+
+        # El panel de la pantalla no escucha audio: fuera barras, punto y
+        # medidores, y en su lugar un cierre (vuelve a quedar solo el hablado).
+        self.btn_close = QtWidgets.QPushButton("×")
+        self.btn_close.setFixedSize(24, 24)
+        self.btn_close.setStyleSheet(
+            f"QPushButton {{ color: {T.TEXT_FAINT}; background: transparent; "
+            f"border: none; font-size: 16px; }}"
+            f"QPushButton:hover {{ color: {T.TEXT_BRIGHT}; }}")
+        self.btn_close.setToolTip("Close the screen panel")
+        self.btn_close.clicked.connect(self.closeClicked.emit)
+        lay.addWidget(self.btn_close)
+        if self.modo == "pantalla":
+            for audio in (self.bars, self.part_dot):
+                audio.setVisible(False)
+        else:
+            self.btn_close.setVisible(False)
 
         # Punticos de agarre: hijo flotante centrado en el ancho real de la barra.
         grip = GripDots()
@@ -1291,13 +1359,26 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         pl = QtWidgets.QHBoxLayout(pie)
         pl.setContentsMargins(18, 0, 18, 10)
         pl.addWidget(self.skip_pill)
+        # Pantalla: lo que dijeron parece ir para la solucion; el tester decide
+        # si relanzarla con ello (nunca se relanza sola).
+        self.relanzar_chip = SuggestionChip()
+        self.relanzar_chip.clicked.connect(self.relaunchClicked.emit)
+        pl.addWidget(self.relanzar_chip)
         pl.addStretch()
         pl.addWidget(self.nuevo_chip)
         lay.addWidget(pie)
 
-        self.set_hint("Start the meeting to capture the participant "
-                      "and draft a suggested answer.")
+        if self.modo == "pantalla":
+            self.set_hint("Screenshots (Alt+2) and their solutions show up here. "
+                          "Alt+3 to solve.")
+        else:
+            self.set_hint("Start the meeting to capture the participant "
+                          "and draft a suggested answer.")
         return w
+
+    def show_suggestion(self, texto):
+        """Ofrece relanzar la solucion con lo que dijeron; "" la retira."""
+        self.relanzar_chip.mostrar(texto)
 
     # -- piezas del hilo ----------------------------------------------------
     def _ancho_burbuja(self):
@@ -1594,12 +1675,14 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         """
         if not self.isVisible():
             return []
-        return [(auto.zona(), nombre) for nombre, auto in self._auto.items()
-                if auto.zona()]
+        # Con dos paneles, el nombre lleva el modo delante ("pantalla:feed")
+        # para que la rueda llegue al panel que esta bajo el cursor.
+        return [(auto.zona(), f"{self.modo}:{nombre}")
+                for nombre, auto in self._auto.items() if auto.zona()]
 
     def scroll_zone(self, nombre, muescas):
         """Mueve la zona indicada. muescas positivas = hacia arriba."""
-        auto = self._auto.get(nombre)
+        auto = self._auto.get(nombre.split(":", 1)[-1])
         if auto is not None:
             auto.rueda(muescas)
 

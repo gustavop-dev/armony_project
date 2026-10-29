@@ -6,6 +6,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import app
 import config
+import theme as T
 
 
 class FakeEngine(QtCore.QObject):
@@ -20,6 +21,11 @@ class FakeEngine(QtCore.QObject):
     respRevise = QtCore.Signal()
     respDelta = QtCore.Signal(str)
     respDone = QtCore.Signal()
+    shotStart = QtCore.Signal()
+    shotRevise = QtCore.Signal()
+    shotDelta = QtCore.Signal(str)
+    shotDone = QtCore.Signal()
+    screenSuggest = QtCore.Signal(str)
     status = QtCore.Signal(str)
     error = QtCore.Signal(str)
 
@@ -28,6 +34,7 @@ class FakeEngine(QtCore.QObject):
         self.starts = []
         self.stops = 0
         self.answers = 0
+        self.relaunches = 0
         self.screenshots = []
         self.start_error = None
         self.running = False
@@ -44,6 +51,9 @@ class FakeEngine(QtCore.QObject):
 
     def answer_now(self):
         self.answers += 1
+
+    def relaunch_screen(self):
+        self.relaunches += 1
 
     def request_screenshots(self, images):
         self.screenshots.append(images)
@@ -77,6 +87,9 @@ class FakeScreen:
     def devicePixelRatio(self):
         return 1.0
 
+    def availableGeometry(self):
+        return QtCore.QRect(0, 0, 1920, 1080)
+
 
 @pytest.fixture
 def cfg():
@@ -104,7 +117,8 @@ def ui(qtbot, monkeypatch, cfg, native):
     monkeypatch.setattr(app, "CoachEngine", FakeEngine)
     monkeypatch.setattr(app.cfg_mod, "load_config", lambda: dict(cfg))
     controller = app.OverlayApp()
-    for widget in (controller.top, controller.panel, controller.collapsed):
+    for widget in (controller.top, controller.panel, controller.screen,
+                   controller.collapsed):
         qtbot.addWidget(widget)
     controller._ct_timer.stop()
     yield controller
@@ -291,7 +305,7 @@ class TestActions:
         decoded = QtGui.QImage.fromData(raw, "PNG")
         assert (decoded.width(), decoded.height()) == expected
         assert decoded.pixelColor(0, 0).name() == "#ff0000"
-        assert badge(ui) == "1 screenshot ready — Alt+3 to generate"
+        assert ui.screen.badge._lbl.text() == "1 screenshot ready — Alt+3 to generate"
         assert ui.top.keys_gen.isEnabled() is True
         assert ui.engine.screenshots == []
 
@@ -315,7 +329,7 @@ class TestActions:
         assert ui._shots == []
         assert ui._answer_lleva_capturas is True
         assert ui.top.keys_gen.isEnabled() is False
-        assert badge(ui) == "Analyzing…"
+        assert ui.screen.badge._lbl.text() == "Analyzing…"
 
     def test_manual_answer_clears_skip_notice(self, ui):
         """Catch forced answering retaining a stale no-question notice."""
@@ -614,10 +628,9 @@ class TestWindows:
 
     def test_constructor_protects_all_windows(self, ui, native):
         """Catch a new overlay window missing capture protection or no-activate styling."""
-        assert native["capture"] == [(int(ui.top.winId()), True),
-                                      (int(ui.panel.winId()), True),
-                                      (int(ui.collapsed.winId()), True)]
-        assert native["activate"] == [int(ui.top.winId()), int(ui.panel.winId()), int(ui.collapsed.winId())]
+        ventanas = [int(w.winId()) for w in (ui.top, ui.panel, ui.screen, ui.collapsed)]
+        assert native["capture"] == [(w, True) for w in ventanas]
+        assert native["activate"] == ventanas
         assert ui.wheel.installed is True
 
     def test_click_through_only_writes_on_change(self, ui, native):
@@ -680,3 +693,152 @@ class TestWindows:
 
         assert badge(ui) == "Loading…"
         assert ui._responding is False
+
+
+class TestDualOverlay:
+    """Spoken panel alone on the right; with screenshots it moves left and the
+    screen panel takes the right column."""
+
+    @pytest.fixture
+    def screen_1080p(self, monkeypatch):
+        pixmap = QtGui.QPixmap(800, 400)
+        pixmap.fill(QtGui.QColor("white"))
+        fake = FakeScreen(pixmap)
+        monkeypatch.setattr(QtWidgets.QApplication, "primaryScreen",
+                            staticmethod(lambda: fake))
+        return fake
+
+    def _columns(self, ui):
+        ui._place_columns()
+        return ui.panel.geometry(), ui.screen.geometry()
+
+    def test_only_the_spoken_panel_exists_at_first_on_the_right(self, ui, screen_1080p):
+        voz, _ = self._columns(ui)
+
+        assert ui.screen.isVisible() is False
+        assert voz.right() == 1920 - T.SIDE_MARGIN - 1
+        assert voz.width() == T.COLUMN_WIDTH
+
+    def test_first_screenshot_moves_spoken_left_and_opens_screen_right(self, ui, screen_1080p):
+        ui.start_meeting()
+        rows_voz, rows_pant = ui.panel.feed.count(), ui.screen.feed.count()
+
+        ui.take_shot()
+
+        voz, pant = self._columns(ui)
+        assert ui._modo_pantalla is True and ui.screen.isVisible() is True
+        assert voz.left() == T.SIDE_MARGIN
+        assert pant.right() == 1920 - T.SIDE_MARGIN - 1
+        assert pant.width() == T.SCREEN_WIDTH
+        assert voz.top() == pant.top() and voz.height() == pant.height()
+        # The thumbnail goes to the screen panel, not to the conversation.
+        assert ui.screen.feed.count() == rows_pant + 1
+        assert ui.panel.feed.count() == rows_voz
+
+    def test_screen_lane_signals_render_in_the_screen_panel_only(self, ui, screen_1080p):
+        ui.start_meeting()
+        voice_bubbles = len(ui.panel._burbujas)
+
+        ui.engine.shotStart.emit()
+        ui.engine.shotDelta.emit("## Solución\n```py\nprint(1)\n```")
+        ui.engine.shotDone.emit()
+
+        assert len(ui.panel._burbujas) == voice_bubbles
+        tu = [b for b in ui.screen._burbujas if b.quien == "tu"]
+        assert len(tu) == 1 and "print(1)" in tu[0]._raw
+        assert ui.screen.isVisible() and ui.screen.badge._lbl.text() == "Ready"
+
+    def test_screen_revision_rewrites_the_same_solution(self, ui, screen_1080p):
+        ui.start_meeting()
+        ui.engine.shotStart.emit()
+        ui.engine.shotDelta.emit("## Solución\nv1")
+        ui.engine.shotDone.emit()
+        first = [b for b in ui.screen._burbujas if b.quien == "tu"][0]
+
+        ui.engine.shotRevise.emit()
+        ui.engine.shotDelta.emit("## Solución\nv2")
+        ui.engine.shotDone.emit()
+
+        tu = [b for b in ui.screen._burbujas if b.quien == "tu"]
+        assert tu == [first] and first.actualizada and first._raw == "## Solución\nv2"
+
+    def test_suggestion_shows_and_click_relaunches(self, ui, screen_1080p):
+        ui.start_meeting()
+        ui.set_screen_mode(True)
+
+        ui.engine.screenSuggest.emit("Hay un error en el bucle.")
+        chip = ui.screen.relanzar_chip
+        assert chip.isVisible() and "Hay un error en el bucle." in chip.text()
+        assert chip in ui.screen.interactive_widgets()
+
+        chip.click()
+
+        assert ui.engine.relaunches == 1
+        assert chip.isVisible() is False
+
+    def test_alt6_relaunches_only_during_a_meeting(self, ui, screen_1080p):
+        ui.relaunch_screen()
+        assert ui.engine.relaunches == 0
+
+        ui.start_meeting()
+        ui.relaunch_screen()
+        assert ui.engine.relaunches == 1
+
+    def test_empty_suggestion_hides_the_chip(self, ui, screen_1080p):
+        ui.start_meeting()
+        ui.set_screen_mode(True)
+        ui.engine.screenSuggest.emit("algo")
+
+        ui.engine.screenSuggest.emit("")
+
+        assert ui.screen.relanzar_chip.isVisible() is False
+
+    def test_closing_the_screen_panel_returns_the_spoken_panel_right(self, ui, screen_1080p):
+        ui.start_meeting()
+        ui.set_screen_mode(True)
+
+        ui.screen.btn_close.click()
+
+        voz, _ = self._columns(ui)
+        assert ui._modo_pantalla is False and ui.screen.isVisible() is False
+        assert voz.right() == 1920 - T.SIDE_MARGIN - 1
+
+    def test_new_meeting_starts_with_the_spoken_panel_alone(self, ui, screen_1080p):
+        ui.start_meeting()
+        ui.set_screen_mode(True)
+        ui.stop_meeting()
+
+        ui.start_meeting()
+
+        assert ui._modo_pantalla is False and ui.screen.isVisible() is False
+
+    def test_hiding_the_overlay_hides_both_panels_and_restores_both(self, ui, screen_1080p):
+        ui.start_meeting()
+        ui.set_screen_mode(True)
+
+        ui.toggle_overlay()
+        assert (ui.panel.isVisible(), ui.screen.isVisible()) == (False, False)
+        ui.toggle_overlay()
+        assert (ui.panel.isVisible(), ui.screen.isVisible()) == (True, True)
+
+    def test_wheel_goes_to_the_panel_named_in_the_zone(self, ui, monkeypatch):
+        calls = []
+        monkeypatch.setattr(ui.panel, "scroll_zone", lambda n, m: calls.append(("voz", n, m)))
+        monkeypatch.setattr(ui.screen, "scroll_zone", lambda n, m: calls.append(("pant", n, m)))
+
+        ui._scroll_zone("pantalla:feed", 2)
+        ui._scroll_zone("voz:feed", -1)
+
+        assert calls == [("pant", "pantalla:feed", 2), ("voz", "voz:feed", -1)]
+
+    def test_screen_panel_hides_audio_widgets_and_shows_close(self, ui):
+        assert ui.screen.bars.isVisibleTo(ui.screen) is False
+        assert ui.screen.btn_close.isVisibleTo(ui.screen) is True
+        assert ui.panel.btn_close.isVisibleTo(ui.panel) is False
+
+    def test_screen_panel_header_is_inside_the_panel(self, ui):
+        # Regression: the header builder reused its own variable name and
+        # returned an 8 px dot instead of the header in screen mode.
+        header = ui.screen._drag_header
+        assert header.window() is ui.screen
+        assert ui.screen.btn_close.window() is ui.screen

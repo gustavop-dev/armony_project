@@ -74,6 +74,12 @@ R_KBD      = 5
 R_COLLAPSE = 12
 
 PANEL_WIDTH   = 1080     # ancho del panel inferior
+# Columnas laterales: el hablado solo, a la derecha; con pantallazos, el hablado
+# pasa a la izquierda y la pantalla (codigo, mas ancha) ocupa la derecha.
+COLUMN_WIDTH   = 460     # panel de la conversacion hablada
+SCREEN_WIDTH   = 640     # panel de la pantalla (codigo)
+SIDE_MARGIN    = 16      # separacion de los bordes laterales
+COLUMN_GAP     = 12      # entre la barra superior y las columnas
 PANEL_MARGIN   = 80      # margen minimo a los lados
 TOP_OFFSET     = 20      # separacion desde el borde superior
 BOTTOM_OFFSET  = 26      # separacion desde el borde inferior
