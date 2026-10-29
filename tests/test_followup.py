@@ -107,6 +107,9 @@ def test_cases_file_is_consistent_with_policy_labels():
     assert len(ids) == len(set(ids))
     actions = {MANTENER, REVISAR, NUEVA, RETIRAR}
     for c in cases:
+        if "expected_screen" in c:            # judged by the screen check only
+            assert isinstance(c["expected_screen"], bool) and c["screen_solution"], c["id"]
+            continue
         assert c["expected_relation"] in followup.RELACIONES, c["id"]
         assert c["expected_action"] in actions, c["id"]
         if c["expected_relation"] in ("filler_or_ack", "unrelated"):

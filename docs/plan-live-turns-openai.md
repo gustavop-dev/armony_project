@@ -396,3 +396,31 @@ conversation.
 - STT cost doubles with the mic stream (~0.90 USD/h total).
 - Jev and the arbiter cases are Spanish-authored by us. Real session data is
   needed before trusting the thresholds.
+
+## Follow-up (2026-10-29): two overlays, two lanes
+
+Product decision: two columns.
+- The spoken panel is alone on the right until screenshots are used. Then it
+  moves left, and the screen panel (code solutions) takes the right column.
+- The tester's speech is context only and is never drawn.
+- The screen solution never relaunches by itself: when Jev links a remark to
+  it, the tester is offered `Alt+6`, and the solution is then rewritten in
+  place. New screenshot batches stack below. Spoken rules are unchanged.
+
+Implementation:
+- Engine: a second `Coach`, queue and worker for the screen lane, at
+  screenshot effort and length. Both conversations hear the whole meeting
+  and share the cached developer prefix (same model, prompt and cache key).
+- Engine signals: `shotStart` / `shotRevise` / `shotDelta` / `shotDone` /
+  `screenSuggest`.
+- `followup.py`: an optional `screen_solution` state field and a
+  `targets_screen_solution` question, asked only when a solution is shown.
+  Above 0.6 the remark becomes a relaunch suggestion; nothing is answered
+  aloud.
+- UI: `TranscriptPanel(modo="pantalla")` adds a close button and a
+  suggestion chip that elides to the free width. The chip used to widen the
+  panel off screen.
+- Live eval (`jev-1.14.0` × 2, 12 screen cases with code on screen): screen
+  routing 100% / 100%. The 46 spoken cases are unchanged: relation 98–100%,
+  action 98%, 0 revisions on noise. Jev p50 ~190–200 ms with the solution in
+  the state.

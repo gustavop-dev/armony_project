@@ -31,8 +31,9 @@ def load_cases(path=CASES):
 def judge_cases(client, cases, workers=6, judge=followup.juzgar):
     def one(case):
         try:
+            kw = {"solucion_pantalla": case["screen_solution"]} if case.get("screen_solution") else {}
             j = judge(client, case["question"], case["suggested_answer"],
-                      case["tester_said"], case["follow_up"])
+                      case["tester_said"], case["follow_up"], **kw)
             return case, j, None
         except Exception as e:      # a failed call is reported, not fatal
             return case, None, repr(e)
@@ -59,20 +60,32 @@ def score(results, umbrales=followup.Umbrales()):
             "reacts_to_tester": round(j.reacciona_tester, 3) if j else None,
             "expected_action": case["expected_action"],
             "action": action,
+            "expected_screen": case.get("expected_screen"),
+            "screen": round(j.pantalla, 3) if j else None,
         })
-    n = len(rows)
-    confusion = Counter((r["expected_action"], r["action"]) for r in rows)
+    # Screen cases are routed by the screen check before any relation is used:
+    # they only count for the screen metric.
+    hablados = [r for r in rows if r["expected_relation"] is not None]
+    n = len(hablados)
+    con_pantalla = [r for r in rows if r["expected_screen"] is not None]
+    pantalla_ok = sum(((r["screen"] or 0) >= followup.UMBRAL_PANTALLA) == r["expected_screen"]
+                      for r in con_pantalla)
+    confusion = Counter((r["expected_action"], r["action"]) for r in hablados)
     return {
         "cases": n,
         "relation_accuracy": round(sum(r["relation"] == r["expected_relation"]
-                                       for r in rows) / n, 3),
+                                       for r in hablados) / n, 3),
         "action_accuracy": round(sum(r["action"] == r["expected_action"]
-                                     for r in rows) / n, 3),
+                                     for r in hablados) / n, 3),
         # The two errors that matter to the tester:
-        "revised_on_noise": [r["id"] for r in rows
+        "screen_cases": len(con_pantalla),
+        "screen_accuracy": round(pantalla_ok / len(con_pantalla), 3) if con_pantalla else None,
+        "screen_misses": [r["id"] for r in con_pantalla
+                          if ((r["screen"] or 0) >= followup.UMBRAL_PANTALLA) != r["expected_screen"]],
+        "revised_on_noise": [r["id"] for r in hablados
                              if r["action"] == followup.REVISAR
                              and r["expected_action"] != followup.REVISAR],
-        "missed_revision": [r["id"] for r in rows
+        "missed_revision": [r["id"] for r in hablados
                             if r["expected_action"] == followup.REVISAR
                             and r["action"] != followup.REVISAR],
         "action_confusion": {f"{e}->{a}": c for (e, a), c in sorted(confusion.items())},
@@ -114,6 +127,9 @@ def main(argv=None):
               f"{r['action_accuracy']:.0%} · revised on noise "
               f"{r['revised_on_noise']} · missed revision {r['missed_revision']} · "
               f"latency p50 {lat['p50']} p95 {lat['p95']} ms · errors {len(r['errors'])}")
+        if r["screen_cases"]:
+            print(f"    screen: {r['screen_accuracy']:.0%} of {r['screen_cases']} · "
+                  f"misses {r['screen_misses']}")
     print(f"Report: {path}")
     return 0
 

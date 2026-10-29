@@ -785,13 +785,19 @@ class SuggestionChip(QtWidgets.QPushButton):
     """'↻ Update with: «…» — Alt+6': relanzar la solucion en pantalla con lo
     que acaban de decir. Lo decide el tester; nunca pasa solo."""
 
-    MAX_TEXTO = 60
+    # Lo que no es la cita: icono, rotulo, atajo y el relleno del estilo.
+    _MARCO = "↻ Update with: «» — Alt+6"
+    _RELLENO = 26
 
     def __init__(self):
         super().__init__("")
         f = self.font(); f.setPixelSize(11); self.setFont(f)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Maximum,
+        # El texto se recorta al ancho que haya ("…"), nunca al reves: con la
+        # cita entera de ancho minimo, el panel crecia hasta salirse de la
+        # pantalla. La cita completa queda en el tooltip.
+        self.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
                            QtWidgets.QSizePolicy.Fixed)
+        self.setMinimumWidth(0)
         self.setStyleSheet(
             "QPushButton {"
             f"  color: {T.GOLD_LABEL};"
@@ -810,11 +816,26 @@ class SuggestionChip(QtWidgets.QPushButton):
         if not self.texto:
             self.setVisible(False)
             return
-        corto = (self.texto if len(self.texto) <= self.MAX_TEXTO
-                 else self.texto[:self.MAX_TEXTO - 1] + "…")
-        self.setText(f"↻ Update with: «{corto}» — Alt+6")
         self.setToolTip(self.texto)
+        self._rotular()
         self.setVisible(True)
+
+    def _rotular(self):
+        fm = self.fontMetrics()
+        libre = max(0, self.width() - fm.horizontalAdvance(self._MARCO) - self._RELLENO)
+        cita = fm.elidedText(self.texto, QtCore.Qt.ElideRight, libre)
+        self.setText(f"↻ Update with: «{cita}» — Alt+6")
+
+    def sizeHint(self):
+        # Pide el ancho de la cita entera; el layout le da lo que haya.
+        fm = self.fontMetrics()
+        return QtCore.QSize(fm.horizontalAdvance(self._MARCO + self.texto) + self._RELLENO,
+                            super().sizeHint().height())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.texto:
+            self._rotular()
 
 
 class SkipPill(QtWidgets.QLabel):
@@ -1363,7 +1384,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         # si relanzarla con ello (nunca se relanza sola).
         self.relanzar_chip = SuggestionChip()
         self.relanzar_chip.clicked.connect(self.relaunchClicked.emit)
-        pl.addWidget(self.relanzar_chip)
+        pl.addWidget(self.relanzar_chip, 1)    # se queda con el ancho libre
         pl.addStretch()
         pl.addWidget(self.nuevo_chip)
         lay.addWidget(pie)

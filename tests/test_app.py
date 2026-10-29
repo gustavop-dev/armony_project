@@ -842,3 +842,19 @@ class TestDualOverlay:
         header = ui.screen._drag_header
         assert header.window() is ui.screen
         assert ui.screen.btn_close.window() is ui.screen
+
+    def test_long_suggestion_never_pushes_the_screen_panel_off_screen(self, ui, screen_1080p):
+        # Regression: the chip's full quote was its minimum width and widened
+        # the screen panel past the right edge (640 -> 883 px).
+        ui.start_meeting()
+        ui.set_screen_mode(True)
+        ui.screen.show()
+        ui.engine.screenSuggest.emit("Hay un error en el bucle; " * 20)
+        QtWidgets.QApplication.processEvents()
+
+        _voz, pant = self._columns(ui)
+
+        assert pant.width() == T.SCREEN_WIDTH
+        assert pant.right() <= 1920 - T.SIDE_MARGIN - 1
+        assert "…" in ui.screen.relanzar_chip.text()
+        assert ui.screen.relanzar_chip.toolTip().startswith("Hay un error en el bucle;")

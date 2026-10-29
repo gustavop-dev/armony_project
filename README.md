@@ -166,9 +166,25 @@ abre las KeyTips de la cinta ni se te escribe el número en la celda.
 | `Alt+3` | Generar respuesta con las capturas tomadas |
 | `Alt+4` | Iniciar / detener la reunión |
 | `Alt+5` | Responder ahora a lo último que dijeron |
+| `Alt+6` | Actualizar la solución en pantalla con lo que acaban de decir |
 
-Todos tienen su botón en la barra superior con el atajo escrito al lado, así que
-no hay que recordarlos.
+Todos menos `Alt+6` tienen su botón en la barra superior con el atajo escrito al
+lado; `Alt+6` aparece como sugerencia en el panel de la pantalla cuando aplica.
+
+### Dos paneles: hablado y pantalla
+
+- **Sin pantallazos** hay un solo panel, el de la conversación hablada, en columna
+  a la derecha: lo que dice el entrevistador y la sugerencia. Lo que dices tú no se
+  pinta; va solo como contexto.
+- **La primera captura** abre el panel de la pantalla a la derecha y pasa el hablado
+  a la izquierda; el centro (la llamada, el editor) queda libre. Cada tanda de
+  capturas se apila con su solución. El panel se cierra con su `×`.
+- **Cada panel tiene su conversación con el modelo** (mismo modelo, caché compartida
+  del principio): una solución de código larga no retrasa una respuesta hablada.
+- **La solución en pantalla no se relanza sola.** Si el entrevistador dice algo que
+  va para ella ("hay un error, hazlo así", "¿y qué cambiarías para…?"), Jev lo
+  detecta y el panel ofrece `↻ Update with: «…» — Alt+6`. Lo decides tú; al
+  aceptarlo, la solución se reescribe en su sitio, marcada como actualizada.
 
 **Para desplazar el hilo basta con poner el cursor encima**, con la rueda del ratón
 o con dos dedos en el panel táctil. Sigue el final según entra conversación, pero si

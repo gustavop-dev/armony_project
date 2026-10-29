@@ -100,9 +100,17 @@ class OverlayApp(QtCore.QObject):
         derecha = geo.x() + geo.width() - T.SIDE_MARGIN
         if self._modo_pantalla:
             self.panel.setGeometry(geo.x() + T.SIDE_MARGIN, arriba, ancho_voz, alto)
-            self.screen.setGeometry(derecha - ancho_pant, arriba, ancho_pant, alto)
+            self._pegar_derecha(self.screen, derecha, arriba, ancho_pant, alto)
         else:
-            self.panel.setGeometry(derecha - ancho_voz, arriba, ancho_voz, alto)
+            self._pegar_derecha(self.panel, derecha, arriba, ancho_voz, alto)
+
+    @staticmethod
+    def _pegar_derecha(panel, derecha, arriba, ancho, alto):
+        """Columna pegada al borde derecho. Si el contenido pide mas ancho del
+        previsto, crece hacia dentro, nunca por fuera de la pantalla."""
+        panel.setGeometry(derecha - ancho, arriba, ancho, alto)
+        if panel.width() != ancho:
+            panel.move(derecha - panel.width(), arriba)
 
     def set_screen_mode(self, activo):
         """Muestra (o retira) el panel de la pantalla y recoloca el hablado."""
