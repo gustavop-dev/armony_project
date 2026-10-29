@@ -137,13 +137,13 @@ def test_skip_pill_starts_hidden(panel):
 def test_show_skip_uses_default_text(panel):
     panel.show_skip()
 
-    assert panel.skip_pill.text() == "No question — Alt+5 to answer"
+    assert panel.skip_pill.text() == "No question — Caps+A to answer"
 
 
 def test_show_skip_uses_given_text(panel):
-    panel.show_skip("Not a question — Alt+5 to answer")
+    panel.show_skip("Not a question — Caps+A to answer")
 
-    assert panel.skip_pill.text() == "Not a question — Alt+5 to answer"
+    assert panel.skip_pill.text() == "Not a question — Caps+A to answer"
 
 
 def test_show_skip_makes_pill_visible(panel):

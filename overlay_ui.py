@@ -782,11 +782,11 @@ class NewBelowChip(QtWidgets.QPushButton):
 
 
 class SuggestionChip(QtWidgets.QPushButton):
-    """'↻ Update with: «…» — Alt+6': relanzar la solucion en pantalla con lo
+    """'↻ Update with: «…» — Caps+F': relanzar la solucion en pantalla con lo
     que acaban de decir. Lo decide el tester; nunca pasa solo."""
 
     # Lo que no es la cita: icono, rotulo, atajo y el relleno del estilo.
-    _MARCO = "↻ Update with: «» — Alt+6"
+    _MARCO = "↻ Update with: «» — Caps+F"
     _RELLENO = 26
 
     def __init__(self):
@@ -824,7 +824,7 @@ class SuggestionChip(QtWidgets.QPushButton):
         fm = self.fontMetrics()
         libre = max(0, self.width() - fm.horizontalAdvance(self._MARCO) - self._RELLENO)
         cita = fm.elidedText(self.texto, QtCore.Qt.ElideRight, libre)
-        self.setText(f"↻ Update with: «{cita}» — Alt+6")
+        self.setText(f"↻ Update with: «{cita}» — Caps+F")
 
     def sizeHint(self):
         # Pide el ancho de la cita entera; el layout le da lo que haya.
@@ -994,14 +994,14 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         self.lbl_timer.setStyleSheet(
             f"font-family: {T.MONO_STACK}; font-size: 12px; color: {T.TEXT}; background: transparent;")
         bl.addWidget(self.lbl_timer)
-        bl.addWidget(_keys("Alt", "4"))
+        bl.addWidget(_keys("Caps", "Esc"))
         self.btn_meeting.clicked.connect(self.startStopClicked)
         lay.addWidget(self.btn_meeting)
         self._paint_meeting()
 
-        # Orden de izquierda a derecha: 4 (meeting), 3 (generate), 5 (answer now),
-        # 2 (screenshot), 1 (show/hide). No es el orden de los numeros: se agrupan
-        # los dos que hacen responder a la IA (3 y 5), que es como se usan.
+        # Orden de izquierda a derecha: meeting, generate, answer now,
+        # screenshot, show/hide. Se agrupan los dos que hacen responder a la IA
+        # (generate y answer now), que es como se usan.
 
         # --- generar (se ilumina cuando hay capturas listas) ---
         self.btn_gen = ClickFrame()
@@ -1016,26 +1016,26 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         gf = self.lbl_gen.font(); gf.setPixelSize(13); gf.setWeight(QtGui.QFont.Medium)
         self.lbl_gen.setFont(gf)
         gl.addWidget(self.lbl_gen)
-        self.keys_gen = _keys("Alt", "3")
+        self.keys_gen = _keys("Caps", "D")
         gl.addWidget(self.keys_gen)
         self.btn_gen.clicked.connect(self.generateClicked)
         lay.addWidget(self.btn_gen)
         self.set_generate_enabled(False)
 
         # --- responder ahora (red de seguridad si no se detecto la pregunta) ---
-        self.btn_answer = self._pill("Answer now", ("Alt", "5"), icono="chat")
+        self.btn_answer = self._pill("Answer now", ("Caps", "A"), icono="chat")
         self.btn_answer.setToolTip(
             "Responde a lo último que dijeron, aunque no pareciera una pregunta")
         self.btn_answer.clicked.connect(self.answerNowClicked)
         lay.addWidget(self.btn_answer)
 
         # --- captura de pantalla ---
-        self.btn_shot = self._pill("Screenshot", ("Alt", "2"), icono="camera")
+        self.btn_shot = self._pill("Screenshot", ("Caps", "S"), icono="camera")
         self.btn_shot.clicked.connect(self.screenshotClicked)
         lay.addWidget(self.btn_shot)
 
         # --- mostrar / ocultar ---
-        self.btn_toggle = self._pill("Show / Hide", ("Alt", "1"), icono="eye")
+        self.btn_toggle = self._pill("Show / Hide", ("Caps", "Q"), icono="eye")
         self.btn_toggle.clicked.connect(self.toggleClicked)
         lay.addWidget(self.btn_toggle)
 
@@ -1050,7 +1050,7 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         return [self.drag_zone, self.btn_cfg]
 
     def set_generate_enabled(self, on):
-        """Encendido = hay capturas listas. Se maneja por Alt+3; aqui solo se ve."""
+        """Encendido = hay capturas listas. Se maneja por Bloq Mayus+D; aqui solo se ve."""
         on = bool(on)
         if on:
             # Encendido = el mismo tono que Screenshot o Answer now. Antes se
@@ -1390,8 +1390,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         lay.addWidget(pie)
 
         if self.modo == "pantalla":
-            self.set_hint("Screenshots (Alt+2) and their solutions show up here. "
-                          "Alt+3 to solve.")
+            self.set_hint("Screenshots (Caps+S) and their solutions show up here. "
+                          "Caps+D to solve.")
         else:
             self.set_hint("Start the meeting to capture the participant "
                           "and draft a suggested answer.")
@@ -1680,7 +1680,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
                 w.hide()
                 w.deleteLater()
 
-    def show_skip(self, texto="No question — Alt+5 to answer"):
+    def show_skip(self, texto="No question — Caps+A to answer"):
         """Deja claro que no se esta esperando ninguna respuesta."""
         self.skip_pill.show_text(texto)
 
@@ -1784,7 +1784,7 @@ class CollapsedButton(_Draggable, QtWidgets.QWidget):
         lab = QtWidgets.QLabel("Show overlay")
         lab.setStyleSheet(f"color: {T.TEXT}; font-size: 13px; background: transparent;")
         lay.addWidget(lab)
-        lay.addWidget(_keys("Alt", "1"))
+        lay.addWidget(_keys("Caps", "Q"))
         b.clicked.connect(self.clicked)
         outer.addWidget(b)
 

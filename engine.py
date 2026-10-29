@@ -406,7 +406,7 @@ class CoachEngine(QtCore.QObject):
 
         Si hay una solucion en pantalla, Jev mira tambien si lo dicho va para
         ella ("hay un error, hazlo asi"). Entonces no se responde hablando: se
-        ofrece relanzar la solucion con ello, y el tester decide (Alt+6).
+        ofrece relanzar la solucion con ello, y el tester decide (Bloq Mayus+F).
         """
         hilo_actual, estado, pregunta, respuesta, dijo_tester = datos
         solucion = self._solucion_pantalla
@@ -571,11 +571,11 @@ class CoachEngine(QtCore.QObject):
         self._sugerencia_pantalla = texto
         if texto:
             self.status.emit("Parece dirigido a la solución en pantalla: "
-                             "Alt+6 para actualizarla.")
+                             "Bloq Mayús+F para actualizarla.")
         self.screenSuggest.emit(texto)
 
     def relaunch_screen(self):
-        """Alt+6: el tester acepta relanzar la solucion con lo que dijeron."""
+        """Bloq Mayus+F: el tester acepta relanzar la solucion con lo que dijeron."""
         if not self._running or self._test_mode:
             return
         texto = self._sugerencia_pantalla

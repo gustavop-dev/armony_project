@@ -305,7 +305,7 @@ class TestActions:
         decoded = QtGui.QImage.fromData(raw, "PNG")
         assert (decoded.width(), decoded.height()) == expected
         assert decoded.pixelColor(0, 0).name() == "#ff0000"
-        assert ui.screen.badge._lbl.text() == "1 screenshot ready — Alt+3 to generate"
+        assert ui.screen.badge._lbl.text() == "1 screenshot ready — Caps+D to generate"
         assert ui.top.keys_gen.isEnabled() is True
         assert ui.engine.screenshots == []
 
@@ -377,9 +377,9 @@ class TestEvents:
         assert badge(ui) == expected
 
     @pytest.mark.parametrize("reason,expected", [
-        ("model_declined", "Not a question — Alt+5 to answer"),
-        ("no_question", "No question yet — Alt+5 to answer"),
-        ("follow_up", "Added to the current question — Alt+5 for a new answer"),
+        ("model_declined", "Not a question — Caps+A to answer"),
+        ("no_question", "No question yet — Caps+A to answer"),
+        ("follow_up", "Added to the current question — Caps+A for a new answer"),
     ])
     def test_no_answer_explains_reason(self, ui, reason, expected):
         """Catch model refusal being indistinguishable from the lexical filter."""

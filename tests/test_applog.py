@@ -175,7 +175,7 @@ NEXT_HOOK_RESULT = 7      # value returned by the fake CallNextHookEx
 def failing_interceptor(qtbot, monkeypatch):
     monkeypatch.setattr(hotkeys, "user32", SimpleNamespace(
         CallNextHookEx=lambda hook, n_code, wparam, lparam: NEXT_HOOK_RESULT))
-    icp = hotkeys.AltInterceptor({})
+    icp = hotkeys.CapsLayer({})
 
     def broken(wparam, lparam):
         raise RuntimeError("handler bug")

@@ -10,7 +10,7 @@ pasar de mas, el modelo tiene la ultima palabra y puede callarse. Si en cambio s
 quedara corta, la pregunta se perderia en silencio, y eso si se nota. Por eso
 ante la duda, pasa.
 
-La red final es el atajo de responder ahora (Alt+5): si la transcripcion perdio
+La red final es el atajo de responder ahora (Bloq Mayus+A): si la transcripcion perdio
 los signos de interrogacion y aqui no se vio la pregunta, se fuerza a mano.
 """
 import re

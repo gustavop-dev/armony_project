@@ -306,7 +306,7 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 - `metrics.py` — process-wide `metricas` singleton: timings, counters, notes; JSON + text report per session.
 - `config.py` — defaults, `config.json` load/save, legacy key migration; `secretstore.py` encrypts API keys with DPAPI (`dpapi:` prefix).
 - `contexts.py` — `contexts/*.md` files with frontmatter (`name`, `active`, `lang`); concatenated into the system prompt at session start.
-- `overlay.py`, `wheelscroll.py`, `hotkeys.py` — Win32 via `ctypes`: display affinity / extended styles, `WH_MOUSE_LL` wheel forwarding, `WH_KEYBOARD_LL` Alt+1..5 capture with `RegisterHotKey` fallback.
+- `overlay.py`, `wheelscroll.py`, `hotkeys.py` — Win32 via `ctypes`: display affinity / extended styles, `WH_MOUSE_LL` wheel forwarding, `WH_KEYBOARD_LL` Caps Lock layer (Caps+A/S/D/F/Q/Esc) with `RegisterHotKey` Alt+1..6 fallback.
 - `overlay_ui.py`, `settings_window.py`, `theme.py`, `icons.py` — Qt widgets and styling. `settings_dialog.py` is not imported anywhere.
 - `build_exe.py`, `make_icon.py` — packaging and icon generation.
 

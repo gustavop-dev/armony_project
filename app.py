@@ -293,7 +293,7 @@ class OverlayApp(QtCore.QObject):
     def take_shot(self):
         """Guarda una captura en la cola. No genera nada todavia.
 
-        Puedes encadenar varias (Alt+2) y despues pulsar Generate: asi se
+        Puedes encadenar varias (Bloq Mayus+S) y despues pulsar Generate: asi se
         manda todo junto, que es lo util cuando el enunciado no cabe en una
         sola pantalla.
         """
@@ -321,7 +321,7 @@ class OverlayApp(QtCore.QObject):
         self.top.set_generate_enabled(True)
         n = len(self._shots)
         self.screen.set_status(
-            f"{n} screenshot{'s' if n != 1 else ''} ready — Alt+3 to generate")
+            f"{n} screenshot{'s' if n != 1 else ''} ready — Caps+D to generate")
 
     def generate(self, _=""):
         """Envia las capturas acumuladas y pide la respuesta."""
@@ -339,14 +339,14 @@ class OverlayApp(QtCore.QObject):
         self.screen.set_status("Analyzing…")
 
     def relaunch_screen(self):
-        """Alt+6: actualiza la solucion en pantalla con lo que acaban de decir."""
+        """Bloq Mayus+F: actualiza la solucion en pantalla con lo que acaban de decir."""
         if self.settings is not None or not self._running:
             return
         self.screen.show_suggestion("")
         self.engine.relaunch_screen()
 
     def answer_now(self):
-        """Alt+5: fuerza la respuesta a lo ultimo que dijeron.
+        """Bloq Mayus+A: fuerza la respuesta a lo ultimo que dijeron.
 
         Sirve cuando preguntaron pero la transcripcion no puso los signos y el
         filtro lo tomo por contexto.
@@ -425,13 +425,13 @@ class OverlayApp(QtCore.QObject):
         if not self._running:
             return
         if motivo == "model_declined":
-            self.panel.show_skip("Not a question — Alt+5 to answer")
+            self.panel.show_skip("Not a question — Caps+A to answer")
         elif motivo == "follow_up":
             # Anadieron algo a la pregunta que estas leyendo o contestando: no
             # se te pone otra respuesta encima, pero puedes pedirla.
-            self.panel.show_skip("Added to the current question — Alt+5 for a new answer")
+            self.panel.show_skip("Added to the current question — Caps+A for a new answer")
         else:
-            self.panel.show_skip("No question yet — Alt+5 to answer")
+            self.panel.show_skip("No question yet — Caps+A to answer")
 
     def on_transcript(self, fuente, texto):
         if not self._running:
@@ -578,10 +578,13 @@ def main():
     })
     app.installNativeEventFilter(hk)
     ok, fallidos = hk.register()
-    if fallidos and not hk.exclusive_alt:
-        # Sin el hook de Alt dependemos de RegisterHotKey, y ahi si estorba que
-        # otra aplicacion tenga la combinacion tomada.
-        ui.panel.set_status("Shortcuts in use: " + ", ".join(fallidos))
+    if not hk.caps_layer:
+        # Sin el hook no hay Bloq Mayus: quedan los Alt+1..6 de respaldo, y ahi
+        # si estorba que otra aplicacion tenga la combinacion tomada.
+        aviso = "Caps Lock shortcuts unavailable — use Alt+1…6"
+        if fallidos:
+            aviso += " (in use: " + ", ".join(fallidos) + ")"
+        ui.panel.set_status(aviso)
 
     faltan = T.fonts_missing()
     if faltan:

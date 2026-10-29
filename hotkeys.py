@@ -1,38 +1,34 @@
-"""Atajos globales de Windows con captura exclusiva de Alt.
+"""Atajos globales de Windows: Bloq Mayus como tecla propia de Armony.
 
 Por que globales y no atajos normales de Qt: durante una reunion el foco esta en
 Zoom / Meet / Teams, no en el overlay. Un atajo de Qt solo dispara con la ventana
 enfocada, asi que no serviria de nada.
 
-Atajos actuales (pensados para teclado 60%, sin teclas F):
-    Alt+1    mostrar / ocultar overlay
-    Alt+2    captura de pantalla (se pueden encadenar varias)
-    Alt+3    generar respuesta con las capturas tomadas
-    Alt+4    iniciar / detener la reunion
-    Alt+5    responder ahora a lo ultimo que dijeron (aunque no pareciera pregunta)
-    Alt+6    actualizar la solucion en pantalla con lo que acaban de decir
+Atajos (Bloq Mayus mantenido + tecla, todo junto a la mano izquierda en reposo):
+    Bloq Mayus+A    responder ahora a lo ultimo que dijeron (el mas usado)
+    Bloq Mayus+S    captura de pantalla (se pueden encadenar varias)
+    Bloq Mayus+D    generar respuesta con las capturas tomadas
+    Bloq Mayus+F    actualizar la solucion en pantalla con lo que acaban de decir
+    Bloq Mayus+Q    mostrar / ocultar overlay
+    Bloq Mayus+Esc  iniciar / detener la reunion (a proposito, dificil sin querer)
 
-Se usa Alt (no Shift) porque Alt no interviene al escribir texto; con Shift+tecla
-se bloquearia esa tecla en todo el sistema.
+Por que Bloq Mayus y no Alt + numero: los numeros quedan lejos de la mano y
+Alt + letra choca con las apps de reunion (en Zoom, Alt+A silencia, Alt+S
+comparte pantalla y Alt+Q termina la reunion). Bloq Mayus no lo usa ninguna, y
+como modificador propio no hace falta tragar ni reinyectar teclas del sistema.
 
-Por que un hook de bajo nivel y no solo RegisterHotKey
-------------------------------------------------------
-RegisterHotKey consume la *combinacion* (Alt+1 no le llega a Excel), pero el Alt
-suelto si viaja a la ventana enfocada. Excel/Word abren las KeyTips del ribbon en
-cuanto ven ese Alt, asi que el atajo "limpio" ensuciaba igual la app de abajo.
+Mientras la app corre, Bloq Mayus solo deja de bloquear mayusculas: el hook se
+traga la tecla, asi que nadie la ve. Shift+Bloq Mayus pasa intacto y lo activa
+de verdad, como siempre.
 
-Un hook WH_KEYBOARD_LL se ejecuta antes que cualquier otra aplicacion y antes que
-el despacho de hotkeys: si devuelve 1, el evento se descarta y NADIE lo recibe.
-Con eso Alt (y el 1..4 que lo acompaña) quedan en exclusiva para esta app
-mientras el programa esta en ejecucion.
+Por que un hook de bajo nivel: RegisterHotKey solo admite Alt / Ctrl / Shift /
+Win como modificadores, no Bloq Mayus. Un hook WH_KEYBOARD_LL se ejecuta antes
+que cualquier otra aplicacion: si devuelve 1, el evento se descarta y NADIE lo
+recibe.
 
-Excepciones deliberadas: si tras el Alt viene una tecla que no es 1..4 (Tab, F4,
-flechas...), se reinyecta el Alt al sistema y se deja pasar la combinacion, para
-no romper Alt+Tab, Alt+F4 ni los atajos con Alt del resto de Windows.
-
-RegisterHotKey se mantiene como red de seguridad: si el hook no se puede instalar
-(o Windows lo desactiva por timeout), los atajos siguen funcionando, aunque en
-ese caso el Alt vuelva a filtrarse.
+Respaldo: Alt+1..6 (los atajos de antes) siguen registrados con RegisterHotKey.
+Sirven si el hook no se puede instalar o si Bloq Mayus esta remapeada a otra
+tecla; en ese caso el Alt suelto si llega a la app de abajo.
 """
 import ctypes
 import logging
@@ -53,10 +49,25 @@ MOD_NOREPEAT = 0x4000        # evita repeticion al mantener pulsado
 
 VK_1, VK_2, VK_3, VK_4, VK_5 = 0x31, 0x32, 0x33, 0x34, 0x35   # fila superior '1'..'5'
 VK_6 = 0x36
+VK_A, VK_S, VK_D, VK_F, VK_Q = 0x41, 0x53, 0x44, 0x46, 0x51
+VK_ESCAPE = 0x1B
+VK_CAPITAL = 0x14            # Bloq Mayus
 
-# Alt + numero: comodo en teclado 60% (todo en la capa principal, sin Fn) y Alt
-# no se usa al escribir, asi que no bloquea ninguna tecla del teclado.
-#
+ACTION_TOGGLE, ACTION_SHOT, ACTION_GENERATE, ACTION_MEETING = 1, 2, 3, 4
+ACTION_ANSWER = 5
+ACTION_RELAUNCH = 6       # relanzar la solucion en pantalla con lo que dijeron
+
+# Capa de Bloq Mayus (via principal): accion -> (tecla, nombre legible)
+CAPS_BINDINGS = {
+    ACTION_ANSWER: (VK_A, "Caps+A"),
+    ACTION_SHOT: (VK_S, "Caps+S"),
+    ACTION_GENERATE: (VK_D, "Caps+D"),
+    ACTION_RELAUNCH: (VK_F, "Caps+F"),
+    ACTION_TOGGLE: (VK_Q, "Caps+Q"),
+    ACTION_MEETING: (VK_ESCAPE, "Caps+Esc"),
+}
+
+# Respaldo con RegisterHotKey (los atajos de antes, misma accion por numero):
 # id -> (modificadores, tecla, nombre legible)
 BINDINGS = {
     1: (MOD_ALT, VK_1, "Alt+1"),
@@ -66,30 +77,15 @@ BINDINGS = {
     5: (MOD_ALT, VK_5, "Alt+5"),
     6: (MOD_ALT, VK_6, "Alt+6"),
 }
-ACTION_TOGGLE, ACTION_SHOT, ACTION_GENERATE, ACTION_MEETING = 1, 2, 3, 4
-ACTION_ANSWER = 5
-ACTION_RELAUNCH = 6       # relanzar la solucion en pantalla con lo que dijeron
 
 # --- constantes del hook de bajo nivel -------------------------------------
 WH_KEYBOARD_LL = 13
 HC_ACTION = 0
 WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
 WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0104, 0x0105
-LLKHF_INJECTED = 0x10
 
-VK_MENU, VK_LMENU, VK_RMENU = 0x12, 0xA4, 0xA5
-VK_CONTROL, VK_LCONTROL, VK_RCONTROL = 0x11, 0xA2, 0xA3
-_ALT_VKS = (VK_MENU, VK_LMENU, VK_RMENU)
-_CTRL_VKS = (VK_CONTROL, VK_LCONTROL, VK_RCONTROL)
-
-INPUT_KEYBOARD = 1
-KEYEVENTF_EXTENDEDKEY = 0x0001
-KEYEVENTF_KEYUP = 0x0002
-MAPVK_VK_TO_VSC = 0
-
-# Firma propia en dwExtraInfo: ademas del flag INJECTED, permite reconocer sin
-# ambiguedad las pulsaciones que reinyecta esta app.
-_TAG = 0x41524D59   # 'ARMY'
+VK_SHIFT, VK_LSHIFT, VK_RSHIFT = 0x10, 0xA0, 0xA1
+_SHIFT_VKS = (VK_SHIFT, VK_LSHIFT, VK_RSHIFT)
 
 ULONG_PTR = ctypes.c_size_t
 
@@ -100,24 +96,6 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
                 ("flags", wintypes.DWORD),
                 ("time", wintypes.DWORD),
                 ("dwExtraInfo", ULONG_PTR)]
-
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [("wVk", wintypes.WORD),
-                ("wScan", wintypes.WORD),
-                ("dwFlags", wintypes.DWORD),
-                ("time", wintypes.DWORD),
-                ("dwExtraInfo", ULONG_PTR)]
-
-
-class _INPUTUNION(ctypes.Union):
-    # el padding iguala el tamaño de MOUSEINPUT, que es el miembro mas grande
-    _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 32)]
-
-
-class INPUT(ctypes.Structure):
-    _anonymous_ = ("u",)
-    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
 
 
 HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int,
@@ -131,10 +109,6 @@ user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int,
 user32.CallNextHookEx.restype = ctypes.c_ssize_t
 user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
 user32.UnhookWindowsHookEx.restype = wintypes.BOOL
-user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
-user32.SendInput.restype = wintypes.UINT
-user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
-user32.MapVirtualKeyW.restype = wintypes.UINT
 user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
                                wintypes.UINT, wintypes.UINT]
 user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
@@ -144,20 +118,6 @@ user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT,
 
 WM_QUIT = 0x0012
 PM_NOREMOVE = 0x0000
-
-
-def _send_keys(*events):
-    """Reinyecta pulsaciones. events: secuencia de (vk, is_up)."""
-    arr = (INPUT * len(events))()
-    for i, (vk, is_up) in enumerate(events):
-        flags = KEYEVENTF_KEYUP if is_up else 0
-        if vk == VK_RMENU:
-            flags |= KEYEVENTF_EXTENDEDKEY
-        arr[i].type = INPUT_KEYBOARD
-        arr[i].ki = KEYBDINPUT(wVk=vk,
-                               wScan=user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC),
-                               dwFlags=flags, time=0, dwExtraInfo=_TAG)
-    user32.SendInput(len(events), arr, ctypes.sizeof(INPUT))
 
 
 class _Bridge(QtCore.QObject):
@@ -179,32 +139,30 @@ class _Bridge(QtCore.QObject):
         self._dispatch(vk)
 
 
-class AltInterceptor:
-    """Captura Alt en exclusiva para esta app mediante un hook WH_KEYBOARD_LL.
+class CapsLayer:
+    """Bloq Mayus como modificador propio, mediante un hook WH_KEYBOARD_LL.
 
     Mientras esta instalado:
-      - Alt (down y up) se descarta: ninguna otra aplicacion lo ve, asi que Excel
-        no abre las KeyTips ni Windows activa la barra de menu.
-      - Alt + 1..4 dispara la accion y se descarta tambien el numero, para que no
+      - Bloq Mayus (down, repeticiones y up) se descarta: nadie la ve, asi que
+        no cambia mayusculas.
+      - Bloq Mayus + tecla con accion dispara la accion una vez (sin
+        autorepeticion) y se descarta tambien la tecla, down y up, para que no
         se escriba en la app de abajo.
-      - Alt + cualquier otra tecla se devuelve al sistema (se reinyecta el Alt que
-        habiamos tragado) para no romper Alt+Tab, Alt+F4, etc.
-      - Con Ctrl pulsado el Alt pasa intacto: eso cubre Ctrl+Alt+tecla y, sobre
-        todo, AltGr (que el driver manda como Ctrl izquierdo + Alt derecho). Sin
-        esta excepcion no se podrian escribir | @ # ~ en teclado español.
+      - Bloq Mayus + cualquier otra tecla: la tecla pasa tal cual.
+      - Shift + Bloq Mayus pasa intacto: es la forma de activar mayusculas.
     """
 
     def __init__(self, actions):
-        """actions: dict {vk: callback} (p. ej. {VK_1: toggle_overlay})."""
+        """actions: dict {vk: callback} (p. ej. {VK_A: answer_now})."""
         self._actions = dict(actions)
         self._hook = None
         self._proc = HOOKPROC(self._on_key)   # referencia viva: si se recolecta, crash
         self._enabled = True
-        self._alt_down = False        # Alt fisico pulsado (lo hayamos tragado o no)
-        self._alt_vk = VK_LMENU       # cual de los dos Alt esta pulsado
-        self._ctrl_down = False       # para distinguir AltGr / Ctrl+Alt
-        self._passthrough = False     # ya devolvimos este Alt al sistema
+        self._caps_down = False       # Bloq Mayus pulsada y tragada
+        self._caps_paso = False       # Shift+Bloq Mayus: esta pulsacion es del sistema
+        self._shift_down = False
         self._eaten = set()           # teclas cuyo keydown tragamos: tragar su keyup
+        self._fuera = set()           # teclas con accion pulsadas antes de Bloq Mayus
         self._thread = None
         self._tid = 0
         self._ready = threading.Event()
@@ -218,13 +176,13 @@ class AltInterceptor:
         El hook vive en su propio hilo con su bucle de mensajes, no en el de Qt:
         si el hilo de la GUI se queda ocupado (p. ej. codificando la captura de
         pantalla en PNG) tardaria mas que LowLevelHooksTimeout y Windows se
-        saltaria el hook -- el Alt se filtraria a Excel justo en ese momento, y
-        Windows puede llegar a desinstalarlo.
+        saltaria el hook -- Bloq Mayus cambiaria las mayusculas justo en ese
+        momento, y Windows puede llegar a desinstalarlo.
         """
         if self._thread and self._thread.is_alive():
             return bool(self._hook)
         self._ready.clear()
-        self._thread = threading.Thread(target=self._run, name="alt-hook",
+        self._thread = threading.Thread(target=self._run, name="caps-hook",
                                         daemon=True)
         self._thread.start()
         self._ready.wait(5.0)
@@ -239,8 +197,8 @@ class AltInterceptor:
         self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
         self._ready.set()
         if not self._hook:
-            log.warning("SetWindowsHookExW(WH_KEYBOARD_LL) failed; Alt shortcuts "
-                        "fall back to RegisterHotKey")
+            log.warning("SetWindowsHookExW(WH_KEYBOARD_LL) failed; Caps Lock shortcuts "
+                        "unavailable, Alt+1..6 still work")
             return
         try:
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -255,9 +213,6 @@ class AltInterceptor:
             self._thread.join(2.0)
         self._thread = None
         self._hook = None
-        # si habiamos devuelto un Alt al sistema y aun no llego su keyup, soltarlo
-        if self._passthrough:
-            _send_keys((self._alt_vk, True))
         self._reset()
 
     def _dispatch(self, vk):
@@ -269,8 +224,6 @@ class AltInterceptor:
         """Permite desactivar la captura sin desinstalar el hook."""
         self._enabled = bool(on)
         if not on:
-            if self._passthrough:
-                _send_keys((self._alt_vk, True))
             self._reset()
 
     @property
@@ -278,10 +231,11 @@ class AltInterceptor:
         return bool(self._hook) and self._enabled
 
     def _reset(self):
-        self._alt_down = False
-        self._ctrl_down = False
-        self._passthrough = False
+        self._caps_down = False
+        self._caps_paso = False
+        self._shift_down = False
         self._eaten.clear()
+        self._fuera.clear()
 
     # -- hook ---------------------------------------------------------------
     def _on_key(self, nCode, wParam, lParam):
@@ -301,69 +255,52 @@ class AltInterceptor:
         kb = KBDLLHOOKSTRUCT.from_address(lParam)
         vk = int(kb.vkCode)
         down = wParam in (WM_KEYDOWN, WM_SYSKEYDOWN)
-        propio = kb.dwExtraInfo == _TAG
 
-        if propio:
-            # Solo se ignora lo que reinyecta esta app (de ahi la firma): asi no
-            # hay bucle, pero si siguen valiendo las pulsaciones inyectadas por
-            # otros -- teclado en pantalla, remapeadores, teclados macro.
+        if vk in _SHIFT_VKS:
+            self._shift_down = down
             return False
 
-        if vk in _CTRL_VKS:
-            self._ctrl_down = down
-
-        if vk in _ALT_VKS:
+        if vk == VK_CAPITAL:
             if down:
-                self._alt_vk = vk
-                self._alt_down = True
-                if self._ctrl_down:
-                    # AltGr o Ctrl+Alt+tecla: no es nuestro, no se toca.
-                    self._passthrough = True
+                if self._caps_paso:
+                    return False            # repeticion de un Shift+Bloq Mayus
+                if self._shift_down and not self._caps_down:
+                    self._caps_paso = True  # Shift+Bloq Mayus: mayusculas de verdad
                     return False
-                # si ya devolvimos el Alt al sistema, dejar pasar las repeticiones
-                return not self._passthrough
-            # keyup de Alt
-            self._alt_down = False
-            if self._passthrough:
-                self._passthrough = False
-                return False    # cierra el Alt que reinyectamos
-            return True         # Alt tragado de principio a fin: nadie lo vio
-
-        # Before the passthrough branch: a bound digit whose key-down was
-        # swallowed must lose its key-up too, even if the combo was handed back
-        # to the system in between (Alt, 1, Tab, release 1). Otherwise it stays
-        # in _eaten and the next Alt+digit is swallowed without firing.
-        if not down and vk in self._eaten:
-            self._eaten.discard(vk)
-            return True         # el keyup del numero tampoco sale de aqui
-
-        if self._passthrough:
-            return False        # combinacion cedida al sistema
-
-        if self._alt_down and down:
-            if vk in _CTRL_VKS:
-                # Ctrl pulsado despues del Alt: aun no se sabe si sera Ctrl+Alt+X.
-                # Se deja pasar y se decide con la tecla final, que reinyectara el
-                # Alt si hace falta.
-                return False
-            if vk in self._actions:
-                if vk not in self._eaten:      # sin autorepeticion al mantener
-                    self._eaten.add(vk)
-                    # emitir es barato; la accion se ejecuta luego en el hilo Qt
-                    self._bridge.triggered.emit(vk)
+                self._caps_down = True
                 return True
-            # No es atajo nuestro (Alt+Tab, Alt+F4...): devolver el Alt al sistema.
-            # Se reinyectan Alt y la tecla juntos, y se traga el evento original,
-            # para que lleguen en ese orden; dejarlo pasar lo colaria antes del Alt.
-            self._passthrough = True
-            _send_keys((self._alt_vk, False), (vk, False))
+            # keyup
+            if self._caps_paso:
+                self._caps_paso = False
+                return False
+            self._caps_down = False
             return True
 
-        return False
+        # El keyup de una tecla tragada se traga siempre, aunque Bloq Mayus ya
+        # se haya soltado (Caps, A, soltar Caps, soltar A).
+        if not down:
+            self._fuera.discard(vk)
+            if vk in self._eaten:
+                self._eaten.discard(vk)
+                return True
+            return False
+
+        if vk not in self._actions:
+            return False
+        if not self._caps_down or vk in self._fuera:
+            # Tecla normal (o mantenida desde antes de Bloq Mayus, cuyas
+            # repeticiones no deben disparar nada).
+            self._fuera.add(vk)
+            return False
+        if vk not in self._eaten:           # sin autorepeticion al mantener
+            self._eaten.add(vk)
+            # emitir es barato; la accion se ejecuta luego en el hilo Qt
+            self._bridge.triggered.emit(vk)
+        return True
 
 
 class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
-    """Atajos globales: hook de Alt como via principal, RegisterHotKey de respaldo."""
+    """Atajos globales: capa de Bloq Mayus como via principal, Alt+1..6 de respaldo."""
 
     def __init__(self, callbacks):
         """callbacks: dict {ACTION_*: funcion}."""
@@ -371,24 +308,23 @@ class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
         self._callbacks = callbacks
         self._registered = []
         self._failed = []
-        self._alt = AltInterceptor({
-            vk: callbacks[hk_id]
-            for hk_id, (_mods, vk, _n) in BINDINGS.items()
-            if hk_id in callbacks
+        self._caps = CapsLayer({
+            vk: callbacks[accion]
+            for accion, (vk, _n) in CAPS_BINDINGS.items()
+            if accion in callbacks
         })
 
     @property
-    def exclusive_alt(self):
-        """True si Alt queda reservado para esta app (nadie mas lo recibe)."""
-        return self._alt.active
+    def caps_layer(self):
+        """True si los atajos con Bloq Mayus estan activos."""
+        return self._caps.active
 
     def register(self):
-        """Instala hook + atajos. Devuelve (registrados, fallidos)."""
-        self._alt.install()
+        """Instala hook + atajos de respaldo. Devuelve (registrados, fallidos)
+        de los de respaldo (Alt+1..6)."""
+        self._caps.install()
         for hk_id, (mods, vk, nombre) in BINDINGS.items():
             # hWnd=None: el mensaje va a la cola del hilo, que Qt ya procesa.
-            # Con el hook activo esto no llega a dispararse (el hook consume la
-            # tecla antes), pero cubre el caso de que el hook no este disponible.
             if user32.RegisterHotKey(None, hk_id, mods | MOD_NOREPEAT, vk):
                 self._registered.append(hk_id)
             else:
@@ -397,7 +333,7 @@ class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
         return [BINDINGS[i][2] for i in self._registered], self._failed
 
     def unregister(self):
-        self._alt.uninstall()
+        self._caps.uninstall()
         for hk_id in self._registered:
             try:
                 user32.UnregisterHotKey(None, hk_id)
@@ -405,9 +341,9 @@ class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
                 log.debug("UnregisterHotKey(%d) failed", hk_id, exc_info=True)
         self._registered = []
 
-    def set_alt_capture(self, on):
-        """Activa/desactiva la captura exclusiva de Alt en caliente."""
-        self._alt.set_enabled(on)
+    def set_caps_layer(self, on):
+        """Activa/desactiva la capa de Bloq Mayus en caliente."""
+        self._caps.set_enabled(on)
 
     def nativeEventFilter(self, eventType, message):
         if eventType != b"windows_generic_MSG":

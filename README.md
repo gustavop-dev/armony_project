@@ -87,7 +87,7 @@ Desmárcalo y añade la API key para las sugerencias reales.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
 4. Cuando alguien hable en la reunión, verás la transcripción **en vivo** y, cuando
    te pregunten algo, la **respuesta sugerida**.
-5. **`Alt+2`** captura la pantalla (puedes encadenar varias) y **`Alt+3`** las manda.
+5. **`Bloq Mayús+S`** captura la pantalla (puedes encadenar varias) y **`Bloq Mayús+D`** las manda.
    La miniatura se queda en el panel de respuesta, alineada a la derecha como el
    mensaje que acabas de enviar, y la respuesta aparece debajo.
 
@@ -155,21 +155,25 @@ hasta 4000); con 1200 la respuesta se quedaba a medias.
 
 ### Atajos
 
-Funcionan aunque el foco esté en Zoom, Meet o Excel. Mientras la app corre, el Alt
-queda reservado para ella: la aplicación de debajo no lo recibe, así que Excel no
-abre las KeyTips de la cinta ni se te escribe el número en la celda.
+Mantén **Bloq Mayús** y pulsa la tecla: todo queda junto a la mano izquierda en
+reposo. Funcionan aunque el foco esté en Zoom, Meet o Excel, y no chocan con sus
+atajos (Zoom usa Alt+A, Alt+S, Alt+Q…). Mientras la app corre, Bloq Mayús ya no
+bloquea mayúsculas ni le llega a la aplicación de debajo; **`Shift+Bloq Mayús`** sí
+las activa, como siempre.
 
-| Atajo | Qué hace |
-|---|---|
-| `Alt+1` | Mostrar / ocultar el overlay |
-| `Alt+2` | Captura de pantalla (se pueden encadenar varias) |
-| `Alt+3` | Generar respuesta con las capturas tomadas |
-| `Alt+4` | Iniciar / detener la reunión |
-| `Alt+5` | Responder ahora a lo último que dijeron |
-| `Alt+6` | Actualizar la solución en pantalla con lo que acaban de decir |
+| Atajo | Respaldo | Qué hace |
+|---|---|---|
+| `Bloq Mayús+A` | `Alt+5` | Responder ahora a lo último que dijeron |
+| `Bloq Mayús+S` | `Alt+2` | Captura de pantalla (se pueden encadenar varias) |
+| `Bloq Mayús+D` | `Alt+3` | Generar respuesta con las capturas tomadas |
+| `Bloq Mayús+F` | `Alt+6` | Actualizar la solución en pantalla con lo que acaban de decir |
+| `Bloq Mayús+Q` | `Alt+1` | Mostrar / ocultar el overlay |
+| `Bloq Mayús+Esc` | `Alt+4` | Iniciar / detener la reunión (a propósito, difícil de pulsar sin querer) |
 
-Todos menos `Alt+6` tienen su botón en la barra superior con el atajo escrito al
-lado; `Alt+6` aparece como sugerencia en el panel de la pantalla cuando aplica.
+Todos menos `Bloq Mayús+F` tienen su botón en la barra superior con el atajo
+escrito al lado (`Caps`); `Bloq Mayús+F` aparece como sugerencia en el panel de la
+pantalla cuando aplica. Los `Alt+número` de antes siguen como respaldo, por si
+Bloq Mayús está remapeada a otra tecla o Windows no deja instalar el hook.
 
 ### Dos paneles: hablado y pantalla
 
@@ -183,7 +187,7 @@ lado; `Alt+6` aparece como sugerencia en el panel de la pantalla cuando aplica.
   del principio): una solución de código larga no retrasa una respuesta hablada.
 - **La solución en pantalla no se relanza sola.** Si el entrevistador dice algo que
   va para ella ("hay un error, hazlo así", "¿y qué cambiarías para…?"), Jev lo
-  detecta y el panel ofrece `↻ Update with: «…» — Alt+6`. Lo decides tú; al
+  detecta y el panel ofrece `↻ Update with: «…» — Caps+F`. Lo decides tú; al
   aceptarlo, la solución se reescribe en su sitio, marcada como actualizada.
 
 **Para desplazar el hilo basta con poner el cursor encima**, con la rueda del ratón
@@ -213,7 +217,7 @@ cada frase llenaría el panel de ruido. Hay dos filtros antes de molestar a la I
 2. **El modelo:** lo que pasa el primer filtro puede seguir sin ser una pregunta ("y bueno,
    qué te digo…"). En ese caso el modelo se calla y no se pinta nada.
 
-Si preguntaron y la transcripción se comió los signos, **`Alt+5`** fuerza la respuesta.
+Si preguntaron y la transcripción se comió los signos, **`Bloq Mayús+A`** fuerza la respuesta.
 Por eso los filtros pueden permitirse ser prudentes: quedarse corto se arregla con una
 tecla, pasarse de hablador te arruina la reunión.
 
