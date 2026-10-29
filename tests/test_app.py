@@ -916,3 +916,24 @@ class TestAgents:
         ui.panel.set_agents([("x", "Un agente con un nombre larguísimo de verdad")], "x")
 
         assert ui.panel.minimumSizeHint().width() <= T.COLUMN_WIDTH
+
+
+class TestGlass:
+    def test_glass_moves_opacity_to_the_acrylic_tint(self, ui, monkeypatch):
+        llamadas = []
+        monkeypatch.setattr(app.T, "VIDRIO", True)
+        monkeypatch.setattr(app, "set_acrylic",
+                            lambda hwnd, alpha: llamadas.append(round(alpha, 4)))
+        ui.cfg["window_opacity"] = 0.65
+
+        ui._apply_opacity()
+
+        assert llamadas == [round(0.15 + 0.65 * 0.75, 4)] * 4
+        assert ui.panel.windowOpacity() == 1.0
+
+    def test_without_glass_opacity_dims_the_whole_window(self, ui):
+        ui.cfg["window_opacity"] = 0.5
+
+        ui._apply_opacity()
+
+        assert round(ui.panel.windowOpacity(), 2) == 0.5

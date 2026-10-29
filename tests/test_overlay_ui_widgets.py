@@ -113,7 +113,7 @@ def test_set_meeting_on_keeps_timer(bar):
     assert bar.lbl_timer.text() == "00:12"
 
 
-@pytest.mark.parametrize("active, color", [(True, "#f6d9d4"), (False, "#f7e39a")])
+@pytest.mark.parametrize("active, color", [(True, "#f6d9d4"), (False, "#b4c3ff")])
 def test_set_meeting_recolors_label(bar, active, color):
     bar.set_meeting(active)
 
@@ -137,7 +137,7 @@ def test_set_generate_enabled_toggles_shortcut_keys(bar, on, enabled):
     assert bar.keys_gen.isEnabled() is enabled
 
 
-@pytest.mark.parametrize("on, color", [(True, "#ece3cd"), (False, "#8f8674")])
+@pytest.mark.parametrize("on, color", [(True, "#e3e7f2"), (False, "#7d869c")])
 def test_set_generate_enabled_dims_label(bar, on, color):
     bar.set_generate_enabled(on)
 
@@ -353,8 +353,8 @@ def test_code_block_falls_back_to_plain_text(code_block, monkeypatch):
 
 @pytest.mark.parametrize("lang, color", [
     ("python", "#7ee0c6"),
-    ("JS", "#f2c94c"),
-    ("brainfuck", "#e7b93a"),
+    ("JS", "#7c95ff"),
+    ("brainfuck", "#93a8ff"),
 ])
 def test_code_block_edge_uses_language_color(qtbot, code_block, lang, color):
     cb = code_block(lang, "x")
@@ -383,8 +383,8 @@ def test_status_badge_set_changes_text(qtbot):
 @pytest.mark.parametrize("kind, label_color", [
     ("listening", "#3ddc84"),
     ("error", "#e0554b"),
-    ("idle", "#a89f8a"),
-    ("unknown-kind", "#a89f8a"),
+    ("idle", "#9aa3b8"),
+    ("unknown-kind", "#9aa3b8"),
 ])
 def test_status_badge_label_color_by_kind(qtbot, kind, label_color):
     badge = overlay_ui.StatusBadge()
@@ -397,7 +397,7 @@ def test_status_badge_label_color_by_kind(qtbot, kind, label_color):
 
 @pytest.mark.parametrize("kind, background", [
     ("error", "rgba(224,85,75,0.14)"),
-    ("info", "rgba(243,234,212,0.05)"),
+    ("info", "rgba(220,228,255,0.05)"),
 ])
 def test_status_badge_tints_background(qtbot, kind, background):
     badge = overlay_ui.StatusBadge()

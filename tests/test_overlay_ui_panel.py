@@ -11,8 +11,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import overlay_ui
 
 CARET = "&#9611;"
-GOLD = "#f2c94c"
-PARTICIPANT_DOT_OFF = "#b98d4a"
+GOLD = "#7c95ff"
+PARTICIPANT_DOT_OFF = "#8e9bb8"
 LONG = "word " * 120
 
 
@@ -105,16 +105,16 @@ def test_set_status_shows_text(panel):
 
 @pytest.mark.parametrize("texto, color", [
     ("Listening", "#3ddc84"),
-    ("Loading model…", "#e7b93a"),
-    ("Starting", "#e7b93a"),
-    ("Cargando", "#e7b93a"),
-    ("Idle", "#8f8674"),
-    ("Transcribing…", "#f2c94c"),
-    ("Drafting…", "#f2c94c"),
-    ("Analyzing…", "#f2c94c"),
+    ("Loading model…", "#93a8ff"),
+    ("Starting", "#93a8ff"),
+    ("Cargando", "#93a8ff"),
+    ("Idle", "#7d869c"),
+    ("Transcribing…", "#7c95ff"),
+    ("Drafting…", "#7c95ff"),
+    ("Analyzing…", "#7c95ff"),
     ("Error", "#e0554b"),
     ("API key required", "#e0554b"),
-    ("Context saved", "#8f8674"),
+    ("Context saved", "#7d869c"),
 ])
 def test_set_status_infers_kind_from_text(panel, texto, color):
     panel.set_status(texto)
@@ -208,8 +208,8 @@ def test_set_latency_formats_value(panel, ms, text):
 
 @pytest.mark.parametrize("ms, color", [
     (599, "#3ddc84"),
-    (600, "#e7b93a"),
-    (1499, "#e7b93a"),
+    (600, "#93a8ff"),
+    (1499, "#93a8ff"),
     (1500, "#e0554b"),
 ])
 def test_set_latency_colors_by_speed(panel, ms, color):
@@ -233,8 +233,8 @@ def test_set_e2e_formats_seconds(panel, ms, text):
 
 @pytest.mark.parametrize("ms, color", [
     (1499, "#3ddc84"),
-    (1500, "#e7b93a"),
-    (2999, "#e7b93a"),
+    (1500, "#93a8ff"),
+    (2999, "#93a8ff"),
     (3000, "#e0554b"),
 ])
 def test_set_e2e_colors_by_speed(panel, ms, color):

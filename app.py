@@ -18,7 +18,8 @@ import applog
 import config as cfg_mod
 import theme as T
 from engine import CoachEngine
-from overlay import set_capture_protection, set_no_activate, set_click_through
+from overlay import (set_acrylic, set_capture_protection, set_click_through,
+                     set_no_activate, vidrio_disponible)
 from wheelscroll import WheelForwarder
 from overlay_ui import TopBar, TranscriptPanel, CollapsedButton
 from settings_window import SettingsWindow
@@ -32,6 +33,11 @@ class OverlayApp(QtCore.QObject):
         super().__init__()
         self.cfg = cfg_mod.load_config()
         self.engine = CoachEngine()
+
+        # Vidrio solo si este Windows sigue ocultando al compartir pantalla una
+        # ventana translucida; se decide antes de crear las ventanas.
+        if not T.VIDRIO and vidrio_disponible():
+            T.activar_vidrio()
 
         self.top = TopBar()
         # Dos paneles: la conversacion hablada (siempre) y la pantalla (solo
@@ -143,7 +149,12 @@ class OverlayApp(QtCore.QObject):
         op = float(self.cfg.get("window_opacity", 0.30))
         op = max(0.15, min(1.0, op))
         for w in (self.top, self.panel, self.screen, self.collapsed):
-            w.setWindowOpacity(op)
+            if T.VIDRIO:
+                # La opacidad pasa al tinte del acrilico: el texto no se atenua.
+                w.setWindowOpacity(1.0)
+                set_acrylic(w.winId(), alpha=0.15 + op * 0.75)
+            else:
+                w.setWindowOpacity(op)
 
     def _cursor_over(self, widgets):
         """True si el cursor esta sobre alguno de esos widgets (visibles)."""

@@ -155,23 +155,23 @@ def test_kbd_qss_dark_style():
     assert theme.kbd_qss() == (
         "font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; "
         "font-size: 11px; padding: 2px 5px; border-radius: 5px; "
-        "background: rgba(0,0,0,0.35); border: 1px solid rgba(243,234,212,0.14); "
-        "color: #d9d0ba;")
+        "background: rgba(255,255,255,0.08); border: 1px solid rgba(220,228,255,0.12); "
+        "color: #d5dbea;")
 
 
 def test_kbd_qss_light_style():
     assert theme.kbd_qss(light=True) == (
         "font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; "
         "font-size: 11px; padding: 2px 5px; border-radius: 5px; "
-        "background: rgba(0,0,0,0.18); border: none; color: #2a2410;")
+        "background: rgba(255,255,255,0.05); border: none; color: #ffffff;")
 
 
 # ------------------------------------------------------------------ constants
 @pytest.mark.parametrize("name, expected", [
     ("SANS_STACK", "'Instrument Sans', 'Segoe UI Variable Display', 'Segoe UI', sans-serif"),
     ("MONO_STACK", "'JetBrains Mono', 'Cascadia Mono', Consolas, monospace"),
-    ("GOLD", "#f2c94c"),
-    ("GOLD_BTN_INK", "#2a2410"),
+    ("ACCENT", "#7c95ff"),
+    ("ACCENT_BTN_INK", "#ffffff"),
     ("ANSWER_TEXT", "#ffffff"),
     ("WINDOW_OPACITY", 0.65),
     ("R_KBD", 5),

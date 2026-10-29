@@ -4,64 +4,90 @@ Todos los colores, radios y tamanos salen de aqui: si el diseno cambia, se cambi
 en un solo sitio. Los valores son literales del diseno original.
 """
 import os
+import re
+
 from PySide6 import QtGui
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 FONT_DIR = os.path.join(_HERE, "assets", "fonts")
 
 # ---------------------------------------------------------------- color
-GOLD          = "#f2c94c"   # acento principal
-GOLD_LIGHT    = "#f7dd7f"
-GOLD_HI       = "#ffe38a"
-GOLD_DEEP     = "#d8a92f"
-GOLD_LABEL    = "#e7b93a"   # etiquetas de seccion (Answer, Context...)
-ANSWER_TEXT   = "#ffffff"   # cuerpo de la respuesta de la IA (blanco, maximo contraste)
-GOLD_BTN_TOP  = "#f7d768"   # degradado del boton Generate
-GOLD_BTN_BOT  = "#f2c94c"
-GOLD_BTN_INK  = "#2a2410"
+# Vidrio oscuro con un unico acento pervinca: el acento marca lo que importa
+# (la respuesta, el boton principal, el agente) y todo lo demas es neutro frio.
+ACCENT          = "#7c95ff"   # acento principal (pervinca, aclarado para fondo oscuro)
+ACCENT_LIGHT    = "#a9b9ff"
+ACCENT_HI       = "#c3ceff"
+ACCENT_DEEP     = "#5b7cfa"
+ACCENT_LABEL    = "#93a8ff"   # etiquetas de seccion (Answer, Context...)
+ANSWER_TEXT     = "#ffffff"   # cuerpo de la respuesta de la IA (blanco, maximo contraste)
+ACCENT_BTN_TOP  = "#8ea6ff"   # degradado del boton principal
+ACCENT_BTN_BOT  = "#5b7cfa"
+ACCENT_BTN_INK  = "#ffffff"
 
-TEXT_BRIGHT   = "#f3ead4"
-TEXT          = "#ece3cd"
-TEXT_BODY     = "#f0e8d6"
-TEXT_MUTED    = "#d9cfb8"
-TEXT_DIM      = "#a89f8a"
-TEXT_FAINT    = "#8f8674"
+TEXT_BRIGHT   = "#f2f4fa"
+TEXT          = "#e3e7f2"
+TEXT_BODY     = "#edf0f7"
+TEXT_MUTED    = "#c9cfde"
+TEXT_DIM      = "#9aa3b8"
+TEXT_FAINT    = "#7d869c"
 
 REC_DOT       = "#ff5f57"
 REC_BORDER    = "rgba(217,74,61,0.5)"
 REC_BG        = "rgba(217,74,61,0.18)"
 REC_TEXT      = "#f6d9d4"
 
-INTERVIEWER_DOT = "#b98d4a"
+INTERVIEWER_DOT = "#8e9bb8"
 
-# Fondos SOLIDOS de los paneles.
+# Fondos de los paneles.
 #
-# El diseno pedia paneles al 40% de opacidad (fondo por-pixel). En Windows eso
-# convierte la ventana en "layered" y Windows RECHAZA ocultarla al compartir
-# pantalla (SetWindowDisplayAffinity falla con err=8). Como la privacidad al
-# compartir es el requisito principal, usamos fondo solido + una translucidez
-# uniforme suave via opacidad de ventana (WINDOW_OPACITY), que si es compatible.
-PANEL_TOP     = "#1b1811"
-PANEL_BODY    = "#17140f"
-PANEL_BORDER  = "rgba(242,201,76,0.35)"
-PANEL_BORDER2 = "rgba(242,201,76,0.4)"
+# Con vidrio (activar_vidrio, si Windows deja ocultar al compartir pantalla una
+# ventana translucida) el fondo es un velo sobre el acrilico de Windows, que
+# desenfoca lo de detras; el texto queda opaco. Sin vidrio, fondo solido y una
+# translucidez uniforme por opacidad de ventana (WINDOW_OPACITY), que tambien
+# atenua el texto pero es compatible con la invisibilidad en cualquier Windows.
+PANEL_SOLID   = "#151824"     # menus y lo que no puede ser translucido
+PANEL_TOP     = "#151824"
+PANEL_BODY    = "#121520"
+PANEL_BORDER  = "rgba(255,255,255,0.12)"
+PANEL_BORDER2 = "rgba(124,149,255,0.45)"
 
 # Opacidad por defecto de las ventanas del overlay (se puede ajustar en config).
-# Baja = mas transparente (se ve mas lo de detras); es compatible con la
-# invisibilidad al compartir pantalla y con el click-through.
+# Baja = mas transparente (se ve mas lo de detras). Con vidrio regula el tinte
+# del acrilico, no la ventana: el texto no se atenua.
 WINDOW_OPACITY = 0.65
 
-DIVIDER       = "rgba(243,234,212,0.18)"
-DIVIDER_SOFT  = "rgba(243,234,212,0.12)"
-DIVIDER_FAINT = "rgba(243,234,212,0.10)"
+VIDRIO = False                # lo enciende activar_vidrio() al arrancar
 
-BTN_BG        = "rgba(243,234,212,0.06)"
-BTN_BG_HOVER  = "rgba(243,234,212,0.14)"
-BTN_BORDER    = "rgba(243,234,212,0.14)"
 
-KBD_BG        = "rgba(0,0,0,0.35)"
-KBD_BG_LIGHT  = "rgba(0,0,0,0.18)"
-KBD_TEXT      = "#d9d0ba"
+def activar_vidrio():
+    """Paneles de vidrio: velos translucidos en vez de fondos solidos. Se llama
+    antes de crear las ventanas del overlay (leen estos valores al construirse)."""
+    global VIDRIO, PANEL_TOP, PANEL_BODY
+    VIDRIO = True
+    PANEL_TOP = "rgba(18,21,32,0.30)"
+    PANEL_BODY = "rgba(16,19,29,0.26)"
+
+
+def qcolor(color):
+    """QColor desde '#rrggbb' o 'rgba(r,g,b,a)' (QColor no lee el formato CSS)."""
+    m = re.match(r"rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)", color)
+    if m:
+        r, g, b_, a = m.groups()
+        return QtGui.QColor(int(r), int(g), int(b_), round(float(a) * 255))
+    return QtGui.QColor(color)
+
+
+DIVIDER       = "rgba(220,228,255,0.16)"
+DIVIDER_SOFT  = "rgba(220,228,255,0.10)"
+DIVIDER_FAINT = "rgba(220,228,255,0.08)"
+
+BTN_BG        = "rgba(220,228,255,0.06)"
+BTN_BG_HOVER  = "rgba(220,228,255,0.14)"
+BTN_BORDER    = "rgba(220,228,255,0.12)"
+
+KBD_BG        = "rgba(255,255,255,0.08)"
+KBD_BG_LIGHT  = "rgba(255,255,255,0.05)"
+KBD_TEXT      = "#d5dbea"
 
 INPUT_BG      = "rgba(0,0,0,0.25)"
 
@@ -125,7 +151,7 @@ def fonts_missing():
 def kbd_qss(light=False):
     """Estilo de las teclas (Ctrl, B, H, Enter) mostradas en los botones."""
     bg = KBD_BG_LIGHT if light else KBD_BG
-    fg = GOLD_BTN_INK if light else KBD_TEXT
+    fg = ACCENT_BTN_INK if light else KBD_TEXT
     borde = "none" if light else f"1px solid {BTN_BORDER}"
     return (f"font-family: {MONO_STACK}; font-size: 11px; padding: 2px 5px;"
             f" border-radius: {R_KBD}px; background: {bg};"

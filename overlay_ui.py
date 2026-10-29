@@ -45,10 +45,10 @@ _BARRA_QSS = f"""
         background: transparent; width: 10px; margin: 4px 2px 22px 0;
     }}
     QScrollBar::handle:vertical {{
-        background: rgba(242,201,76,0.28);
+        background: rgba(124,149,255,0.28);
         border-radius: 5px; min-height: 34px;
     }}
-    QScrollBar::handle:vertical:hover {{ background: rgba(242,201,76,0.5); }}
+    QScrollBar::handle:vertical:hover {{ background: rgba(124,149,255,0.5); }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
         background: transparent;
@@ -59,10 +59,10 @@ _BARRA_QSS = f"""
         background: transparent; height: 10px; margin: 0 22px 3px 16px;
     }}
     QScrollBar::handle:horizontal {{
-        background: rgba(242,201,76,0.28);
+        background: rgba(124,149,255,0.28);
         border-radius: 5px; min-width: 34px;
     }}
-    QScrollBar::handle:horizontal:hover {{ background: rgba(242,201,76,0.5); }}
+    QScrollBar::handle:horizontal:hover {{ background: rgba(124,149,255,0.5); }}
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
     QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
         background: transparent;
@@ -75,17 +75,24 @@ _BARRA_QSS = f"""
 def _frameless(win):
     """Ventana sin marco, siempre encima y fuera de la barra de tareas.
 
-    IMPORTANTE: NO se usa WA_TranslucentBackground. Ese atributo (alpha por-pixel)
-    convierte la ventana en 'layered' y hace que Windows rechace ocultarla al
-    compartir pantalla. En su lugar: fondo solido + opacidad de ventana uniforme
-    (compatible con la invisibilidad) + esquinas redondeadas por mascara.
+    Con vidrio (T.VIDRIO) la ventana es translucida por pixel: los fondos son
+    velos y el acrilico de Windows (overlay.set_acrylic, desde app.py) desenfoca
+    lo de detras, con el texto opaco. Solo se enciende si overlay.vidrio_disponible()
+    comprobo que Windows aun puede ocultarla al compartir pantalla.
+
+    Sin vidrio NO se usa WA_TranslucentBackground: en Windows antiguos convierte
+    la ventana en 'layered' y Windows rechaza ocultarla al compartir. Entonces:
+    fondo solido + opacidad de ventana uniforme + esquinas por mascara.
     """
     win.setWindowFlags(
         QtCore.Qt.FramelessWindowHint
         | QtCore.Qt.WindowStaysOnTopHint
         | QtCore.Qt.Tool
     )
-    win.setWindowOpacity(T.WINDOW_OPACITY)
+    if T.VIDRIO:
+        win.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+    else:
+        win.setWindowOpacity(T.WINDOW_OPACITY)
 
 
 def _round_mask(win, radius):
@@ -328,14 +335,14 @@ class StatusBadge(QtWidgets.QWidget):
 
     # texto -> (color del punto/borde, si el fondo va tenido)
     COLORS = {
-        "idle":        ("#8f8674", False),
-        "loading":     ("#e7b93a", True),
+        "idle":        ("#7d869c", False),
+        "loading":     ("#93a8ff", True),
         "listening":   ("#3ddc84", True),   # verde bonito
-        "transcribing": ("#f2c94c", True),
-        "drafting":    ("#f2c94c", True),
-        "analyzing":   ("#f2c94c", True),
+        "transcribing": ("#7c95ff", True),
+        "drafting":    ("#7c95ff", True),
+        "analyzing":   ("#7c95ff", True),
         "error":       ("#e0554b", True),
-        "info":        ("#8f8674", False),
+        "info":        ("#7d869c", False),
     }
 
     def __init__(self):
@@ -353,12 +360,12 @@ class StatusBadge(QtWidgets.QWidget):
     def set(self, texto, kind):
         color, tinted = self.COLORS.get(kind, self.COLORS["info"])
         self._dot.setStyleSheet(f"background: {color}; border-radius: 3px;")
-        self._lbl.setStyleSheet(f"color: {color if tinted else '#a89f8a'}; background: transparent;")
+        self._lbl.setStyleSheet(f"color: {color if tinted else '#9aa3b8'}; background: transparent;")
         rgb = QtGui.QColor(color)
         bg = (f"rgba({rgb.red()},{rgb.green()},{rgb.blue()},0.14)" if tinted
-              else "rgba(243,234,212,0.05)")
+              else "rgba(220,228,255,0.05)")
         bd = (f"rgba({rgb.red()},{rgb.green()},{rgb.blue()},0.45)" if tinted
-              else "rgba(243,234,212,0.10)")
+              else "rgba(220,228,255,0.10)")
         self.setStyleSheet(
             f"StatusBadge {{ background: {bg}; border: 1px solid {bd}; border-radius: 11px; }}")
         self._lbl.setText(texto)
@@ -494,7 +501,7 @@ class _AutoScroll:
 # para reconocer de un vistazo que trae el bloque sin leer la etiqueta.
 _COLOR_LENGUAJE = {
     "python": "#7ee0c6", "py": "#7ee0c6",
-    "javascript": "#f2c94c", "js": "#f2c94c",
+    "javascript": "#7c95ff", "js": "#7c95ff",
     "typescript": "#89ddf0", "ts": "#89ddf0", "tsx": "#89ddf0",
     "java": "#f2a06a", "kotlin": "#c58af9",
     "sql": "#b3e08a", "bash": "#b3e08a", "sh": "#b3e08a", "shell": "#b3e08a",
@@ -516,7 +523,7 @@ class CodeBlock(QtWidgets.QFrame):
     def __init__(self, lenguaje, codigo):
         super().__init__()
         self._codigo = codigo
-        color_leng = _COLOR_LENGUAJE.get((lenguaje or "").lower(), T.GOLD_LABEL)
+        color_leng = _COLOR_LENGUAJE.get((lenguaje or "").lower(), T.ACCENT_LABEL)
         # Fondo bastante mas opaco que el resto del panel: el codigo tiene que
         # leerse como un editor, no como texto flotando sobre la reunion. Y un
         # filo del color del lenguaje, que es lo que lo marca como bloque de
@@ -524,7 +531,7 @@ class CodeBlock(QtWidgets.QFrame):
         self.setStyleSheet(f"""
             CodeBlock {{
                 background: rgba(6,7,10,0.92);
-                border: 1px solid rgba(242,201,76,0.18);
+                border: 1px solid rgba(124,149,255,0.18);
                 border-left: 2px solid {color_leng};
                 border-radius: 8px;
             }}
@@ -662,7 +669,7 @@ class PanelCard(QtWidgets.QFrame):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         m = self._grosor / 2
         r = QtCore.QRectF(self.rect()).adjusted(m, m, -m, -m)
-        p.setBrush(QtGui.QColor(T.PANEL_BODY))
+        p.setBrush(T.qcolor(T.PANEL_BODY))
         p.setPen(QtGui.QPen(self._color, self._grosor))
         p.drawRoundedRect(r, T.R_PANEL, T.R_PANEL)
         p.end()
@@ -686,8 +693,8 @@ class Burbuja(QtWidgets.QFrame):
         mio = quien == "tu"
         self.setStyleSheet(f"""
             Burbuja {{
-                background: {'rgba(242,201,76,0.07)' if mio else 'rgba(243,234,212,0.04)'};
-                border: 1px solid {'rgba(242,201,76,0.28)' if mio else T.DIVIDER_FAINT};
+                background: {'rgba(124,149,255,0.07)' if mio else 'rgba(220,228,255,0.04)'};
+                border: 1px solid {'rgba(124,149,255,0.28)' if mio else T.DIVIDER_FAINT};
                 border-radius: 12px;
             }}
             QLabel {{ background: transparent; border: none; }}
@@ -703,8 +710,8 @@ class Burbuja(QtWidgets.QFrame):
         self._actualizada = None
         if mio:
             cab.addStretch()
-            cab.addWidget(icons.label("sparkles", T.GOLD, 12))
-            cab.addWidget(_tracked("You", 10, QtGui.QFont.Bold, T.GOLD, 0.6, upper=True))
+            cab.addWidget(icons.label("sparkles", T.ACCENT, 12))
+            cab.addWidget(_tracked("You", 10, QtGui.QFont.Bold, T.ACCENT, 0.6, upper=True))
         else:
             cab.addWidget(_tracked("Participant", 10, QtGui.QFont.DemiBold,
                                    T.TEXT_FAINT, 0.6, upper=True))
@@ -745,7 +752,7 @@ class Burbuja(QtWidgets.QFrame):
         veces por segundo y crear y destruir widgets a ese ritmo se nota.
         """
         self._raw = texto
-        cursor = f'<span style="color:{T.GOLD};">&#9611;</span>' if caret else ""
+        cursor = f'<span style="color:{T.ACCENT};">&#9611;</span>' if caret else ""
         html_ = (f'<div style="line-height:150%; color:{T.TEXT_BODY}; '
                  f'font-size:15px;">{html.escape(texto)}{cursor}</div>')
         if self._label is None:
@@ -762,7 +769,7 @@ class Burbuja(QtWidgets.QFrame):
         self._vaciar()
         for etiqueta, bloques in richtext.parse_answer(raw):
             self.cuerpo.addWidget(_tracked(etiqueta, 10, QtGui.QFont.Bold,
-                                           T.GOLD_LABEL, 0.9, upper=True))
+                                           T.ACCENT_LABEL, 0.9, upper=True))
             for bloque in bloques:
                 if bloque[0] == richtext.CODE:
                     cb = CodeBlock(bloque[1], bloque[2])
@@ -789,13 +796,13 @@ class NewBelowChip(QtWidgets.QPushButton):
                            QtWidgets.QSizePolicy.Fixed)
         self.setStyleSheet(
             "QPushButton {"
-            f"  color: {T.GOLD_LABEL};"
-            "   background: rgba(242,201,76,0.10);"
-            "   border: 1px solid rgba(242,201,76,0.35);"
+            f"  color: {T.ACCENT_LABEL};"
+            "   background: rgba(124,149,255,0.10);"
+            "   border: 1px solid rgba(124,149,255,0.35);"
             "   border-radius: 9px;"
             "   padding: 3px 10px;"
             "}"
-            "QPushButton:hover { background: rgba(242,201,76,0.18); }")
+            "QPushButton:hover { background: rgba(124,149,255,0.18); }")
         self.setVisible(False)
 
 
@@ -817,19 +824,19 @@ class AgentChip(QtWidgets.QPushButton):
         self.nombre = ""
         self.setStyleSheet(
             "QPushButton {"
-            f"  color: {T.GOLD_LABEL};"
-            "   background: rgba(242,201,76,0.08);"
-            "   border: 1px solid rgba(242,201,76,0.30);"
+            f"  color: {T.ACCENT_LABEL};"
+            "   background: rgba(124,149,255,0.08);"
+            "   border: 1px solid rgba(124,149,255,0.30);"
             "   border-radius: 9px;"
             "   padding: 2px 9px;"
             "}"
-            "QPushButton:hover { background: rgba(242,201,76,0.18); }")
+            "QPushButton:hover { background: rgba(124,149,255,0.18); }")
         self.menu = QtWidgets.QMenu(self)
         self.menu.setStyleSheet(
-            f"QMenu {{ background: {T.PANEL_TOP}; border: 1px solid {T.PANEL_BORDER}; "
+            f"QMenu {{ background: {T.PANEL_SOLID}; border: 1px solid {T.PANEL_BORDER}; "
             f"border-radius: 8px; padding: 4px; color: {T.TEXT}; font-size: 12px; }}"
             "QMenu::item { padding: 5px 18px 5px 22px; border-radius: 5px; }"
-            "QMenu::item:selected { background: rgba(242,201,76,0.18); }")
+            "QMenu::item:selected { background: rgba(124,149,255,0.18); }")
         # El menu es otra ventana: quien lo crea debe excluirlo de la captura
         # de pantalla igual que el overlay (si no, se veria al compartir).
         self.antes_de_mostrar = None
@@ -903,14 +910,14 @@ class SuggestionChip(QtWidgets.QPushButton):
         self.setMinimumWidth(0)
         self.setStyleSheet(
             "QPushButton {"
-            f"  color: {T.GOLD_LABEL};"
-            "   background: rgba(242,201,76,0.12);"
-            "   border: 1px solid rgba(242,201,76,0.45);"
+            f"  color: {T.ACCENT_LABEL};"
+            "   background: rgba(124,149,255,0.12);"
+            "   border: 1px solid rgba(124,149,255,0.45);"
             "   border-radius: 9px;"
             "   padding: 3px 10px;"
             "   text-align: left;"
             "}"
-            "QPushButton:hover { background: rgba(242,201,76,0.20); }")
+            "QPushButton:hover { background: rgba(124,149,255,0.20); }")
         self.texto = ""
         self.setVisible(False)
 
@@ -957,8 +964,8 @@ class SkipPill(QtWidgets.QLabel):
         self.setStyleSheet(
             "QLabel {"
             f"  color: {T.TEXT_FAINT};"
-            "   background: rgba(243,234,212,0.05);"
-            "   border: 1px solid rgba(243,234,212,0.10);"
+            "   background: rgba(220,228,255,0.05);"
+            "   border: 1px solid rgba(220,228,255,0.10);"
             "   border-radius: 9px;"
             "   padding: 3px 9px;"
             "}")
@@ -1000,7 +1007,7 @@ class AudioBars(QtWidgets.QWidget):
     def paintEvent(self, _e):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        color = QtGui.QColor(T.GOLD)
+        color = QtGui.QColor(T.ACCENT)
         if not self._listening:
             color.setAlphaF(0.5)
         p.setBrush(color)
@@ -1044,7 +1051,9 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        self.setStyleSheet(f"background: {T.PANEL_TOP};")
+        # Con selector: sin el, cada hijo hereda el fondo y, con vidrio, los
+        # velos translucidos se apilan en recuadros mas oscuros.
+        self.setStyleSheet("TopBar { background: transparent; }")
         self.card = QtWidgets.QFrame()
         self.card.setObjectName("card")
         self.card.setStyleSheet(f"""
@@ -1070,7 +1079,7 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         ml.setSpacing(8)
         ml.addWidget(GripDots(cols=2, rows=3))
         nombre = QtWidgets.QLabel(
-            f'<span style="color:{T.GOLD};font-weight:700;">Arm</span>'
+            f'<span style="color:{T.ACCENT};font-weight:700;">Arm</span>'
             f'<span style="color:#ffffff;font-weight:700;">ony.</span>')
         nf = nombre.font(); nf.setPixelSize(15); nombre.setFont(nf)
         nombre.setStyleSheet("background: transparent;")
@@ -1087,7 +1096,7 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         bl = QtWidgets.QHBoxLayout(self.btn_meeting)
         bl.setContentsMargins(12, 8, 12, 8)
         bl.setSpacing(8)
-        self.ico_meeting = icons.label("play", "#f7e39a", 15)
+        self.ico_meeting = icons.label("play", "#b4c3ff", 15)
         bl.addWidget(self.ico_meeting)
         self.lbl_meeting = QtWidgets.QLabel("Start meeting")
         f = self.lbl_meeting.font(); f.setPixelSize(13); f.setWeight(QtGui.QFont.DemiBold)
@@ -1212,7 +1221,7 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         if self._in_meeting:
             borde, fondo, texto = T.REC_BORDER, T.REC_BG, T.REC_TEXT
         else:
-            borde, fondo, texto = "rgba(242,201,76,0.5)", "rgba(242,201,76,0.16)", "#f7e39a"
+            borde, fondo, texto = "rgba(124,149,255,0.5)", "rgba(124,149,255,0.16)", "#b4c3ff"
         self.btn_meeting.setStyleSheet(f"""
             QFrame {{ border: 1px solid {borde}; background: {fondo};
                       border-radius: {T.R_BTN}px; }}
@@ -1281,7 +1290,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        self.setStyleSheet(f"background: {T.PANEL_BODY};")
+        # El fondo lo pinta PanelCard; la ventana, transparente y sin herencia
+        # (con vidrio, un fondo heredado se apilaria en cada hijo).
+        self.setStyleSheet("TranscriptPanel { background: transparent; }")
         # Se pinta sola (ver PanelCard): el borde late y con hoja de estilo eso
         # repasaba el estilo de todo el hilo en cada fotograma.
         self.card = PanelCard()
@@ -1586,10 +1597,10 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
     # ---------------- estado visual (borde + animacion)
     def _apply_border(self):
         if self._state == "generating":
-            color, width = QtGui.QColor(242, 201, 76), 2
+            color, width = QtGui.QColor(124, 149, 255), 2
         elif self._state == "listening":
             a = 0.30 + 0.35 * (0.5 + 0.5 * math.sin(self._anim_phase * 0.22))
-            color, width = QtGui.QColor(242, 201, 76, int(a * 255)), 1
+            color, width = QtGui.QColor(124, 149, 255, int(a * 255)), 1
         else:  # idle
             color, width = QtGui.QColor(210, 220, 223, 36), 1
         self.card.set_borde(color, width)
@@ -1614,7 +1625,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         # El punto del participante se ilumina (dorado) cuando llega su audio.
         encendido = int(nivel) > 8
         if encendido != self._part_last:
-            col = T.GOLD if encendido else T.INTERVIEWER_DOT
+            col = T.ACCENT if encendido else T.INTERVIEWER_DOT
             self.part_dot.setStyleSheet(f"background: {col}; border-radius: 4px;")
             self._part_last = encendido
 
@@ -1634,23 +1645,23 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         if ms < 600:
             col = "#3ddc84"          # verde: muy rápido
         elif ms < 1500:
-            col = "#e7b93a"          # ámbar
+            col = "#93a8ff"          # ámbar
         else:
             col = "#e0554b"          # rojo: lento
         txt = f"{ms} ms" if ms < 1000 else f"{ms / 1000:.1f} s"
         self.lat.setText(txt)
         self.lat.setStyleSheet(
             f"color: {col}; font-family: {T.MONO_STACK}; background: "
-            f"rgba(243,234,212,0.05); border-radius: 8px; padding: 2px 7px;")
+            f"rgba(220,228,255,0.05); border-radius: 8px; padding: 2px 7px;")
         self.lat.setVisible(True)
 
     def set_e2e(self, ms):
         """Total de la carrera: pregunta -> primera palabra en pantalla."""
-        col = "#3ddc84" if ms < 1500 else ("#e7b93a" if ms < 3000 else "#e0554b")
+        col = "#3ddc84" if ms < 1500 else ("#93a8ff" if ms < 3000 else "#e0554b")
         self.e2e.setText(f"⚡ {ms / 1000:.1f} s")
         self.e2e.setStyleSheet(
             f"color: {col}; font-family: {T.MONO_STACK}; background: "
-            f"rgba(243,234,212,0.05); border-radius: 8px; padding: 2px 7px;")
+            f"rgba(220,228,255,0.05); border-radius: 8px; padding: 2px 7px;")
         self.e2e.setVisible(True)
 
     def clear_latency(self):
@@ -1830,7 +1841,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
 
     # Estilo del `codigo en linea` dentro de un parrafo.
     _CODE_INLINE = (f"font-family: {T.MONO_STACK}; background: rgba(0,0,0,0.35); "
-                    f"color: {T.GOLD_LIGHT};")
+                    f"color: {T.ACCENT_LIGHT};")
 
     def _parrafo(self, texto):
         lab = QtWidgets.QLabel(
@@ -1843,7 +1854,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
 
     def _vinetas(self, items):
         filas = "".join(
-            f'<tr><td style="color:{T.GOLD};padding-right:7px;">•</td>'
+            f'<tr><td style="color:{T.ACCENT};padding-right:7px;">•</td>'
             f'<td>{richtext.inline_html(it, self._CODE_INLINE)}</td></tr>'
             for it in items)
         lab = QtWidgets.QLabel(
@@ -1885,7 +1896,7 @@ class CollapsedButton(_Draggable, QtWidgets.QWidget):
         super().__init__()
         _frameless(self)
         self._init_drag()
-        self.setStyleSheet(f"background: {T.PANEL_TOP};")
+        self.setStyleSheet("CollapsedButton { background: transparent; }")
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         b = ClickFrame(drags_window=True)   # click restores, drag moves
@@ -1900,7 +1911,7 @@ class CollapsedButton(_Draggable, QtWidgets.QWidget):
         lay.setSpacing(8)
         punto = QtWidgets.QLabel()
         punto.setFixedSize(8, 8)
-        punto.setStyleSheet(f"background: {T.GOLD}; border-radius: 4px;")
+        punto.setStyleSheet(f"background: {T.ACCENT}; border-radius: 4px;")
         lay.addWidget(punto)
         lab = QtWidgets.QLabel("Show overlay")
         lab.setStyleSheet(f"color: {T.TEXT}; font-size: 13px; background: transparent;")
