@@ -1,8 +1,8 @@
 """Carga y guarda la configuracion de la app en config.json (junto a este archivo).
 
-Guarda: API keys (OpenAI, AssemblyAI y TypeSafe), el modelo y cuanto razona en
-cada uso, ajustes de transcripcion, idioma, prompt de coach y estado de "ventana
-invisible".
+Guarda lo que es del usuario: API keys (OpenAI, AssemblyAI y TypeSafe), idioma
+y opacidad. El resto (modelo, razonamiento, longitud, deteccion de turnos, audio,
+prompt del coach) va fijo en el codigo: ver FIJAS.
 
 config.json esta en .gitignore: las claves nunca salen del equipo.
 """
@@ -97,11 +97,14 @@ DEFAULTS = {
     "openai_api_key": "",
     "openai_model": "gpt-6.1-sol",
     "openai_effort_voice": "low",
-    "openai_tokens_voice": 400,
+    # Los limites de longitud van al maximo: son solo un tope (la longitud la
+    # marca el prompt y solo se paga lo que se escribe) y uno justo corta
+    # respuestas a medias. El razonamiento tiene su reserva aparte (llm.py).
+    "openai_tokens_voice": 1000,
     "openai_effort_vision": "medium",
     # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
     # 1200 se quedaba a medias.
-    "openai_tokens_vision": 2500,
+    "openai_tokens_vision": 4000,
     # --- Arbitro de anadidos (Jev, TypeSafe) ---
     # Decide si lo que anaden a una pregunta abierta cambia la respuesta, pide
     # otra o es ruido (followup.py). Sin clave se usa la regla fija de hilo.py:
@@ -145,9 +148,22 @@ DEFAULTS = {
 #   - los del antiguo modo offline (Whisper local)
 #   - el modelo de voz y el de capturas por separado: ahora hay uno solo, y
 #     conservarlos dejaria a cada usuario con los modelos viejos que guardo.
+#   - system_prompt y max_tokens: versiones viejas del prompt y la longitud,
+#     que ahora son fijos.
 OBSOLETAS = ("offline_mode", "whisper_size", "whisper_device", "auto_normalize",
              "transcribe_mic", "speech_threshold", "mic_echo_gate",
-             "max_utterance", "openai_model_voice", "openai_model_vision")
+             "max_utterance", "openai_model_voice", "openai_model_vision",
+             "system_prompt", "max_tokens")
+
+# Ajustes internos: ya decididos y medidos, no se configuran. Siempre valen lo
+# de DEFAULTS aunque config.json traiga otro valor de una version anterior, y no
+# se escriben al guardar. (test_mode, solo para desarrollo, no esta en DEFAULTS:
+# se lee de config.json si alguien lo pone a mano.)
+FIJAS = ("openai_model", "openai_effort_voice", "openai_tokens_voice",
+         "openai_effort_vision", "openai_tokens_vision", "assemblyai_model",
+         "end_of_turn_threshold", "invisible_on_share", "gain_system",
+         "gain_mic", "listen_mic", "silence_hang", "system_prompt_es",
+         "system_prompt_en")
 
 
 def read_user_text(path):
@@ -203,23 +219,16 @@ def load_config():
     for k in CLAVES_SECRETAS:
         if cfg.get(k):
             cfg[k] = secretstore.revelar(cfg[k])
-    # Migracion: si venia un unico system_prompt (version anterior), pasarlo a ES.
-    legacy = cfg.pop("system_prompt", None)
-    if legacy and cfg.get("system_prompt_es") == DEFAULT_PROMPT_ES:
-        cfg["system_prompt_es"] = legacy
-
-    # Migracion: antes habia un unico max_tokens; pasa a ser el de voz.
-    tokens = cfg.pop("max_tokens", None)
-    if tokens:
-        cfg["openai_tokens_voice"] = int(tokens)
     for k in OBSOLETAS:
         cfg.pop(k, None)
+    for k in FIJAS:
+        cfg[k] = DEFAULTS[k]
     return cfg
 
 
 def save_config(cfg):
     """Guarda la configuracion, cifrando las claves antes de escribirlas."""
-    a_disco = dict(cfg)
+    a_disco = {k: v for k, v in cfg.items() if k not in FIJAS}
     for k in CLAVES_SECRETAS:
         if a_disco.get(k):
             a_disco[k] = secretstore.proteger(a_disco[k])

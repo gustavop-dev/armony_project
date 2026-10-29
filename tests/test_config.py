@@ -33,7 +33,7 @@ def _read_raw_config():
     ("openai_model", "gpt-6.1-sol"),
     ("openai_effort_voice", "low"),
     ("openai_effort_vision", "medium"),
-    ("openai_tokens_voice", 400),
+    ("openai_tokens_voice", 1000),
     ("typesafe_api_key", ""),
     ("listen_mic", True),
     ("language", "es"),
@@ -62,7 +62,7 @@ def test_load_config_returns_independent_copy_of_defaults():
     ("language", "en"),           # overridden by the file
     ("window_opacity", 0.9),      # overridden by the file
     ("openai_model", "gpt-6.1-sol"),   # missing from the file: default kept
-    ("openai_tokens_vision", 2500),
+    ("openai_tokens_vision", 4000),
 ])
 def test_load_config_merges_partial_file_over_defaults(key, expected):
     _write_config({"language": "en", "window_opacity": 0.9})
@@ -177,7 +177,7 @@ def test_save_config_does_not_mutate_caller_dict():
 
 
 def test_save_config_writes_non_ascii_text_verbatim():
-    config.save_config({"system_prompt_es": "Habla en español"})
+    config.save_config({"user_name": "Habla en español"})
 
     assert "Habla en español" in _read_raw_config()
 
@@ -220,23 +220,6 @@ def test_save_config_returns_false_when_path_not_writable(isolated_data_dir,
 
 # --- legacy migrations -------------------------------------------------------------
 
-def test_legacy_system_prompt_moves_to_es_when_es_is_default():
-    _write_config({"system_prompt": "Old custom prompt"})
-
-    cfg = config.load_config()
-
-    assert cfg["system_prompt_es"] == "Old custom prompt"
-
-
-def test_legacy_system_prompt_does_not_override_custom_es_prompt():
-    _write_config({"system_prompt": "Old custom prompt",
-                   "system_prompt_es": "New custom prompt"})
-
-    cfg = config.load_config()
-
-    assert cfg["system_prompt_es"] == "New custom prompt"
-
-
 def test_legacy_system_prompt_key_is_removed():
     _write_config({"system_prompt": "Old custom prompt"})
 
@@ -245,12 +228,46 @@ def test_legacy_system_prompt_key_is_removed():
     assert "system_prompt" not in cfg
 
 
-def test_legacy_system_prompt_leaves_en_prompt_untouched():
-    _write_config({"system_prompt": "Old custom prompt"})
+# --- internal settings (FIJAS) -----------------------------------------------------
 
+def test_internal_settings_have_a_default():
+    assert set(config.FIJAS) <= set(config.DEFAULTS)
+
+
+@pytest.mark.parametrize("key, stored", [
+    ("openai_tokens_voice", 400),
+    ("openai_tokens_vision", 2500),
+    ("openai_effort_voice", "high"),
+    ("end_of_turn_threshold", 0.7),
+    ("silence_hang", 1.5),
+    ("listen_mic", False),
+    ("invisible_on_share", False),
+    ("system_prompt_es", "Old custom prompt"),
+])
+def test_stored_internal_setting_is_replaced_by_default(key, stored):
+    _write_config({key: stored})
+
+    assert config.load_config()[key] == config.DEFAULTS[key]
+
+
+def test_tokens_are_at_the_maximum():
     cfg = config.load_config()
 
-    assert cfg["system_prompt_en"].startswith("You are my real-time meeting coach.")
+    assert (cfg["openai_tokens_voice"], cfg["openai_tokens_vision"]) == (1000, 4000)
+
+
+def test_save_does_not_write_internal_settings():
+    config.save_config(config.load_config())
+
+    stored = json.loads(_read_raw_config())
+    assert not set(config.FIJAS) & set(stored)
+
+
+def test_save_keeps_user_settings():
+    config.save_config({"language": "auto", "window_opacity": 0.4})
+
+    stored = json.loads(_read_raw_config())
+    assert (stored["language"], stored["window_opacity"]) == ("auto", 0.4)
 
 
 # Claude was removed "for now" and the per-use models were replaced by a single
@@ -282,22 +299,6 @@ def test_offline_mode_keys_are_purged(key):
     _write_config({key: "legacy"})
 
     assert key not in config.load_config()
-
-
-def test_legacy_max_tokens_becomes_voice_tokens():
-    _write_config({"max_tokens": "800"})
-
-    cfg = config.load_config()
-
-    assert cfg["openai_tokens_voice"] == 800
-
-
-def test_legacy_max_tokens_leaves_vision_tokens_at_default():
-    _write_config({"max_tokens": 800})
-
-    cfg = config.load_config()
-
-    assert cfg["openai_tokens_vision"] == 2500
 
 
 def test_legacy_max_tokens_key_is_removed():

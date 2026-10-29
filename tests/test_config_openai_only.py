@@ -19,11 +19,11 @@ def test_stored_anthropic_key_survives_load_and_save_unchanged(isolated_data_dir
         json.dump({"llm_provider": "anthropic",
                    "anthropic_api_key": stored_anthropic,
                    "anthropic_model_voice": "claude-haiku-4-5",
-                   "openai_tokens_voice": 1000}, f)
+                   "language": "auto"}, f)
 
     cfg = config.load_config()
     assert cfg["anthropic_api_key"] == stored_anthropic      # never decrypted
-    assert cfg["openai_tokens_voice"] == 1000               # user choice kept
+    assert cfg["language"] == "auto"                        # user choice kept
     assert config.save_config(cfg)
 
     with open(config.CONFIG_PATH, encoding="utf-8") as f:
@@ -40,4 +40,4 @@ def test_saved_per_use_models_are_dropped_for_the_single_model(isolated_data_dir
     cfg = config.load_config()
     assert cfg["openai_model"] == "gpt-6.1-sol"
     assert "openai_model_voice" not in cfg and "openai_model_vision" not in cfg
-    assert cfg["openai_tokens_voice"] == 300 and "max_tokens" not in cfg
+    assert cfg["openai_tokens_voice"] == 1000 and "max_tokens" not in cfg

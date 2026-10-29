@@ -16,7 +16,7 @@ al compartir pantalla** (privacidad total).
   palabra mientras la otra persona habla, y es el propio modelo quien detecta cuándo
   terminó de hablar.
 - **Sugiere respuestas** en streaming (aparecen token por token) con **GPT (OpenAI)**,
-  un modelo para preguntas habladas y otro para capturas, elegidos en *Configuración*.
+  GPT-6.1 sol para todo; solo cambia cuánto razona (poco al hablar, más con capturas).
 - **Screenshot → GPT:** botón para mandar una captura de pantalla y preguntar (visión).
 - **Invisible al compartir pantalla:** `SetWindowDisplayAffinity` (Windows 10 2004+/11).
 
@@ -68,7 +68,8 @@ python app.py
 
 ### Modo prueba (sin API key)
 
-Marca **Modo prueba** y pulsa *Iniciar*. No requiere la API key de OpenAI ni genera respuestas: solo
+Es una herramienta de desarrollo, sin interruptor en Configuración: pon
+`"test_mode": true` en `config.json` y pulsa *Iniciar*. No requiere la API key de OpenAI ni genera respuestas: solo
 captura audio y transcribe **ambas** fuentes, etiquetadas, para verificar el montaje:
 
 - `[REUNION] ...` → audio del sistema (pon un vídeo hablado)
@@ -81,8 +82,8 @@ Desmárcalo y añade la API key para las sugerencias reales.
 > En operación normal solo se transcribe el audio del sistema (lo que dicen los demás);
 > tu micrófono es únicamente un medidor de nivel.
 
-1. Abre **Configuración**, elige el **proveedor de respuestas** y pega su API key,
-   más la de **AssemblyAI**. Guarda.
+1. Abre **Configuración** y pega tus API keys de **OpenAI** y **AssemblyAI** (y, si
+   la tienes, la de **TypeSafe**). Guarda.
 2. Pulsa **Iniciar**.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
 4. Cuando alguien hable en la reunión, verás la transcripción **en vivo** y, cuando
@@ -150,8 +151,8 @@ levanta el límite de brevedad:
 En los dos casos, siempre en primera persona: lo que se lee es lo que tú dirías.
 
 Ojo con los tokens: una solución comentada línea a línea ocupa mucho más que una
-respuesta hablada. Por eso las capturas tienen su propio límite (2500 por defecto,
-hasta 4000); con 1200 la respuesta se quedaba a medias.
+respuesta hablada. Por eso las capturas tienen su propio límite, 4000 (el de voz es
+1000); con 1200 la respuesta se quedaba a medias.
 
 ### Atajos
 
@@ -265,23 +266,28 @@ resolver— no vuelve a preguntar: propone y deja sus suposiciones por escrito.
 **En vivo (AssemblyAI, por defecto).** El texto va apareciendo mientras la persona habla,
 así que no se espera a que termine la frase. Medido con audio real del sistema: **76–84 ms**
 desde la última palabra hasta el texto final. A eso se le suma la pausa de fin de turno
-(ajuste *Pausa de fin de turno*, 0.7 s por defecto) y el primer token del modelo de voz. Coste aproximado: **$0.45 por hora de reunión** — se factura el tiempo conectado,
+(0,7 s, fija) y el primer token del modelo de voz. Coste aproximado: **$0.45 por hora de reunión** — se factura el tiempo conectado,
 no el audio enviado, y la conexión solo existe mientras la reunión está en marcha.
 
 ### Un modelo, dos niveles de razonamiento
 
 Todo va con **GPT-6.1 sol**: un solo modelo para que la caché de prompt no se pierda al
-pasar de una pregunta hablada a una captura. Lo que se ajusta en *Configuración →
-Conexión* es **cuánto razona** en cada uso:
+pasar de una pregunta hablada a una captura. Lo único que cambia entre los dos usos
+es **cuánto razona**:
 
-| Uso | Qué manda | Razonamiento por defecto |
+| Uso | Qué manda | Razonamiento |
 |---|---|---|
 | **Preguntas habladas** | La latencia: la respuesta tiene que estar antes de que el silencio se note | `low` |
 | **Capturas de pantalla** | La capacidad: suele haber código que resolver, y unos segundos de más no se notan porque estás leyendo | `medium` |
 
-Cada uno con su propia **longitud máxima de respuesta**, justo debajo:
-400 tokens bastan para una respuesta hablada, pero el código se queda corto ahí, así
-que las capturas van con 1200.
+Cada uno con su **longitud máxima**, al tope: 1000 tokens las habladas y 4000 las
+capturas. Es solo un techo —la longitud la marca el prompt y solo se paga lo que se
+escribe—, y uno justo dejaba el código cortado a medias.
+
+Nada de esto se configura: modelo, razonamiento, longitud, detección de turnos,
+audio y prompt del coach ya están decididos y medidos, y van fijos en el código
+(`config.FIJAS`). En *Configuración* solo quedan tus claves (OpenAI, AssemblyAI y,
+opcional, TypeSafe), el idioma, la opacidad y tus contextos.
 
 Tiempos de GPT medidos desde este equipo (mediana de 5 llamadas, hasta la primera
 palabra en pantalla): `gpt-5.4-mini` 0,7 s · `gpt-5.6-terra` 0,8 s ·
@@ -290,7 +296,7 @@ las opciones no están ordenadas por «listas».
 
 Ojo con los modelos GPT-5: razonan antes de responder y ese razonamiento gasta del
 mismo presupuesto de tokens, así que `llm.py` reserva margen aparte para que el
-ajuste de longitud siga refiriéndose a la respuesta y no llegue vacía.
+límite de longitud siga refiriéndose a la respuesta y no llegue vacía.
 
 ## Que suene a ti, no a documentación
 

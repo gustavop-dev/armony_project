@@ -117,126 +117,36 @@ class Segmented(QtWidgets.QWidget):
         return self._current
 
 
-class BilingualPrompt(QtWidgets.QWidget):
-    """Editor del prompt del coach con conmutador ES | EN (uno por idioma)."""
-
-    def __init__(self, es, en, on_change):
-        super().__init__()
-        self._texts = {"es": es or "", "en": en or ""}
-        self._on_change = on_change
-        self._lang = "es"
-        v = QtWidgets.QVBoxLayout(self); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(8)
-        head = QtWidgets.QHBoxLayout()
-        self._seg = Segmented([("es", "Español"), ("en", "English")], "es")
-        self._seg.changed.connect(self._switch)
-        head.addWidget(self._seg); head.addStretch()
-        v.addLayout(head)
-        self._edit = QtWidgets.QPlainTextEdit(self._texts["es"])
-        self._edit.setFixedSize(460, 150)
-        self._edit.setStyleSheet(
-            f"QPlainTextEdit {{ background: {INPUT_BG}; border: 1px solid {INPUT_BD}; border-radius: 10px; "
-            f"padding: 10px 13px; color: #f0e8d6; font-size: 13px; }} "
-            f"QPlainTextEdit:focus {{ border: 1px solid rgba(242,201,76,0.55); }}")
-        self._edit.textChanged.connect(self._on_text)
-        v.addWidget(self._edit)
-
-    def _switch(self, lang):
-        self._texts[self._lang] = self._edit.toPlainText()
-        self._lang = lang
-        self._edit.blockSignals(True)
-        self._edit.setPlainText(self._texts[lang])
-        self._edit.blockSignals(False)
-
-    def _on_text(self):
-        self._texts[self._lang] = self._edit.toPlainText()
-        self._on_change(self._lang, self._texts[self._lang])
-
-
-# El modelo es fijo (config: openai_model, gpt-6.1-sol); lo que se elige es
-# cuanto razona en cada uso. gpt-6.1-sol no acepta 'none'. Medido con 12
-# preguntas habladas: 'low' da la primera palabra en ~1,05 s.
-ESFUERZO = [("low", "low — el más rápido"),
-            ("medium", "medium — piensa más"),
-            ("high", "high — el más profundo, tarda más")]
-
-
 def _schema():
-    """Definicion de secciones y campos (espeja el diseno)."""
+    """Definicion de secciones y campos (espeja el diseno).
+
+    Solo lo que es del usuario: sus claves, el idioma de la reunion, la opacidad
+    y sus contextos. El modelo, cuanto razona y cuanto escribe, la deteccion de
+    turnos, el audio y el prompt del coach van fijos en config.FIJAS.
+    """
     return [
         ("connection", "bolt", "Conexión",
-         "Credenciales y modelos que alimentan la transcripción y las respuestas.", [
+         "Las claves de los servicios que transcriben y responden.", [
             dict(key="openai_api_key", label="API key de OpenAI", type="text",
                  secret=True, placeholder="sk-proj-…",
-                 hint="Sin ella no arranca la reunión (salvo Modo prueba)."),
-            dict(key="openai_effort_voice", label="Razonamiento · preguntas habladas",
-                 type="select",
-                 hint="Para lo que te preguntan hablando: manda la rapidez. "
-                      "Modelo: GPT-6.1 sol.",
-                 options=ESFUERZO),
-            dict(key="openai_tokens_voice", label="Longitud máx. · habladas",
-                 type="number", min=100, max=1000, step=50, unit=" tok",
-                 hint="Cuánto puede extenderse la respuesta hablada."),
-            dict(key="openai_effort_vision", label="Razonamiento · capturas de pantalla",
-                 type="select",
-                 hint="Para los pantallazos, donde suele haber código que resolver. "
-                      "Aquí compensa que piense más aunque tarde algo más.",
-                 options=ESFUERZO),
-            dict(key="openai_tokens_vision", label="Longitud máx. · capturas",
-                 type="number", min=200, max=4000, step=100, unit=" tok",
-                 hint="El código ocupa: quedarse corto lo deja cortado a medias."),
+                 hint="Genera las respuestas. Sin ella no arranca la reunión."),
+            dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
+                 secret=True, placeholder="…",
+                 hint="Transcripción en vivo. Sin ella no arranca la reunión."),
             dict(key="typesafe_api_key", label="API key de TypeSafe (Jev)", type="text",
                  secret=True, placeholder="apikey_…",
                  hint="Opcional. Decide si lo que añaden a una pregunta cambia la "
                       "respuesta o es ruido. Sin ella, todo añadido es contexto."),
-            dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
-                 secret=True, placeholder="…",
-                 hint="Transcripción en vivo en la nube. Sin ella no se puede "
-                      "iniciar una reunión."),
-            dict(key="language", label="Idioma", type="select",
-                 hint="Idioma del reconocimiento de voz. Auto detecta solo y "
-                      "admite cambios de idioma a mitad de frase.",
-                 options=[("es", "Español"), ("en", "English"), ("auto", "Auto")]),
-            dict(key="end_of_turn_threshold", label="Confianza de fin de turno",
-                 type="number", min=0.1, max=0.9, step=0.05, unit="",
-                 hint="Cuánta seguridad exige para dar por terminado el turno. "
-                      "Bajo = responde antes; alto = espera más y se corta menos."),
          ]),
-        ("overlay", "window", "Overlay",
-         "Cómo se ve y se comporta la ventana flotante sobre tus reuniones.", [
-            dict(key="invisible_on_share", label="Invisible al compartir pantalla",
-                 type="toggle", hint="Excluye el overlay de cualquier captura o screen-share."),
-            dict(key="test_mode", label="Modo prueba", type="toggle",
-                 hint="Arranca sin API key: solo audio + transcripción."),
+        ("general", "window", "General",
+         "El idioma de la reunión y cómo se ve el overlay.", [
+            dict(key="language", label="Idioma", type="select",
+                 hint="Idioma de la reunión. Auto lo detecta solo y admite "
+                      "cambios de idioma a mitad de frase.",
+                 options=[("es", "Español"), ("en", "English"), ("auto", "Auto")]),
             dict(key="window_opacity", label="Opacidad", type="number",
                  min=0.15, max=1.0, step=0.05, unit="",
                  hint="Transparencia de las ventanas. Bajo = se ve más el fondo."),
-         ]),
-        ("audio", "microphone", "Sensibilidad de audio",
-         "Cómo se capta el audio antes de transcribirlo.", [
-            dict(key="gain_system", label="Ganancia reunión", type="number",
-                 min=0.5, max=10, step=0.5, unit="x",
-                 hint="Amplifica el audio del sistema antes de medir nivel."),
-            dict(key="gain_mic", label="Ganancia micrófono", type="number",
-                 min=0.5, max=10, step=0.5, unit="x",
-                 hint="Amplifica tu micro (y también el ruido de fondo)."),
-            dict(key="listen_mic", label="Escuchar mi micrófono", type="toggle",
-                 hint="Transcribe tu voz para saber que ya contestaste y no ponerte "
-                      "otra respuesta encima. Nunca genera respuestas. Usa "
-                      "auriculares."),
-         ]),
-        ("phrases", "scissors", "Detección de frases",
-         "Cuándo se da una frase por terminada y se dispara la respuesta.", [
-            dict(key="silence_hang", label="Pausa de fin de turno", type="number",
-                 min=0.3, max=2, step=0.1, unit=" s",
-                 hint="Pausa que espera antes de responder. Agrupa las frases "
-                      "seguidas de una misma intervención."),
-         ]),
-        ("coach", "chat", "Coach",
-         "Cómo se comporta la IA. Un prompt por idioma; el qué sabe vive en Contexts.", [
-            dict(key="system_prompt", label="Prompt del coach (por idioma)",
-                 type="prompt_bilingual",
-                 hint="ES y EN por separado — cada instrucción en su idioma. "
-                      "Define tono y reglas, no qué sabe."),
          ]),
         ("contexts", "puzzle", "Contexts",
          "Documentos markdown que la IA lee al iniciar. Activa los que apliquen "
@@ -398,7 +308,7 @@ class SettingsWindow(QtWidgets.QWidget):
             lay.addWidget(item)
         lay.addStretch()
         nota = QtWidgets.QLabel(
-            "Los cambios de audio y frases se aplican al iniciar la próxima reunión.")
+            "El idioma se aplica al iniciar la próxima reunión.")
         nota.setWordWrap(True)
         nota.setStyleSheet(
             f"color: {TXT_FA}; font-size: 11px; background: rgba(243,234,212,0.04); "
@@ -512,7 +422,7 @@ class SettingsWindow(QtWidgets.QWidget):
         lay.addWidget(left, 1)
         # derecha: control
         lay.addWidget(self._control(f), 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        if f["type"] in ("textarea", "prompt_bilingual"):
+        if f["type"] == "textarea":
             lay.setAlignment(left, QtCore.Qt.AlignTop)
         return row
 
@@ -550,11 +460,6 @@ class SettingsWindow(QtWidgets.QWidget):
             t.setStyleSheet(self._input_qss())
             t.textChanged.connect(lambda t=t, k=key: self._set_value(k, t.toPlainText()))
             return t
-        if typ == "prompt_bilingual":
-            return BilingualPrompt(
-                self.values.get("system_prompt_es", ""),
-                self.values.get("system_prompt_en", ""),
-                lambda lang, txt: self._set_value(f"system_prompt_{lang}", txt))
         return QtWidgets.QWidget()
 
     def _set_value(self, key, v):

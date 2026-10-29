@@ -156,7 +156,6 @@ def test_text_field_shows_configured_value(make_window):
 
 
 SECRET_KEYS = ["openai_api_key", "assemblyai_api_key", "typesafe_api_key"]
-EFFORT_KEYS = ["openai_effort_voice", "openai_effort_vision"]
 
 
 def _combo(win, key):
@@ -193,21 +192,35 @@ def test_secret_field_shows_placeholder(make_window, key, placeholder):
     assert edit.placeholderText() == placeholder
 
 
-@pytest.mark.parametrize("key, value, label", [
-    ("openai_effort_voice", "high", "high — el más profundo, tarda más"),
-    ("openai_effort_vision", "low", "low — el más rápido"),
-])
-def test_select_shows_label_of_configured_value(make_window, key, value, label):
-    win = make_window(**{key: value})
+@pytest.mark.parametrize("value, label", [("en", "English"), ("auto", "Auto")])
+def test_language_select_shows_label_of_configured_value(qtbot, make_window, value,
+                                                         label):
+    win = make_window(language=value)
+    _goto(qtbot, win, "General")
 
-    assert _combo(win, key).currentText() == label
+    assert _combo(win, "language").currentText() == label
 
 
-@pytest.mark.parametrize("key", EFFORT_KEYS)
-def test_effort_select_offers_low_medium_high(make_window, key):
+def test_language_select_offers_es_en_auto(qtbot, make_window):
     win = make_window()
+    _goto(qtbot, win, "General")
 
-    assert _combo_values(_combo(win, key)) == ["low", "medium", "high"]
+    assert _combo_values(_combo(win, "language")) == ["es", "en", "auto"]
+
+
+def test_sections_are_keys_general_and_contexts():
+    assert [label for _sid, _ic, label, _desc, _f in sw._schema()] == [
+        "Conexión", "General", "Contexts"]
+
+
+def test_only_user_settings_have_a_field():
+    assert _all_field_keys() == ["openai_api_key", "assemblyai_api_key",
+                                 "typesafe_api_key", "language", "window_opacity"]
+
+
+@pytest.mark.parametrize("key", config.FIJAS)
+def test_no_field_for_internal_settings(key):
+    assert key not in _all_field_keys()
 
 
 @pytest.mark.parametrize("key", ["openai_model", "openai_model_voice", "openai_model_vision"])
@@ -220,71 +233,73 @@ def test_no_provider_selector():
                    for k in _all_field_keys())
 
 
-@pytest.mark.parametrize("section, key, value, expected", [
-    ("Conexión", "openai_tokens_voice", 400, "400 tok"),
-    ("Conexión", "openai_tokens_vision", 2500, "2500 tok"),
-    ("Conexión", "end_of_turn_threshold", 0.4, "0.40"),
-    ("Overlay", "window_opacity", 0.65, "0.65"),
-    ("Sensibilidad de audio", "gain_mic", 2.5, "2.5x"),
-    ("Detección de frases", "silence_hang", 0.7, "0.7 s"),
-])
-def test_number_field_displays_formatted_value(qtbot, make_window, section, key, value,
-                                               expected):
-    win = make_window(**{key: value})
-    _goto(qtbot, win, section)
+def test_number_field_displays_formatted_value(qtbot, make_window):
+    win = make_window(window_opacity=0.65)
+    _goto(qtbot, win, "General")
 
-    shown = [lab.text() for lab in _labels(_row(win, key))][-1]
+    shown = [lab.text() for lab in _labels(_row(win, "window_opacity"))][-1]
 
-    assert shown == expected
-
-
-@pytest.mark.parametrize("value", [True, False])
-def test_toggle_field_reflects_configured_value(qtbot, make_window, value):
-    win = make_window(listen_mic=value)
-    _goto(qtbot, win, "Sensibilidad de audio")
-
-    switch = _row(win, "listen_mic").findChild(sw.ToggleSwitch)
-
-    assert switch.isChecked() is value
+    assert shown == "0.65"
 
 
 # ================================================================== conditional rows
 @pytest.fixture
-def conditional_row(monkeypatch):
-    """Make ``gain_mic`` visible only while ``listen_mic`` is on.
+def extra_section(monkeypatch):
+    """Add a section with a toggle and a row shown only while it is on.
 
-    No current field uses ``visible_si``; the generic mechanism is exercised
-    by adding the condition to a copy of the real schema.
+    No current field is a toggle or uses ``visible_si``; the generic controls
+    are exercised by adding them to a copy of the real schema.
     """
     real_schema = sw._schema
 
     def schema():
-        sections = real_schema()
-        for _sid, _ic, _label, _desc, fields in sections:
-            for f in fields or []:
-                if f["key"] == "gain_mic":
-                    f["visible_si"] = ("listen_mic", True)
-        return sections
+        return real_schema() + [
+            ("extra", "bolt", "Extra", "Campos de prueba.", [
+                dict(key="flag", label="Flag", type="toggle", hint=""),
+                dict(key="nivel", label="Nivel", type="number", min=0.5, max=10,
+                     step=0.5, unit="x", hint="", visible_si=("flag", True)),
+            ]),
+        ]
 
     monkeypatch.setattr(sw, "_schema", schema)
 
 
-@pytest.mark.parametrize("listen, expected", [(True, True), (False, False)])
-def test_conditional_row_follows_configured_value(qtbot, make_window, conditional_row,
-                                                  listen, expected):
-    win = make_window(listen_mic=listen)
-    _goto(qtbot, win, "Sensibilidad de audio")
+@pytest.mark.parametrize("value", [True, False])
+def test_toggle_field_reflects_configured_value(qtbot, make_window, extra_section,
+                                                value):
+    win = make_window(flag=value, nivel=1.0)
+    _goto(qtbot, win, "Extra")
 
-    assert _row(win, "gain_mic").isVisibleTo(win) is expected
+    assert _row(win, "flag").findChild(sw.ToggleSwitch).isChecked() is value
 
 
-def test_conditional_row_hides_when_condition_changes(qtbot, make_window, conditional_row):
-    win = make_window(listen_mic=True)
-    _goto(qtbot, win, "Sensibilidad de audio")
+@pytest.mark.parametrize("flag, expected", [(True, True), (False, False)])
+def test_conditional_row_follows_configured_value(qtbot, make_window, extra_section,
+                                                  flag, expected):
+    win = make_window(flag=flag, nivel=1.0)
+    _goto(qtbot, win, "Extra")
 
-    qtbot.mouseClick(_row(win, "listen_mic").findChild(sw.ToggleSwitch), LEFT)
+    assert _row(win, "nivel").isVisibleTo(win) is expected
 
-    assert _row(win, "gain_mic").isVisibleTo(win) is False
+
+def test_conditional_row_hides_when_condition_changes(qtbot, make_window, extra_section):
+    win = make_window(flag=True, nivel=1.0)
+    _goto(qtbot, win, "Extra")
+
+    qtbot.mouseClick(_row(win, "flag").findChild(sw.ToggleSwitch), LEFT)
+
+    assert _row(win, "nivel").isVisibleTo(win) is False
+
+
+@pytest.mark.parametrize("start", [True, False])
+def test_toggle_click_is_saved(qtbot, make_window, extra_section, start):
+    win = make_window(flag=start, nivel=1.0)
+    _goto(qtbot, win, "Extra")
+    qtbot.mouseClick(_row(win, "flag").findChild(sw.ToggleSwitch), LEFT)
+
+    _save(qtbot, win)
+
+    assert config.load_config()["flag"] is (not start)
 
 
 # ================================================================== saving
@@ -325,15 +340,15 @@ def test_text_field_saves_stripped_value(qtbot, make_window):
     assert config.load_config()["assemblyai_api_key"] == "aai-1"
 
 
-@pytest.mark.parametrize("key", EFFORT_KEYS)
-def test_select_change_is_saved(qtbot, make_window, key):
-    win = make_window(**{key: "low"})
-    combo = _combo(win, key)
-    combo.setCurrentIndex(combo.findData("high"))
+def test_select_change_is_saved(qtbot, make_window):
+    win = make_window(language="es")
+    _goto(qtbot, win, "General")
+    combo = _combo(win, "language")
+    combo.setCurrentIndex(combo.findData("auto"))
 
     _save(qtbot, win)
 
-    assert config.load_config()[key] == "high"
+    assert config.load_config()["language"] == "auto"
 
 
 def test_fixed_model_is_kept_on_save(qtbot, make_window):
@@ -344,21 +359,10 @@ def test_fixed_model_is_kept_on_save(qtbot, make_window):
     assert config.load_config()["openai_model"] == "gpt-6.1-sol"
 
 
-@pytest.mark.parametrize("start", [True, False])
-def test_toggle_click_is_saved(qtbot, make_window, start):
-    win = make_window(listen_mic=start)
-    _goto(qtbot, win, "Sensibilidad de audio")
-    qtbot.mouseClick(_row(win, "listen_mic").findChild(sw.ToggleSwitch), LEFT)
-
-    _save(qtbot, win)
-
-    assert config.load_config()["listen_mic"] is (not start)
-
-
 @pytest.mark.parametrize("position, expected", [(0, 0.15), (17, 1.0), (7, 0.5)])
 def test_slider_position_is_saved_as_real_value(qtbot, make_window, position, expected):
     win = make_window()
-    _goto(qtbot, win, "Overlay")
+    _goto(qtbot, win, "General")
     _row(win, "window_opacity").findChild(QtWidgets.QSlider).setValue(position)
 
     _save(qtbot, win)
@@ -368,63 +372,43 @@ def test_slider_position_is_saved_as_real_value(qtbot, make_window, position, ex
 
 def test_slider_move_updates_displayed_value(qtbot, make_window):
     win = make_window()
-    _goto(qtbot, win, "Sensibilidad de audio")
-    row = _row(win, "gain_system")
+    _goto(qtbot, win, "General")
+    row = _row(win, "window_opacity")
 
     row.findChild(QtWidgets.QSlider).setValue(3)
 
-    assert [lab.text() for lab in _labels(row)][-1] == "2.0x"
+    assert [lab.text() for lab in _labels(row)][-1] == "0.30"
 
 
 def test_save_keeps_keys_without_a_field(qtbot, make_window):
-    win = make_window(assemblyai_model="custom-model")
+    win = make_window(test_mode=True)
 
     _save(qtbot, win)
 
-    assert config.load_config()["assemblyai_model"] == "custom-model"
+    assert config.load_config()["test_mode"] is True
+
+
+def test_internal_values_are_not_saved_from_the_window(qtbot, make_window,
+                                                       isolated_data_dir):
+    win = make_window(openai_tokens_voice=400, silence_hang=1.5)
+
+    _save(qtbot, win)
+
+    stored = (isolated_data_dir / "config.json").read_text(encoding="utf-8")
+    assert "openai_tokens_voice" not in stored and "silence_hang" not in stored
 
 
 def test_values_edited_in_two_sections_are_saved(qtbot, make_window):
     win = make_window()
     _row(win, "assemblyai_api_key").findChild(QtWidgets.QLineEdit).setText("aai-x")
-    _goto(qtbot, win, "Overlay")
-    qtbot.mouseClick(_row(win, "test_mode").findChild(sw.ToggleSwitch), LEFT)
+    _goto(qtbot, win, "General")
+    combo = _combo(win, "language")
+    combo.setCurrentIndex(combo.findData("en"))
 
     _save(qtbot, win)
 
     saved = config.load_config()
-    assert (saved["assemblyai_api_key"], saved["test_mode"]) == ("aai-x", True)
-
-
-def test_coach_prompt_es_edit_is_saved(qtbot, make_window):
-    win = make_window()
-    _goto(qtbot, win, "Coach")
-    _page(win).findChild(sw.BilingualPrompt)._edit.setPlainText("Prompt ES nuevo")
-
-    _save(qtbot, win)
-
-    assert config.load_config()["system_prompt_es"] == "Prompt ES nuevo"
-
-
-def test_coach_prompt_en_edit_is_saved(qtbot, make_window):
-    win = make_window()
-    _goto(qtbot, win, "Coach")
-    prompt = _page(win).findChild(sw.BilingualPrompt)
-    qtbot.mouseClick(_button(prompt, "English"), LEFT)
-    prompt._edit.setPlainText("New EN prompt")
-
-    _save(qtbot, win)
-
-    assert config.load_config()["system_prompt_en"] == "New EN prompt"
-
-
-def test_coach_prompt_shows_configured_es_text(qtbot, make_window):
-    win = make_window(system_prompt_es="Hola coach")
-    _goto(qtbot, win, "Coach")
-
-    prompt = _page(win).findChild(sw.BilingualPrompt)
-
-    assert prompt._edit.toPlainText() == "Hola coach"
+    assert (saved["assemblyai_api_key"], saved["language"]) == ("aai-x", "en")
 
 
 # ================================================================== footer state / signals
@@ -568,13 +552,10 @@ def test_title_bar_drag_moves_window(make_window):
 
 
 # ================================================================== navigation
-@pytest.mark.parametrize("label", [
-    "Overlay", "Sensibilidad de audio", "Detección de frases", "Coach", "Contexts",
-    "Conexión",
-])
+@pytest.mark.parametrize("label", ["General", "Contexts", "Conexión"])
 def test_nav_click_shows_section(qtbot, make_window, label):
     win = make_window()
-    _goto(qtbot, win, "Coach")
+    _goto(qtbot, win, "Contexts")
 
     _goto(qtbot, win, label)
 
@@ -584,16 +565,16 @@ def test_nav_click_shows_section(qtbot, make_window, label):
 def test_nav_right_click_keeps_section(qtbot, make_window):
     win = make_window()
 
-    qtbot.mouseClick(_nav(win, "Overlay"), QtCore.Qt.RightButton)
+    qtbot.mouseClick(_nav(win, "General"), QtCore.Qt.RightButton)
 
     assert _heading(win) == "Conexión"
 
 
-@pytest.mark.parametrize("label, color", [("Overlay", "#f7e39a"), ("Conexión", "#b8af9a")])
+@pytest.mark.parametrize("label, color", [("General", "#f7e39a"), ("Conexión", "#b8af9a")])
 def test_nav_item_color_marks_active_section(qtbot, make_window, label, color):
     win = make_window()
 
-    _goto(qtbot, win, "Overlay")
+    _goto(qtbot, win, "General")
 
     assert _nav(win, label)._lab.styleSheet() == f"color: {color}; background: transparent;"
 
@@ -993,62 +974,3 @@ def test_dot_paints(qtbot):
     qtbot.addWidget(dot)
 
     assert dot.grab().isNull() is False
-
-
-# ================================================================== BilingualPrompt
-@pytest.fixture
-def make_prompt(qtbot):
-    def _make(es="texto es", en="text en"):
-        calls = []
-        prompt = sw.BilingualPrompt(es, en, lambda lang, txt: calls.append((lang, txt)))
-        qtbot.addWidget(prompt)
-        return prompt, calls
-    return _make
-
-
-def test_bilingual_prompt_starts_in_spanish(make_prompt):
-    prompt, _calls = make_prompt()
-
-    assert prompt._edit.toPlainText() == "texto es"
-
-
-def test_bilingual_prompt_switch_shows_english(qtbot, make_prompt):
-    prompt, _calls = make_prompt()
-
-    qtbot.mouseClick(_button(prompt, "English"), LEFT)
-
-    assert prompt._edit.toPlainText() == "text en"
-
-
-def test_bilingual_prompt_switch_does_not_report_change(qtbot, make_prompt):
-    prompt, calls = make_prompt()
-
-    qtbot.mouseClick(_button(prompt, "English"), LEFT)
-
-    assert calls == []
-
-
-def test_bilingual_prompt_typing_reports_language_and_text(make_prompt):
-    prompt, calls = make_prompt()
-
-    prompt._edit.setPlainText("nuevo")
-
-    assert calls == [("es", "nuevo")]
-
-
-def test_bilingual_prompt_keeps_edit_across_switch(qtbot, make_prompt):
-    prompt, _calls = make_prompt()
-    prompt._edit.setPlainText("editado")
-    qtbot.mouseClick(_button(prompt, "English"), LEFT)
-
-    qtbot.mouseClick(_button(prompt, "Español"), LEFT)
-
-    assert prompt._edit.toPlainText() == "editado"
-
-
-def test_bilingual_prompt_accepts_missing_texts(qtbot, make_prompt):
-    prompt, _calls = make_prompt(es=None, en=None)
-
-    qtbot.mouseClick(_button(prompt, "English"), LEFT)
-
-    assert prompt._edit.toPlainText() == ""
