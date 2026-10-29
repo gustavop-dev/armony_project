@@ -215,6 +215,10 @@ def _schema():
             dict(key="gain_mic", label="Ganancia micrófono", type="number",
                  min=0.5, max=10, step=0.5, unit="x",
                  hint="Amplifica tu micro (y también el ruido de fondo)."),
+            dict(key="listen_mic", label="Escuchar mi micrófono", type="toggle",
+                 hint="Transcribe tu voz para saber que ya contestaste y no ponerte "
+                      "otra respuesta encima. Nunca genera respuestas. Usa "
+                      "auriculares."),
          ]),
         ("phrases", "scissors", "Detección de frases",
          "Cuándo se da una frase por terminada y se dispara la respuesta.", [

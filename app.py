@@ -354,6 +354,10 @@ class OverlayApp(QtCore.QObject):
             return
         if motivo == "model_declined":
             self.panel.show_skip("Not a question — Alt+5 to answer")
+        elif motivo == "follow_up":
+            # Anadieron algo a la pregunta que estas leyendo o contestando: no
+            # se te pone otra respuesta encima, pero puedes pedirla.
+            self.panel.show_skip("Added to the current question — Alt+5 for a new answer")
         else:
             self.panel.show_skip("No question yet — Alt+5 to answer")
 

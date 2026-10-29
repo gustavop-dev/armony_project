@@ -187,6 +187,33 @@ Status (2026-10-28): **done**.
 
 Acceptance: every non-"new question" scenario produces exactly 1 card.
 
+Status (2026-10-28): **done**, with the interim rule.
+- `hilo.py` holds the thread states, the acknowledgement filter and echo
+  detection, all pure.
+  - States: `preguntada` / `respondiendo` / `respondida`.
+  - Acknowledgement filter: "vale", "déjame pensar"… don't count as answering.
+  - Echo detection: a mic final ≈ a recent interviewer final means the
+    speakers leak into the mic. A one-time warning is shown and the text is
+    dropped.
+- `engine` opens a second `StreamingSTT` for the mic (`listen_mic`, default
+  on). Tester finals go to history as "Yo" and to the thread.
+- An interviewer final while the thread is `preguntada` / `respondiendo` is
+  context: `noAnswer("follow_up")`, and the footer pill says "Added to the
+  current question — Alt+5 for a new answer". A question once it is
+  `respondida` opens a new thread.
+- A thread whose answer never reached the screen (model declined, error,
+  empty answer) is closed so it cannot block the next question. Alt+5 always
+  opens a new thread.
+- Since `audio.py` was being touched, capture now resamples with one
+  `soxr.ResampleStream` per stream (hypothesis 1 fix).
+- Tests:
+  - `tests/test_hilo.py`: 21
+  - `tests/test_engine_turns.py`: 8 interview scenarios through
+    `CoachEngine`. With the old "every question gets an answer" rule, the two
+    follow-up scenarios produce 2 answers instead of 1.
+- Not verified here: a live meeting with real mic audio. The mic stream is the
+  same `StreamingSTT` class measured on FLEURS.
+
 ## Phase 3: Jev arbiter, gated by state
 
 - Add a `drills_into_part` relation: go deeper into one specific part of the

@@ -1,10 +1,11 @@
 """Captura de audio en Windows via WASAPI.
 
 - Loopback (salida del sistema = lo que dicen los demas en la reunion): se transcribe.
-- Microfono (tu voz): solo se usa para el medidor de nivel (verificar que se escucha).
+- Microfono (tu voz): medidor de nivel y, si se pide, tambien se transcribe
+  (en un stream aparte) para saber cuando ya contestaste.
 
-Cada fuente corre en su propio hilo y calcula el nivel RMS (para las barras). El
-loopback, ademas, se pasa a 16 kHz mono y se entrega continuo a la transcripcion
+Cada fuente corre en su propio hilo y calcula el nivel RMS (para las barras). Lo
+que se transcribe se pasa a 16 kHz mono y se entrega continuo a la transcripcion
 en streaming, que decide ella misma donde termina cada turno.
 """
 import time
@@ -51,9 +52,11 @@ class AudioEngine:
     """Arranca/detiene la captura de loopback y microfono."""
 
     def __init__(self, on_sys_level, on_mic_level, on_status, on_system_pcm,
-                 gain_system=1.0, gain_mic=1.0):
+                 gain_system=1.0, gain_mic=1.0, on_mic_pcm=None):
         """on_system_pcm(bloque_f32_16k): audio continuo de la reunion, sin cortar.
             Lo consume la transcripcion en streaming.
+        on_mic_pcm(bloque_f32_16k): lo mismo con tu micro, o None para solo
+            medir su nivel.
 
         gain_*: ganancia digital aplicada antes de medir nivel y de transcribir.
         """
@@ -61,6 +64,7 @@ class AudioEngine:
         self.on_mic_level = on_mic_level
         self.on_status = on_status
         self.on_system_pcm = on_system_pcm
+        self.on_mic_pcm = on_mic_pcm
         self.gain_system = float(gain_system)
         self.gain_mic = float(gain_mic)
 
@@ -139,6 +143,12 @@ class AudioEngine:
             return
 
         self.on_status(f"Escuchando {name}: {device['name'][:40]} ({rate} Hz)")
+        # Un remuestreador CON memoria para todo el flujo. Llamar a
+        # soxr.resample en cada lectura de 1024 frames lo trataba como trozos
+        # sueltos: medido, ~22 dB de distorsion en las costuras y un 0,1 % de
+        # deriva en el tiempo (docs/spike-stt-accuracy.md, hipotesis 1).
+        remuestreo = soxr.ResampleStream(rate, TARGET_RATE, 1, dtype="float32")
+        destino = self.on_system_pcm if is_loopback else self.on_mic_pcm
         ultimo_chequeo = time.monotonic()
         while self._running:
             # Si cambias de altavoces a auriculares a media reunion, Windows
@@ -178,14 +188,15 @@ class AudioEngine:
             level = int(min(100, rms * 300))
             if is_loopback:
                 self.on_sys_level(level)
-                block16 = soxr.resample(arr, rate, TARGET_RATE).astype(np.float32)
-                try:
-                    self.on_system_pcm(block16)
-                except Exception:
-                    pass
             else:
-                # El micro solo alimenta la barra de nivel (asi ves que esta vivo).
-                self.on_mic_level(level)
+                self.on_mic_level(level)     # la barra, se transcriba o no
+            if destino is not None:
+                block16 = remuestreo.resample_chunk(arr.astype(np.float32))
+                if block16.size:
+                    try:
+                        destino(block16)
+                    except Exception:
+                        pass
 
         try:
             stream.stop_stream()

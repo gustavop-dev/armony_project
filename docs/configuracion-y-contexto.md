@@ -39,6 +39,7 @@ desarrollo).
 |---|---|---|---|---|---|
 | `gain_system` | Ganancia reunión (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica el audio del sistema antes de medir nivel y transcribir. |
 | `gain_mic` | Ganancia micrófono (x) | Numérico | 0.5 – 10.0 (paso 0.5) | `1.0` | Amplifica tu micro. Ojo: amplifica también el ruido de fondo. |
+| `listen_mic` | Escuchar mi micrófono | Casilla | on/off | `on` | Transcribe tu voz en un segundo stream (~0,45 USD/h). Nunca genera respuestas: sirve para saber que ya contestaste y no ponerte otra respuesta encima. Pensado para usar con auriculares. |
 
 ## ✂️ Detección de frases
 

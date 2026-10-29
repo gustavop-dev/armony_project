@@ -118,6 +118,10 @@ DEFAULTS = {
     # Ojo: subir mucho la ganancia del micro amplifica tambien el zumbido electrico.
     # Mejor subir el nivel de entrada en Windows.
     "gain_mic": 1.0,
+    # Transcribir tu micro (segundo stream de AssemblyAI, ~0,45 USD/h mas). Nunca
+    # dispara respuestas: sirve para saber que ya contestaste y no ponerte otra
+    # respuesta encima mientras hablas. Pensado para usar con auriculares.
+    "listen_mic": True,
 
     # --- Agrupacion de turnos ---
     # Pausa que se espera tras un turno cerrado antes de responder: junta las

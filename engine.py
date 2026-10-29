@@ -5,6 +5,10 @@ Sin dependencias de interfaz: expone senales Qt y no sabe como se dibuja nada.
 La transcripcion va en la nube (AssemblyAI): el audio de la reunion viaja
 continuo y el texto vuelve palabra a palabra mientras la persona habla. El fin
 de turno lo decide el propio modelo.
+
+Tu micro va en un segundo stream: no dispara respuestas, pero dice cuando ya
+contestaste (hilo.py), y con eso lo que anada el entrevistador mientras lees o
+contestas queda como contexto en vez de abrir otra respuesta encima.
 """
 import os
 import re
@@ -15,6 +19,7 @@ from collections import deque
 
 from PySide6 import QtCore
 
+import hilo
 import intent
 from metrics import E2E, LLM_CALENTAMIENTO, STT_LATENCIA, metricas
 
@@ -119,6 +124,15 @@ class CoachEngine(QtCore.QObject):
         self._turn_timer = None
         self._turn_gap = 0.7
 
+        # La pregunta en curso y tu micro (ver hilo.py).
+        self._clock = time.monotonic
+        self._hilo_lock = threading.Lock()
+        self._hilo = None
+        self._stt_mic = None
+        self._listen_mic = True
+        self._recientes_ellos = deque(maxlen=6)   # (instante, texto) para el eco
+        self._eco_avisado = False
+
     def start(self, cfg, test_mode=False):
         """test_mode: solo audio + transcripcion (sin llamar al modelo de respuestas)."""
         if self._running:
@@ -138,6 +152,10 @@ class CoachEngine(QtCore.QObject):
         self._turn_parts = []
         self._t_pregunta = 0.0
         self._registro = []
+        self._hilo = None
+        self._recientes_ellos.clear()
+        self._eco_avisado = False
+        self._listen_mic = bool(cfg.get("listen_mic", True))
 
         metricas.iniciar()
         metricas.nota("proveedor: openai")
@@ -169,6 +187,18 @@ class CoachEngine(QtCore.QObject):
             end_of_turn_threshold=cfg.get("end_of_turn_threshold", 0.4),
         )
         self._stt.start()
+        if self._listen_mic:
+            # Segundo stream, el de tu voz: misma clave e idioma, sin estados en
+            # la barra (ya los da el de la reunion) y con sus errores marcados.
+            self._stt_mic = StreamingSTT(
+                api_key=cfg["assemblyai_api_key"],
+                on_final=self._on_mic_final,
+                on_error=lambda m: self._running and self.error.emit(f"Micro: {m}"),
+                language=cfg.get("language", "es"),
+                model=cfg.get("assemblyai_model", "universal-3-5-pro"),
+                end_of_turn_threshold=cfg.get("end_of_turn_threshold", 0.4),
+            )
+            self._stt_mic.start()
         self.status.emit("Conectando la transcripcion en vivo...")
 
         if not self._test_mode:
@@ -220,9 +250,9 @@ class CoachEngine(QtCore.QObject):
             on_sys_level=lambda v: self._running and self.sysLevel.emit(v),
             on_mic_level=lambda v: self._running and self.micLevel.emit(v),
             on_status=lambda m: self._running and self.status.emit(m),
-            # Solo se transcribe la reunion: un unico stream. Tu micro sigue
-            # midiendo nivel (la barra) pero no se manda a transcribir.
+            # La reunion y, si esta activado, tu micro: cada uno a su stream.
             on_system_pcm=self._stt.feed,
+            on_mic_pcm=self._stt_mic.feed if self._stt_mic is not None else None,
             gain_system=cfg.get("gain_system", 1.0),
             gain_mic=cfg.get("gain_mic", 1.0),
         )
@@ -248,6 +278,7 @@ class CoachEngine(QtCore.QObject):
     def _on_stt_final(self, texto, latencia_ms):
         if not self._running:
             return
+        self._recientes_ellos.append((self._clock(), texto))
         metricas.medir(STT_LATENCIA, latencia_ms)
         self.sttLatency.emit(latencia_ms)
         if self._test_mode:
@@ -290,12 +321,27 @@ class CoachEngine(QtCore.QObject):
         self.transcript.emit("system", texto)
         self._anotar_oido(texto)
         metricas.contar("intervenciones")
-        if intent.parece_pregunta(texto, self._language):
+        es_pregunta = intent.parece_pregunta(texto, self._language)
+        # Puerta 0: si hay una pregunta abierta que estas leyendo o contestando,
+        # lo que anadan es contexto, aunque suene a pregunta ("ah, pero ¿y en
+        # AWS?"). Solo con la anterior ya respondida abre otra respuesta.
+        ahora = self._clock()
+        with self._hilo_lock:
+            accion = hilo.decidir(self._hilo, es_pregunta, ahora)
+            if accion == "nueva":
+                self._hilo = hilo.HiloPregunta(texto, ahora)
+            elif self._hilo is not None:
+                self._hilo.entrevistador(texto, ahora)
+        if accion == "nueva":
             metricas.contar("con_pregunta")
             # Marca de tiempo para medir lo unico que notas de verdad: cuanto
             # tardas en tener algo que decir desde que te preguntan.
             self._t_pregunta = time.monotonic()
             self._queue.put({"type": "respond", "text": texto, "auto": True})
+        elif es_pregunta:
+            metricas.contar("anadidos_contexto")
+            self.status.emit("Añadido a la pregunta en curso: guardado como contexto.")
+            self.noAnswer.emit("follow_up")
         else:
             metricas.contar("solo_contexto")
             self.status.emit("Sin pregunta todavia: guardado como contexto.")
@@ -324,7 +370,31 @@ class CoachEngine(QtCore.QObject):
             self._history.append(("Ellos", texto))
             self.transcript.emit("system", texto)
             self._anotar_oido(texto)
+        # Pedirla a mano manda: es una pregunta nueva aunque hubiera otra abierta.
+        with self._hilo_lock:
+            self._hilo = hilo.HiloPregunta(texto, self._clock())
         self._queue.put({"type": "respond", "text": texto, "auto": False})
+
+    def _on_mic_final(self, texto, latencia_ms=0):
+        """Lo que dijiste tu, por tu micro. Nunca dispara una respuesta: es
+        contexto (para no sugerirte repetir lo que ya dijiste) y la senal de que
+        la pregunta en curso ya la estas contestando."""
+        if not self._running or not texto:
+            return
+        ahora = self._clock()
+        if hilo.es_eco(texto, list(self._recientes_ellos), ahora):
+            metricas.contar("eco_micro")
+            if not self._eco_avisado:
+                self._eco_avisado = True
+                self.status.emit("Tu micro capta los altavoces: usa auriculares "
+                                 "para que no se confunda tu voz con la reunion.")
+            return
+        metricas.contar("intervenciones_tuyas")
+        self._history.append(("Yo", texto))
+        self._registro.append(("Yo", texto))
+        with self._hilo_lock:
+            if self._hilo is not None:
+                self._hilo.tester(texto, ahora)
 
     def _anotar_oido(self, texto):
         """Guarda el ultimo turno oido y lo marca como pendiente de respuesta."""
@@ -469,13 +539,22 @@ class CoachEngine(QtCore.QObject):
                 return
             abrir()
 
+        def on_error(mensaje):
+            if not estado["abierto"]:
+                self._cerrar_hilo()         # fallo antes de pintar nada
+            self.error.emit(mensaje)
+
         def on_done():
             if estado["callado"]:
+                # No habia pregunta: nada en pantalla, asi que tampoco puede
+                # quedar una pregunta abierta bloqueando la siguiente.
+                self._cerrar_hilo()
                 self.status.emit("Sin pregunta todavia: guardado como contexto.")
                 self.noAnswer.emit("model_declined")
                 return
             if not estado["abierto"]:
                 if not estado["buffer"].strip():
+                    self._cerrar_hilo()
                     return                  # respuesta vacia: no hay nada que pintar
                 abrir()                     # respuesta mas corta que el centinela
             # La sugerencia entregada pasa a ser contexto. No se transcribe tu
@@ -497,9 +576,14 @@ class CoachEngine(QtCore.QObject):
             note=note,
             on_delta=on_delta,
             on_done=on_done,
-            on_error=self.error.emit,
+            on_error=on_error,
             allow_silence=permitir_silencio,
         )
+
+    def _cerrar_hilo(self):
+        """La pregunta abierta no llego a tener respuesta en pantalla."""
+        with self._hilo_lock:
+            self._hilo = None
 
     def stop(self):
         """Para la sesion dejandolo TODO limpio para el siguiente arranque.
@@ -528,6 +612,9 @@ class CoachEngine(QtCore.QObject):
         if self._stt is not None:
             self._stt.stop()
             self._stt = None
+        if self._stt_mic is not None:
+            self._stt_mic.stop()
+            self._stt_mic = None
 
         q = self._queue
         q.put(None)                      # desbloquea al worker si esta esperando
