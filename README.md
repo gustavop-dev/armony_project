@@ -305,10 +305,14 @@ límite de longitud siga refiriéndose a la respuesta y no llegue vacía.
 
 Como en ChatGPT, Claude o Grok, la app se abre en una Home:
 
-- **A la izquierda**, tus agentes y, debajo de cada uno, sus reuniones pasadas (las
-  cinco últimas). Arriba, *Nuevo agente*; abajo, *Ajustes*.
-- **En el centro**, el agente elegido, con *Iniciar reunión* y tres pestañas. O,
-  si abres una reunión pasada, su transcripción.
+- **A la izquierda**, tus agentes. Al pasar el ratón por uno aparecen una tuerca
+  (su configuración) y, si tiene reuniones, una flecha que las despliega debajo.
+  Arriba, *Nuevo agente*; abajo, *Ajustes*.
+- **Al pulsar un agente**, solo lo que se hace con él: *Iniciar reunión* o *Editar
+  agente*. Su configuración (Instrucciones, Reglas, Conocimiento) no sale de golpe.
+- **Todo el markdown se lee formateado**: instrucciones, reglas, documentos y
+  transcripciones. *Editar* (o doble clic) abre el texto en bruto y *Vista previa*
+  vuelve.
 - Todo se **guarda solo** (el estado se ve arriba a la izquierda) y borrar un agente,
   un documento o una reunión pide un segundo clic.
 

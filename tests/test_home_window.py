@@ -57,7 +57,35 @@ def test_home_opens_on_the_agent_in_use(make_home):
     win = make_home(agent="grok")
 
     assert win.vista == ("agente", "grok")
+    assert _find(win, QtWidgets.QLabel, "nombre-portada").text() == "Grok"
+
+
+def test_agent_page_only_offers_start_or_edit(make_home):
+    win = make_home(agent="grok")
+
+    botones = {b.objectName() for b in _page(win).findChildren(QtWidgets.QPushButton)
+               if b.objectName()}
+
+    assert botones == {"iniciar", "editar"}
+    assert _page(win).findChildren(QtWidgets.QPlainTextEdit) == []
+
+
+def test_edit_button_opens_the_configuration(make_home, qtbot):
+    win = make_home(agent="grok")
+
+    qtbot.mouseClick(_find(win, QtWidgets.QPushButton, "editar"), LEFT)
+
+    assert win.vista == ("editar", "grok")
     assert _find(win, QtWidgets.QLineEdit, "nombre-agente").text() == "Grok"
+
+
+def test_back_button_returns_to_the_agent_page(make_home, qtbot):
+    win = make_home(agent="grok")
+    win.editar_agente("grok")
+
+    qtbot.mouseClick(_find(win, QtWidgets.QPushButton, "volver"), LEFT)
+
+    assert win.vista == ("agente", "grok")
 
 
 def test_sidebar_lists_every_agent(make_home):
@@ -73,9 +101,20 @@ def test_open_agent_is_marked_in_the_sidebar(make_home):
     assert [r._activo for r in _agent_rows(win)] == [False, True, False, False]
 
 
+def test_meetings_are_folded_until_the_arrow_is_pressed(make_home):
+    _save_session("grok", "Grok", "¿Pagos duplicados?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+
+    assert win.lista.widget().findChildren(hw.SessionItem) == []
+    win._filas_agente["grok"].desplegar.emit()
+
+    assert len(win.lista.widget().findChildren(hw.SessionItem)) == 1
+
+
 def test_meetings_are_listed_under_their_agent(make_home):
     _save_session("grok", "Grok", "¿Pagos duplicados?", dt.datetime(2026, 10, 29, 16, 18))
     win = make_home()
+    win._desplegar("grok")
 
     filas = [w for w in win.lista.widget().children()
              if isinstance(w, (hw.NavItem, hw.SessionItem))]
@@ -90,13 +129,14 @@ def test_meetings_are_listed_under_their_agent(make_home):
 def test_tabs_show_the_full_agent_text(make_home, pestana, campo):
     win = make_home(agent="grok")
 
-    win.abrir_agente("grok", pestana)
+    win.editar_agente("grok", pestana)
 
     assert _find(win, QtWidgets.QPlainTextEdit, campo).toPlainText() == agents.preset("grok")[campo]
 
 
 def test_edits_are_saved_automatically(make_home):
     win = make_home(agent="grok")
+    win.editar_agente("grok", "instrucciones")
     _find(win, QtWidgets.QPlainTextEdit, "instrucciones").setPlainText("Sarcástico y breve.")
 
     assert win.saved_lbl.text() == "Guardando…"
@@ -108,6 +148,7 @@ def test_edits_are_saved_automatically(make_home):
 
 def test_autosave_fires_on_its_own(make_home, qtbot):
     win = make_home(agent="grok")
+    win.editar_agente("grok")
     win._guardado.setInterval(10)
 
     _find(win, QtWidgets.QLineEdit, "nombre-agente").setText("Grok 2")
@@ -117,6 +158,7 @@ def test_autosave_fires_on_its_own(make_home, qtbot):
 
 def test_renaming_updates_the_sidebar_live(make_home):
     win = make_home(agent="grok")
+    win.editar_agente("grok")
 
     _find(win, QtWidgets.QLineEdit, "nombre-agente").setText("Grok 2")
 
@@ -128,14 +170,14 @@ def test_new_agent_starts_as_a_copy_of_the_coach(make_home, qtbot):
 
     win._ag_add()
 
-    assert win.vista == ("agente", "agente-1")
+    assert win.vista == ("editar", "agente-1")
     assert _find(win, QtWidgets.QPlainTextEdit, "instrucciones").toPlainText() == (
         agents.preset("coach")["instrucciones"])
 
 
 def test_restore_brings_back_the_preset_text(make_home, qtbot):
     win = make_home(agent="grok")
-    win.abrir_agente("grok", "reglas")
+    win.editar_agente("grok", "reglas")
     _find(win, QtWidgets.QPlainTextEdit, "reglas").setPlainText("sin reglas")
     win._mostrar()
 
@@ -146,6 +188,7 @@ def test_restore_brings_back_the_preset_text(make_home, qtbot):
 
 def test_deleting_needs_a_second_click(make_home, qtbot):
     win = make_home(agent="grok")
+    win.editar_agente("grok")
     borrar = _find(win, hw.ConfirmDelete, "borrar-agente")
 
     qtbot.mouseClick(borrar.papelera, LEFT)
@@ -159,6 +202,7 @@ def test_deleting_needs_a_second_click(make_home, qtbot):
 
 def test_unconfirmed_delete_goes_back(make_home, qtbot):
     win = make_home(agent="grok")
+    win.editar_agente("grok")
     borrar = _find(win, hw.ConfirmDelete, "borrar-agente")
     borrar._vuelta.setInterval(10)
 
@@ -180,7 +224,7 @@ def test_last_agent_cannot_be_deleted(make_home):
 # ------------------------------------------------------------------ knowledge
 def test_knowledge_documents_are_saved_with_the_agent(make_home):
     win = make_home(agent="senior")
-    win.abrir_agente("senior", "conocimiento")
+    win.editar_agente("senior", "conocimiento")
 
     win._doc_add("senior")
     _find(win, QtWidgets.QLineEdit, "nombre-documento").setText("Mi CV")
@@ -196,6 +240,7 @@ def test_knowledge_tab_counts_documents(make_home):
     lista[0]["conocimiento"] = [{"id": "doc-1", "name": "CV", "body": "x"}]
     agents.write_all(lista)
     win = make_home()
+    win.editar_agente("coach")
 
     tabs = _find(win, hw.Segmented, "pestanas")
 
@@ -319,9 +364,116 @@ def test_internal_settings_have_no_field(make_home, key):
 
 def test_close_saves_and_asks_to_quit(make_home, qtbot):
     win = make_home(agent="grok")
+    win.editar_agente("grok")
     _find(win, QtWidgets.QLineEdit, "nombre-agente").setText("Grok 3")
 
     with qtbot.waitSignal(win.closeApp):
         win._cerrar_app()
 
     assert agents.get("grok")["name"] == "Grok 3"
+
+
+# ------------------------------------------------------------------ sidebar hover
+def test_gear_and_arrow_show_on_hover(make_home, qtbot):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home(agent="coach")
+    fila = win._filas_agente["grok"]
+
+    antes = (fila.btn_editar.isVisibleTo(fila), fila.btn_flecha.isVisibleTo(fila))
+    fila._hover = True
+    fila._actualizar()
+
+    assert antes == (False, False)
+    assert (fila.btn_editar.isVisibleTo(fila), fila.btn_flecha.isVisibleTo(fila)) == (True, True)
+
+
+def test_agent_without_meetings_has_no_arrow(make_home):
+    win = make_home(agent="coach")
+    fila = win._filas_agente["grok"]
+    fila._hover = True
+    fila._actualizar()
+
+    assert fila.btn_flecha.isVisibleTo(fila) is False
+
+
+def test_gear_opens_the_configuration(make_home, qtbot):
+    win = make_home(agent="coach")
+
+    qtbot.mouseClick(win._filas_agente["grok"].btn_editar, LEFT)
+
+    assert win.vista == ("editar", "grok")
+
+
+def test_opening_a_meeting_unfolds_its_agent(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+
+    win.abrir_sesion("sesion-20261029-161800")
+
+    assert "grok" in win._desplegados
+
+
+# ------------------------------------------------------------------ markdown
+def test_text_is_shown_rendered_by_default(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "reglas")
+
+    vista = _find(win, QtWidgets.QTextBrowser, "vista-reglas")
+    editor = _find(win, QtWidgets.QPlainTextEdit, "reglas")
+
+    assert (vista.isVisibleTo(win), editor.isVisibleTo(win)) == (True, False)
+    assert "#" not in vista.toPlainText().splitlines()[0]     # heading rendered
+
+
+def test_edit_button_switches_to_raw_text_and_back(make_home, qtbot):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "instrucciones")
+    boton = _find(win, QtWidgets.QPushButton, "modo-instrucciones")
+
+    qtbot.mouseClick(boton, LEFT)
+    editor = _find(win, QtWidgets.QPlainTextEdit, "instrucciones")
+    assert (editor.isVisibleTo(win), boton.text()) == (True, "Vista previa")
+    editor.setPlainText("**Breve** y directo")
+    qtbot.mouseClick(boton, LEFT)
+
+    vista = _find(win, QtWidgets.QTextBrowser, "vista-instrucciones")
+    assert vista.toPlainText().strip() == "Breve y directo"
+
+
+def test_edit_mode_survives_a_redraw(make_home, qtbot):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "instrucciones")
+    qtbot.mouseClick(_find(win, QtWidgets.QPushButton, "modo-instrucciones"), LEFT)
+
+    win._mostrar()
+
+    assert _find(win, QtWidgets.QPlainTextEdit, "instrucciones").isVisibleTo(win) is True
+
+
+def test_double_click_on_the_preview_starts_editing(make_home, qtbot):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "instrucciones")
+    vista = _find(win, QtWidgets.QTextBrowser, "vista-instrucciones")
+
+    qtbot.mouseDClick(vista.viewport(), LEFT)
+
+    assert _find(win, QtWidgets.QPlainTextEdit, "instrucciones").isVisibleTo(win) is True
+
+
+def test_new_document_opens_ready_to_write(make_home):
+    win = make_home(agent="senior")
+    win.editar_agente("senior", "conocimiento")
+
+    win._doc_add("senior")
+
+    assert _find(win, QtWidgets.QPlainTextEdit, "cuerpo-documento").isVisibleTo(win) is True
+
+
+def test_meeting_transcript_is_rendered(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+
+    win.abrir_sesion("sesion-20261029-161800")
+
+    texto = _find(win, QtWidgets.QTextBrowser, "transcripcion").toPlainText()
+    assert "**" not in texto and "###" not in texto

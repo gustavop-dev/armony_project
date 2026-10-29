@@ -4,9 +4,12 @@ Como la de ChatGPT, Claude o Grok, pero para reuniones:
 
   - a la izquierda, tus agentes y, debajo de cada uno, sus reuniones pasadas
     (el historial); arriba "Nuevo agente" y abajo "Ajustes".
-  - en el centro, el agente elegido: su nombre, sus instrucciones, sus reglas y
-    su conocimiento (documentos), y el boton para iniciar la reunion con el.
-  - una reunion pasada se abre en el centro con su transcripcion.
+  - al pulsar un agente, solo lo que se hace con el: iniciar la reunion o
+    editarlo. Su configuracion (instrucciones, reglas, conocimiento) se abre
+    con la tuerca de su fila o con "Editar agente", nunca de golpe.
+  - la flecha de cada agente despliega sus reuniones; una reunion se abre en
+    el centro con su transcripcion.
+  - todo lo escrito en markdown se lee formateado; "Editar" lo abre en bruto.
   - "Ajustes" es una vista aparte: claves, idioma y opacidad.
 
 Todo se guarda solo, un momento despues de cada cambio. Borrar un agente o
@@ -232,6 +235,151 @@ class ConfirmDelete(QtWidgets.QWidget):
         self.confirmed.emit()
 
 
+def _estilo_markdown(doc):
+    """Colores del markdown renderizado, a juego con el material."""
+    doc.setDefaultStyleSheet(
+        f"h1, h2, h3, h4 {{ color: {N.TITULO}; }} "
+        f"a {{ color: {N.ACENTO}; }} "
+        f"code {{ background-color: #DCE3EF; color: {N.TITULO}; }} "
+        f"pre {{ background-color: #DCE3EF; color: {N.TITULO}; }}")
+
+
+def lector_markdown(nombre=""):
+    """QTextBrowser de solo lectura para markdown (vistas previas, actas)."""
+    v = QtWidgets.QTextBrowser()
+    if nombre:
+        v.setObjectName(nombre)
+    v.setOpenExternalLinks(False)
+    v.setStyleSheet(N.qss_campo().replace("QPlainTextEdit", "QTextBrowser")
+                    + "QTextBrowser { font-size: 13px; padding: 6px 4px; }")
+    _estilo_markdown(v.document())
+    return v
+
+
+class MarkdownField(QtWidgets.QWidget):
+    """Texto markdown: se lee formateado; "Editar" (o doble clic) abre el texto
+    en bruto y "Vista previa" vuelve a formatearlo. En bruto, un CV o unas
+    reglas con almohadillas y asteriscos se leian mal."""
+    changed = QtCore.Signal(str)
+    modoCambiado = QtCore.Signal(bool)     # True = editando
+
+    def __init__(self, texto, nombre, mono=False, editando=False,
+                 vacio="Aún no hay nada escrito. Pulsa Editar para escribir."):
+        super().__init__()
+        self._vacio = vacio
+        lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0)
+        dentro = QtWidgets.QWidget()
+        dl = QtWidgets.QVBoxLayout(dentro); dl.setContentsMargins(0, 0, 0, 0)
+        self.vista = lector_markdown(f"vista-{nombre}")
+        self.vista.viewport().installEventFilter(self)
+        self.editor = QtWidgets.QPlainTextEdit(texto)
+        self.editor.setObjectName(nombre)
+        self.editor.setStyleSheet(N.qss_campo(mono=mono))
+        self.editor.textChanged.connect(lambda: self.changed.emit(self.editor.toPlainText()))
+        dl.addWidget(self.vista); dl.addWidget(self.editor)
+        lay.addWidget(N.campo(dentro))
+        self.boton = N.Button("Editar", icono="pencil", radio=12, prof=3)
+        f = self.boton.font(); f.setPixelSize(12); self.boton.setFont(f)
+        self.boton.setObjectName(f"modo-{nombre}")
+        self.boton.clicked.connect(lambda: self.set_editando(not self.editando))
+        self.editando = None
+        self.set_editando(editando, avisar=False)
+
+    def set_editando(self, on, avisar=True):
+        on = bool(on)
+        if on == self.editando:
+            return
+        self.editando = on
+        if not on:
+            texto = self.editor.toPlainText().strip()
+            self.vista.setMarkdown(texto if texto else f"*{self._vacio}*")
+        self.vista.setVisible(not on)
+        self.editor.setVisible(on)
+        self.boton.setText("Vista previa" if on else "Editar")
+        self.boton.set_icono("eye_open" if on else "pencil")
+        self.boton.updateGeometry()
+        if on:
+            self.editor.setFocus()
+        if avisar:
+            self.modoCambiado.emit(on)
+
+    def eventFilter(self, obj, e):
+        if e.type() == QtCore.QEvent.MouseButtonDblClick:
+            self.set_editando(True)
+            return True
+        return super().eventFilter(obj, e)
+
+
+class AgentRow(NavItem):
+    """Fila de agente: el nombre y, al pasar el raton (o abierta), la tuerca
+    para configurarlo y la flecha que despliega sus reuniones."""
+    editar = QtCore.Signal()
+    desplegar = QtCore.Signal()
+
+    def __init__(self, agente, n_reuniones, desplegado):
+        self._hover = False
+        self._tiene = n_reuniones > 0
+        self._desplegado = desplegado
+        super().__init__("chat", agente["name"])
+        self.setObjectName("agente")
+        self.setProperty("agente", agente["id"])
+        self._lab.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        lay = self.layout()
+        lay.setContentsMargins(24, 12, 16, 12)
+        self.btn_editar = self._mini("cog", "Configurar agente")
+        self.btn_editar.clicked.connect(self.editar.emit)
+        self.btn_flecha = self._mini("chevron_down" if desplegado else "chevron_right",
+                                     f"{'Ocultar' if desplegado else 'Ver'} sus reuniones "
+                                     f"({n_reuniones})")
+        self.btn_flecha.clicked.connect(self.desplegar.emit)
+        lay.addWidget(self.btn_editar)
+        lay.addWidget(self.btn_flecha)
+        self._actualizar()
+
+    def _mini(self, icono, tip):
+        b = QtWidgets.QPushButton()
+        b.setFixedSize(26, 26)
+        b.setToolTip(tip)
+        b.setCursor(QtCore.Qt.PointingHandCursor)
+        b.setIcon(QtGui.QIcon(icons.pixmap(icono, N.APAGADO, 15)))
+        b.setIconSize(QtCore.QSize(15, 15))
+        b.setStyleSheet("QPushButton { background: transparent; border: none; border-radius: 13px; } "
+                        "QPushButton:hover { background: rgba(91,124,250,0.14); }")
+        return b
+
+    def set_active(self, on):
+        super().set_active(on)
+        if hasattr(self, "btn_editar"):
+            self._actualizar()
+
+    def _actualizar(self):
+        visible = self._hover or self._activo
+        self.btn_editar.setVisible(visible)
+        # La flecha queda si esta desplegado: es lo que lo vuelve a plegar.
+        self.btn_flecha.setVisible(self._tiene and (visible or self._desplegado))
+
+    def enterEvent(self, e):
+        self._hover = True
+        self._actualizar()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover = False
+        self._actualizar()
+        super().leaveEvent(e)
+
+
+def _resumen(texto, largo=160):
+    """Primera frase con contenido de unas instrucciones, sin markdown."""
+    for linea in texto.splitlines():
+        limpia = linea.strip().lstrip("#>-*• ").strip()
+        if not limpia or limpia.startswith(("---", "(")):
+            continue
+        limpia = limpia.replace("**", "").replace("`", "")
+        return limpia if len(limpia) <= largo else limpia[:largo].rsplit(" ", 1)[0] + "…"
+    return ""
+
+
 def _ajustes():
     """Lo que el usuario configura (el resto va fijo en config.FIJAS)."""
     return [
@@ -277,6 +425,9 @@ class HomeWindow(QtWidgets.QWidget):
         self.vista = ("agente", self.values["agent"])
         self.pestana = "instrucciones"
         self.sel_doc = None
+        # Reuniones desplegadas en la barra (por agente) y campos en modo edicion.
+        self._desplegados = set()
+        self._editando = set()
         self._dirty = False
         self._error = None
         self._aviso = ""
@@ -399,14 +550,17 @@ class HomeWindow(QtWidgets.QWidget):
         self._filas_agente, self._filas_sesion = {}, {}
         ids = {a["id"] for a in self.agents}
         for a in self.agents:
-            fila = NavItem("chat", a["name"])
-            fila.setObjectName("agente")
-            fila.setProperty("agente", a["id"])
+            suyas = [s for s in self.sesiones if s["agent"] == a["id"]]
+            desplegado = a["id"] in self._desplegados
+            fila = AgentRow(a, len(suyas), desplegado)
             fila.clicked.connect(lambda aid=a["id"]: self.abrir_agente(aid))
+            fila.editar.connect(lambda aid=a["id"]: self.editar_agente(aid))
+            fila.desplegar.connect(lambda aid=a["id"]: self._desplegar(aid))
             self._filas_agente[a["id"]] = fila
             v.addWidget(fila)
-            for s in [s for s in self.sesiones if s["agent"] == a["id"]][:REUNIONES_POR_AGENTE]:
-                v.addWidget(self._fila_sesion(s))
+            if desplegado:
+                for s in suyas:
+                    v.addWidget(self._fila_sesion(s))
         huerfanas = [s for s in self.sesiones if s["agent"] not in ids]
         if huerfanas:
             otras = QtWidgets.QLabel("OTRAS REUNIONES")
@@ -415,7 +569,7 @@ class HomeWindow(QtWidgets.QWidget):
             otras.setStyleSheet(f"color: {TXT_FA}; background: transparent; "
                                 f"padding: 14px 0 4px 22px;")
             v.addWidget(otras)
-            for s in huerfanas[:REUNIONES_POR_AGENTE]:
+            for s in huerfanas:
                 v.addWidget(self._fila_sesion(s))
         v.addStretch()
         self.lista.setWidget(inner)
@@ -427,23 +581,38 @@ class HomeWindow(QtWidgets.QWidget):
         self._filas_sesion[s["id"]] = fila
         return fila
 
+    def _desplegar(self, aid):
+        self._desplegados ^= {aid}
+        self._rellenar_lista()
+
     def _marcar_activos(self):
         tipo, cual = self.vista
         for aid, fila in self._filas_agente.items():
-            fila.set_active(tipo == "agente" and aid == cual)
+            fila.set_active(tipo in ("agente", "editar") and aid == cual)
         for sid, fila in self._filas_sesion.items():
             fila.set_active(tipo == "sesion" and sid == cual)
         self.nav_ajustes.set_active(tipo == "ajustes")
 
     # ---------------------------------------------------- navegacion
-    def abrir_agente(self, aid, pestana=None):
+    def abrir_agente(self, aid):
+        """El agente, sin su configuracion: iniciar la reunion o editarlo."""
         self.vista = ("agente", aid)
+        self._mostrar()
+
+    def editar_agente(self, aid, pestana=None):
+        """Su configuracion: instrucciones, reglas y conocimiento."""
+        self.vista = ("editar", aid)
         if pestana:
             self.pestana = pestana
         self._mostrar()
 
     def abrir_sesion(self, sid):
         self.vista = ("sesion", sid)
+        s = next((x for x in self.sesiones if x["id"] == sid), None)
+        if s and s["agent"] not in self._desplegados and self._ag_get(s["agent"]):
+            # Que se vea de donde cuelga la reunion abierta.
+            self._desplegados.add(s["agent"])
+            self._rellenar_lista()
         self._mostrar()
 
     def ir_a_ajustes(self):
@@ -453,7 +622,7 @@ class HomeWindow(QtWidgets.QWidget):
     def agente_actual(self):
         """El agente con el que arrancaria la reunion ahora mismo."""
         tipo, cual = self.vista
-        if tipo == "agente" and self._ag_get(cual):
+        if tipo in ("agente", "editar") and self._ag_get(cual):
             return cual
         if tipo == "sesion":
             s = next((x for x in self.sesiones if x["id"] == cual), None)
@@ -466,6 +635,8 @@ class HomeWindow(QtWidgets.QWidget):
         self.sesiones = sesiones.listar()
         if abrir_ultima and self.sesiones:
             self.vista = ("sesion", self.sesiones[0]["id"])
+            if self._ag_get(self.sesiones[0]["agent"]):
+                self._desplegados.add(self.sesiones[0]["agent"])
         self._rellenar_lista()
         self._mostrar()
 
@@ -479,11 +650,13 @@ class HomeWindow(QtWidgets.QWidget):
         # referencias o el siguiente cambio de valor tocaria widgets muertos.
         self._condicionales = []
         tipo, cual = self.vista
-        if tipo == "agente" and not self._ag_get(cual):
+        if tipo in ("agente", "editar") and not self._ag_get(cual):
             self.vista = tipo, cual = ("agente", self.agents[0]["id"])
         if tipo == "sesion" and not any(s["id"] == cual for s in self.sesiones):
             self.vista = tipo, cual = ("agente", self.agente_actual())
         if tipo == "agente":
+            pagina = self._vista_portada(self._ag_get(cual))
+        elif tipo == "editar":
             pagina = self._vista_agente(self._ag_get(cual))
         elif tipo == "sesion":
             pagina = self._vista_sesion(cual)
@@ -522,9 +695,65 @@ class HomeWindow(QtWidgets.QWidget):
         return w
 
     # ---------------------------------------------------- vista: agente
+    def _vista_portada(self, a):
+        """Lo que se hace con un agente: iniciar la reunion o editarlo. Su
+        configuracion no salta a la cara: va detras de "Editar agente"."""
+        page, v = self._pagina()
+        v.addStretch(1)
+        tarjeta = N.Surface("relieve", radio=28, prof=8)
+        tarjeta.setObjectName("portada")
+        tarjeta.setFixedWidth(560)
+        t = QtWidgets.QVBoxLayout(tarjeta); t.setContentsMargins(40, 30, 40, 30); t.setSpacing(10)
+        inicial = N.Button(a["name"][:1].upper() or "?", redondo=64, prof=5)
+        f = inicial.font(); f.setPixelSize(26); f.setWeight(QtGui.QFont.DemiBold); inicial.setFont(f)
+        inicial.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        inicial.setFocusPolicy(QtCore.Qt.NoFocus)
+        t.addWidget(inicial, 0, QtCore.Qt.AlignHCenter)
+        nombre = QtWidgets.QLabel(a["name"])
+        nombre.setObjectName("nombre-portada")
+        nf = nombre.font(); nf.setPixelSize(24); nf.setWeight(QtGui.QFont.DemiBold); nombre.setFont(nf)
+        nombre.setAlignment(QtCore.Qt.AlignCenter)
+        nombre.setStyleSheet(f"color: {N.TITULO}; background: transparent;")
+        t.addWidget(nombre)
+        resumen = QtWidgets.QLabel(_resumen(a["instrucciones"]))
+        resumen.setWordWrap(True)
+        resumen.setAlignment(QtCore.Qt.AlignCenter)
+        resumen.setStyleSheet(f"color: {N.APAGADO}; font-size: 13px; background: transparent;")
+        t.addWidget(resumen)
+        n_docs = len(a["conocimiento"])
+        n_reu = sum(1 for s in self.sesiones if s["agent"] == a["id"])
+        meta = QtWidgets.QLabel(
+            f"{n_docs} documento{'s' if n_docs != 1 else ''} · "
+            f"{n_reu} reuni{'ones' if n_reu != 1 else 'ón'}")
+        meta.setAlignment(QtCore.Qt.AlignCenter)
+        meta.setStyleSheet(f"color: {TXT_FA}; font-size: 11px; background: transparent;")
+        t.addWidget(meta)
+        t.addSpacing(8)
+        botones = QtWidgets.QHBoxLayout(); botones.setSpacing(6)
+        botones.addStretch()
+        iniciar = N.Button("Iniciar reunión", icono="play", variante="acento", radio=16)
+        iniciar.setObjectName("iniciar")
+        iniciar.setToolTip("Empieza la reunión con este agente (Bloq Mayús+Esc)")
+        iniciar.clicked.connect(lambda _c=False, aid=a["id"]: self.iniciar(aid))
+        editar = N.Button("Editar agente", icono="cog", radio=16)
+        editar.setObjectName("editar")
+        editar.clicked.connect(lambda _c=False, aid=a["id"]: self.editar_agente(aid))
+        botones.addWidget(iniciar); botones.addWidget(editar)
+        botones.addStretch()
+        t.addLayout(botones)
+        fila = QtWidgets.QHBoxLayout(); fila.addStretch(); fila.addWidget(tarjeta); fila.addStretch()
+        v.addLayout(fila)
+        v.addStretch(2)
+        return page
+
     def _vista_agente(self, a):
         page, v = self._pagina()
         top = QtWidgets.QHBoxLayout(); top.setSpacing(8)
+        volver = N.Button(icono="arrow-left", redondo=26, prof=3, color_icono=N.APAGADO)
+        volver.setObjectName("volver")
+        volver.setToolTip("Volver al agente")
+        volver.clicked.connect(lambda _c=False, aid=a["id"]: self.abrir_agente(aid))
+        top.addWidget(volver)
         name = QtWidgets.QLineEdit(a["name"])
         name.setObjectName("nombre-agente")
         name.setStyleSheet(N.qss_campo() + "QLineEdit { font-weight: 600; font-size: 18px; }")
@@ -552,7 +781,7 @@ class HomeWindow(QtWidgets.QWidget):
                           ("conocimiento", f"Conocimiento · {n_docs}" if n_docs else "Conocimiento")],
                          self.pestana)
         tabs.setObjectName("pestanas")
-        tabs.changed.connect(lambda p, aid=a["id"]: self.abrir_agente(aid, p))
+        tabs.changed.connect(lambda p, aid=a["id"]: self.editar_agente(aid, p))
         fila = QtWidgets.QHBoxLayout(); fila.addWidget(tabs); fila.addStretch()
         v.addLayout(fila)
 
@@ -566,17 +795,24 @@ class HomeWindow(QtWidgets.QWidget):
                 ayuda = ("Cómo funciona la conversación, el formato con secciones «##», "
                          "el código y las capturas. La app depende de ellas: si las "
                          "cambias, puede dejar de pintar bien las respuestas.")
-            v.addLayout(self._cabecera_campo(a, campo, ayuda))
-            texto = QtWidgets.QPlainTextEdit(a[campo])
-            texto.setObjectName(campo)
+            clave = (a["id"], campo)
+            texto = MarkdownField(a[campo], campo, mono=campo == "reglas",
+                                  editando=clave in self._editando)
             texto.setMinimumHeight(300)
-            texto.setStyleSheet(N.qss_campo(mono=campo == "reglas"))
-            texto.textChanged.connect(
-                lambda aid=a["id"], w=texto, c=campo: self._ag_set(aid, c, w.toPlainText()))
-            v.addWidget(N.campo(texto), 1)
+            texto.changed.connect(lambda t, aid=a["id"], c=campo: self._ag_set(aid, c, t))
+            texto.modoCambiado.connect(lambda on, k=clave: self._modo(k, on))
+            v.addLayout(self._cabecera_campo(a, campo, ayuda, texto.boton))
+            v.addWidget(texto, 1)
         return page
 
-    def _cabecera_campo(self, a, campo, ayuda):
+    def _modo(self, clave, editando):
+        """Recuerda que campos estan en edicion al redibujar la vista."""
+        if editando:
+            self._editando.add(clave)
+        else:
+            self._editando.discard(clave)
+
+    def _cabecera_campo(self, a, campo, ayuda, boton_modo=None):
         head = QtWidgets.QHBoxLayout(); head.setSpacing(10)
         h = QtWidgets.QLabel(ayuda); h.setWordWrap(True)
         h.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px; background: transparent; "
@@ -588,6 +824,8 @@ class HomeWindow(QtWidgets.QWidget):
         rest.setEnabled(a[campo] != agents_mod.predeterminado(a)[campo])
         rest.setToolTip(f"Vuelve al texto de «{agents_mod.predeterminado(a)['name']}»")
         rest.clicked.connect(lambda _c=False, aid=a["id"], c=campo: self._ag_restore(aid, c))
+        if boton_modo is not None:
+            head.addWidget(boton_modo, 0, QtCore.Qt.AlignTop)
         head.addWidget(rest, 0, QtCore.Qt.AlignTop)
         return head
 
@@ -667,15 +905,20 @@ class HomeWindow(QtWidgets.QWidget):
         nombre.setStyleSheet(N.qss_campo() + "QLineEdit { font-weight: 600; font-size: 14px; }")
         nombre.textChanged.connect(
             lambda t, aid=a["id"], did=d["id"]: self._doc_set(aid, did, "name", t))
-        v.addWidget(N.campo(nombre))
-        cuerpo = QtWidgets.QPlainTextEdit(d["body"])
-        cuerpo.setObjectName("cuerpo-documento")
-        cuerpo.setPlaceholderText("# Mi CV\nSoy desarrollador backend con 6 años…")
-        cuerpo.setStyleSheet(N.qss_campo(mono=True))
-        cuerpo.textChanged.connect(
-            lambda aid=a["id"], did=d["id"], w=cuerpo: self._doc_set(aid, did, "body",
-                                                                     w.toPlainText()))
-        v.addWidget(N.campo(cuerpo), 1)
+        clave = (a["id"], d["id"])
+        # Un documento recien creado (vacio) se abre ya para escribir.
+        cuerpo = MarkdownField(d["body"], "cuerpo-documento", mono=True,
+                               editando=clave in self._editando or not d["body"].strip(),
+                               vacio="Documento vacío. Pulsa Editar para escribirlo.")
+        cuerpo.editor.setPlaceholderText("# Mi CV\nSoy desarrollador backend con 6 años…")
+        cuerpo.changed.connect(
+            lambda t, aid=a["id"], did=d["id"]: self._doc_set(aid, did, "body", t))
+        cuerpo.modoCambiado.connect(lambda on, k=clave: self._modo(k, on))
+        fila = QtWidgets.QHBoxLayout()
+        fila.addWidget(N.campo(nombre), 1)
+        fila.addWidget(cuerpo.boton, 0, QtCore.Qt.AlignVCenter)
+        v.addLayout(fila)
+        v.addWidget(cuerpo, 1)
         return box
 
     # ---------------------------------------------------- vista: reunion
@@ -696,12 +939,8 @@ class HomeWindow(QtWidgets.QWidget):
             texto = sesiones.leer(sid)
         except OSError:
             texto = "No se pudo leer esta reunión."
-        lector = QtWidgets.QTextBrowser()
-        lector.setObjectName("transcripcion")
-        lector.setOpenExternalLinks(False)
+        lector = lector_markdown("transcripcion")
         lector.setMarkdown(texto)
-        lector.setStyleSheet(N.qss_campo().replace("QPlainTextEdit", "QTextBrowser")
-                             + "QTextBrowser { font-size: 13px; }")
         caja = N.campo(lector)
         v.addWidget(caja, 1)
         return page
@@ -856,7 +1095,7 @@ class HomeWindow(QtWidgets.QWidget):
         a = agents_mod.nuevo(self.agents)
         self.agents.append(a)
         self.pestana = "instrucciones"
-        self.vista = ("agente", a["id"])
+        self.vista = ("editar", a["id"])
         self._marcar()
         self._rellenar_lista()
         self._mostrar()
@@ -871,7 +1110,7 @@ class HomeWindow(QtWidgets.QWidget):
         copia = dict(src, id=agents_mod.next_id(self.agents), name=src["name"] + " (copia)",
                      conocimiento=[dict(d) for d in src["conocimiento"]])
         self.agents.insert(self.agents.index(src) + 1, copia)
-        self.vista = ("agente", copia["id"])
+        self.vista = ("editar", copia["id"])
         self._marcar()
         self._rellenar_lista()
         self._mostrar()
