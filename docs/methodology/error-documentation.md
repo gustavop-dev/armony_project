@@ -24,7 +24,7 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 | P3 | ~~KNOWN-101~~ ERR-101, ~~KNOWN-102~~ ERR-102 | Question detector false positives (ES) / false negatives (EN contractions) without `?` | `fix/…-intent-tokenizer` |
 | P3 | ~~KNOWN-601~~ ERR-601 | `speech_threshold` slider shows/saves 0.013 for 0.012; max saves 0.101 | `fix/…-inline-code-render` (small UI batch) |
 | P3 | KNOWN-401 | One Alt+digit press lost after an interrupted Alt combo | `fix/…-wheel-accumulator` (input batch) |
-| P3 | KNOWN-503, KNOWN-504, KNOWN-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
+| P3 | KNOWN-503, ~~KNOWN-504~~ ERR-504, ~~KNOWN-502~~ ERR-502 | Top bar not draggable; copy-reset `RuntimeError`; caret not blinking | small UI batch |
 | P3 | KNOWN-701 | Capture context can exceed 8000 chars by ≤ 79 | any engine branch |
 | P4 | KNOWN-301, KNOWN-302 | Segmenter pre-roll edge cases; unreachable with fixed `preroll=0.3` | drop with offline removal |
 | — | KNOWN-001 | Closed: not a defect on CPython 3.11 (measured) | — |
@@ -54,13 +54,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** exactly one subsequent Alt+digit press of that digit is lost, then it self-recovers. The digit key-up leaks to the focused app (key-up without key-down; no visible effect observed).
 - **Proposed fix:** run the `_eaten` key-up check before the `if self._passthrough: return False` branch.
 - **Test:** `tests/test_hotkeys.py::test_alt_digit_triggers_after_hold_interrupted_by_other_key`
-### [KNOWN-502] Question caret never blinks
-- **Where:** `overlay_ui.py:1242` (`_animate` re-renders the caret only when `self._question_text`); `_question_text` is set to `""` at `overlay_ui.py:964` and never assigned again.
-- **Reproduced (2026-10-28):** `set_state("listening"); set_question("Tell me about")`, 1.5 s → caret stays visible.
-- **Root cause:** `set_question` stores the text elsewhere and does not update `_question_text`.
-- **Impact:** cosmetic; the caret is static instead of blinking. No functional effect.
-- **Proposed fix:** assign `self._question_text = texto` in `set_question` and clear it in `cerrar_intervencion` / `limpiar_hilo`.
-- **Test:** `tests/test_overlay_ui_thread.py::test_caret_blinks_while_listening`
 ### [KNOWN-503] Drag mixin handlers are shadowed by `QWidget`
 - **Where:** `overlay_ui.py:746`, `957`, `1488` — `class X(QtWidgets.QWidget, _Draggable)`; `_Draggable.mousePressEvent/mouseMoveEvent` (`overlay_ui.py:159-170`) are never reached.
 - **Reproduced (2026-10-28):** MRO resolves `mousePressEvent` to `QWidget` for `TopBar`, `TranscriptPanel` and `CollapsedButton`; a press/move on an empty area of `TopBar` does not move it.
@@ -72,14 +65,6 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** low; the top bar and the collapsed button stay where `_place` puts them. Dead code in `_Draggable`.
 - **Proposed fix:** decide whether those windows should be movable. If yes: `class TopBar(_Draggable, QtWidgets.QWidget)` plus an interactive drag zone (e.g. a grip) in `interactive_widgets()`. If no: remove `_Draggable` and its docstring claim.
 - **Test:** `tests/test_overlay_ui_widgets.py::test_topbar_drag_from_empty_area_moves_window`
-### [KNOWN-504] Copy-label reset fires on a destroyed `CodeBlock`
-- **Where:** `overlay_ui.py:513` (`CodeBlock._copiar`: `QTimer.singleShot(1400, lambda: self.lbl_copy.setText(...))`)
-- **Trigger:** Copy clicked, then the block is destroyed within 1.4 s (answer re-render while streaming, row pruning, `limpiar_hilo`).
-- **Reproduced (2026-10-28):** `RuntimeError: Internal C++ object already deleted` raised from the event loop.
-- **Root cause:** the lambda is not tied to the widget's lifetime (plain callable, no receiver object).
-- **Impact:** low; PySide reports the exception and the app keeps running. With `--noconsole` nothing is visible.
-- **Proposed fix:** `QtCore.QTimer.singleShot(1400, self.lbl_copy, lambda: ...)` (receiver overload, cancelled on destruction) or a child `QTimer`.
-- **Test:** `tests/test_overlay_ui_widgets.py::test_code_block_destroyed_after_copy_raises_nothing`
 ### [KNOWN-002] Session transcript misses turns
 - **Where:** `_registro` (the transcript saved to `sesiones/sesion-*.md` by `_guardar_acta`, `engine.py:672-695`) is appended only in `_flush_turn` (`engine.py:341`) and in `_respond.on_done` (`engine.py:608`).
   - `answer_now` with a pending turn (`engine.py:374-378`) appends to `_history` only.
@@ -277,3 +262,20 @@ All entries below were reproduced on 2026-10-28 (Windows, Python 3.11.9, PySide6
 - **Impact:** low. The displayed value differs from the stored one until the slider is touched; then the threshold becomes 0.013 (≈8% less sensitive voice detection / echo gate, `audio.py:271`).
 - **Resolution (2026-10-28):** Schema `min` changed 0.001 → 0.002 (`settings_window.py` `speech_threshold`): the grid 0.002…0.100 in 0.002 steps contains the 0.012 default and the 0.1 max. Slider shows 0.012; nudge +1/-1 keeps 0.012; ends give 0.002 / 0.1.
 - **Regression tests:** `tests/test_settings_window.py::test_speech_threshold_displays_default_value`, `::test_speech_threshold_slider_ends_stay_in_declared_range`, `::test_speech_threshold_nudge_round_trip_keeps_default`
+
+### [ERR-502] Question caret never blinks
+- **Where:** `overlay_ui.py:1242` (`_animate` re-renders the caret only when `self._question_text`); `_question_text` is set to `""` at `overlay_ui.py:964` and never assigned again.
+- **Reproduced (2026-10-28):** `set_state("listening"); set_question("Tell me about")`, 1.5 s → caret stays visible.
+- **Root cause:** `set_question` stores the text elsewhere and does not update `_question_text`.
+- **Impact:** cosmetic; the caret is static instead of blinking. No functional effect.
+- **Resolution (2026-10-28):** `_animate` re-renders the caret when a live participant bubble exists (`_burbuja_viva is not None`); the unused `_question_text` field was removed.
+- **Regression tests:** `tests/test_overlay_ui_thread.py::test_caret_blinks_while_listening`
+
+### [ERR-504] Copy-label reset fires on a destroyed `CodeBlock`
+- **Where:** `overlay_ui.py:513` (`CodeBlock._copiar`: `QTimer.singleShot(1400, lambda: self.lbl_copy.setText(...))`)
+- **Trigger:** Copy clicked, then the block is destroyed within 1.4 s (answer re-render while streaming, row pruning, `limpiar_hilo`).
+- **Reproduced (2026-10-28):** `RuntimeError: Internal C++ object already deleted` raised from the event loop.
+- **Root cause:** the lambda is not tied to the widget's lifetime (plain callable, no receiver object).
+- **Impact:** low; PySide reports the exception and the app keeps running. With `--noconsole` nothing is visible.
+- **Resolution (2026-10-28):** `CodeBlock._copiar` uses `QTimer.singleShot(1400, self.lbl_copy, ...)` (context-object overload); Qt discards the call when the label is destroyed first.
+- **Regression tests:** `tests/test_overlay_ui_widgets.py::test_code_block_destroyed_after_copy_raises_nothing`

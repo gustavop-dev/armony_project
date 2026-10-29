@@ -294,8 +294,6 @@ def test_code_block_copy_label_resets(qtbot, code_block):
     qtbot.waitUntil(lambda: cb.lbl_copy.text() == "Copy", timeout=3000)
 
 
-@pytest.mark.xfail(strict=True, reason="[KNOWN-504] the 1.4 s 'Copy' reset lambda "
-                   "touches the label after a re-render has destroyed the block")
 def test_code_block_destroyed_after_copy_raises_nothing(qtbot):
     cb = overlay_ui.CodeBlock("python", "x = 1")
     qtbot.mouseClick(cb.btn_copy, QtCore.Qt.LeftButton)

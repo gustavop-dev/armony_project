@@ -108,8 +108,6 @@ def test_set_question_hides_caret_when_idle(panel):
     assert CARET not in joined(bubbles(panel, "ellos")[0])
 
 
-@pytest.mark.xfail(strict=True, reason="[KNOWN-502] _animate only re-renders when "
-                   "_question_text is set, and nothing ever sets it")
 def test_caret_blinks_while_listening(qtbot, panel):
     panel.set_state("listening")
     panel.set_question("Tell me about")

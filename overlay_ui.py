@@ -510,7 +510,9 @@ class CodeBlock(QtWidgets.QFrame):
     def _copiar(self):
         QtWidgets.QApplication.clipboard().setText(self._codigo)
         self.lbl_copy.setText("Copied")
-        QtCore.QTimer.singleShot(1400, lambda: self.lbl_copy.setText("Copy"))
+        # Context-object overload: Qt drops the call if the label is destroyed
+        # first (answer re-render, row pruning, limpiar_hilo).
+        QtCore.QTimer.singleShot(1400, self.lbl_copy, lambda: self.lbl_copy.setText("Copy"))
 
 
 class ShotThumb(QtWidgets.QFrame):
@@ -961,7 +963,6 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._init_drag()
         self._raw = ""
         self._state = "idle"
-        self._question_text = ""
         self._caret_on = True
         self._anim_phase = 0
         self._part_last = None
@@ -1245,7 +1246,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._anim_phase += 1
         if self._anim_phase % 6 == 0:      # ~540 ms
             self._caret_on = not self._caret_on
-            if self._state == "listening" and self._question_text:
+            if self._state == "listening" and self._burbuja_viva is not None:
                 self._render_question()
         if self._state == "listening":
             self._apply_border()
