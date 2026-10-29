@@ -15,8 +15,6 @@ al compartir pantalla** (privacidad total).
 - **Transcribe en vivo** con AssemblyAI (Universal Streaming): el texto aparece palabra a
   palabra mientras la otra persona habla, y es el propio modelo quien detecta cuándo
   terminó de hablar.
-- **Modo offline** opcional: transcribe en este equipo con `faster-whisper`, sin enviar
-  audio a la nube. Más lento y sin texto en vivo, pero funciona sin internet.
 - **Sugiere respuestas** en streaming (aparecen token por token), con **Claude
   (Anthropic) o GPT (OpenAI)** — se elige en *Configuración*, cada uno con su clave
   y su modelo.
@@ -30,7 +28,6 @@ al compartir pantalla** (privacidad total).
 - API key del proveedor de respuestas que elijas: **Anthropic** u **OpenAI**
   (se pone en la interfaz, en *Configuración*).
 - API key de AssemblyAI para la transcripción en vivo (también en *Configuración*).
-  Si prefieres no usar la nube, activa **Modo offline** y solo hace falta la de Anthropic.
 
 ## Ejecutable (.exe)
 
@@ -45,9 +42,6 @@ Tus datos **no** viven junto al .exe: `config.json` y los contextos van a
 `%APPDATA%\Armony`, que es escribible y sobrevive a las actualizaciones. Con
 `--onefile` el programa se descomprime en un temporal que desaparece al cerrar,
 así que guardar ahí perdería la configuración en cada arranque.
-
-El modo offline **no** se incluye salvo que compiles con `faster-whisper`
-instalado; sin él el ejecutable pesa una fracción y el resto funciona igual.
 
 ### Dónde quedan tus claves
 
@@ -248,20 +242,6 @@ Nunca en lugar de la respuesta: primero propone, y la pregunta va después. Y si
 te dijeron que ese dato no te lo pueden dar —o que justo eso es lo que tienes que
 resolver— no vuelve a preguntar: propone y deja sus suposiciones por escrito.
 
-## GPU NVIDIA (importante)
-
-`faster-whisper` necesita las librerías de CUDA 12 y cuDNN 9. Si no están, la carga del
-modelo funciona pero la inferencia falla con
-`Library cublas64_12.dll is not found or cannot be loaded`. Solución:
-
-```powershell
-pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
-```
-
-En Windows esas DLLs quedan dentro de `site-packages/nvidia/*/bin`, una ruta que
-CTranslate2 no busca sola. `cuda_setup.py` las registra automáticamente al arrancar
-(`transcribe.py` lo importa antes de cargar el modelo). No hay que hacer nada más.
-
 ## Rendimiento / latencia
 
 **En vivo (AssemblyAI, por defecto).** El texto va apareciendo mientras la persona habla,
@@ -271,19 +251,6 @@ desde la última palabra hasta el texto final. A eso se le suma la pausa de fin 
 Haiku. Coste aproximado: **$0.45 por hora de reunión** — se factura el tiempo conectado,
 no el audio enviado, y la conexión solo existe mientras la reunión está en marcha.
 
-**Modo offline (Whisper local).** Medido en GTX 1660 SUPER (6 GB), frase de 3 s:
-
-| Modelo Whisper | Tiempo STT | Presupuesto total hasta la sugerencia |
-|---|---|---|
-| `base` (recomendado) | 0.24 s | ~1.35 s ✅ |
-| `small` (más preciso) | 0.89 s | ~2.0 s (al límite) |
-
-Desglose: 0.60 s de espera de fin de frase + STT + ~0.5 s del primer token de Claude Haiku.
-
-- **PC de escritorio con GPU NVIDIA:** `Dispositivo STT = cuda`, `Tamaño Whisper = base`.
-  Latencia total ~1.35 s.
-- **Portátil Ryzen 5 5600H (sin NVIDIA):** corre en **CPU**. Usa `Tamaño Whisper = base`
-  y cierra apps pesadas (8 GB de RAM es ajustado). Latencia ~1.5–2.5 s.
 ### Dos modelos, uno por cada uso
 
 En *Configuración → Conexión* solo aparece el proveedor que tengas elegido (o las
@@ -380,15 +347,14 @@ Medido con proceso nuevo cada vez, tiempo hasta la primera palabra:
 
 ## Notas técnicas
 
-- `audio.py` — captura WASAPI (loopback + micrófono), niveles, flujo continuo para el
-  streaming y segmentación por silencio (esta última solo hace falta en modo offline).
+- `audio.py` — captura WASAPI (loopback + micrófono), niveles y flujo continuo para el
+  streaming.
 - `stt_stream.py` — transcripción en vivo con AssemblyAI (WebSocket, reconexión automática).
 - `intent.py` — decide si una intervención pide respuesta o solo está dando contexto.
 - `richtext.py` — convierte el markdown del modelo en bloques (texto, código, listas).
 - `metrics.py` — cronometra cada tramo y guarda el informe de la sesión.
 - `secretstore.py` — cifra las API keys con DPAPI (atado a tu cuenta de Windows).
 - `make_icon.py` — genera el icono «Ar.» en todos los tamaños que pide Windows.
-- `transcribe.py` — modo offline: `faster-whisper` (CUDA si hay, si no CPU int8).
 - `llm.py` — cliente del coach con streaming y soporte de imagen (screenshot).
   Anthropic y OpenAI tras la misma interfaz; solo se importa el que se use.
 - `overlay.py` — modo invisible a la captura de pantalla y click-through.

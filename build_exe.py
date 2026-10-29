@@ -10,10 +10,6 @@ Sobre donde quedan tus datos: el .exe NO guarda nada en su propia carpeta (con
 --onefile se descomprime en un temporal que desaparece al cerrar). config.json y
 los contextos van a %APPDATA%\\Armony, que persiste entre versiones. Lo gestiona
 config.data_dir().
-
-Modo offline: solo se incluye faster-whisper si esta instalado en el entorno
-desde el que compilas. Sin el, el ejecutable funciona igual pero el modo offline
-avisara de que falta; a cambio pesa muchisimo menos.
 """
 import importlib.util
 import os
@@ -87,15 +83,10 @@ def main():
         print(f"OpenSSL: incluyendo {os.path.basename(dll)}")
         cmd += ["--add-binary", f"{dll}{SEP}."]
 
-    if instalado("faster_whisper"):
-        print("faster-whisper detectado: se incluye el modo offline.")
-        cmd += ["--collect-all", "faster_whisper", "--collect-all", "ctranslate2"]
-        if instalado("nvidia"):
-            cmd += ["--collect-binaries", "nvidia"]
-    else:
-        print("Sin faster-whisper: se compila sin modo offline (mucho mas ligero).")
-        cmd += ["--exclude-module", "faster_whisper", "--exclude-module", "ctranslate2",
-                "--exclude-module", "torch"]
+    # Restos del antiguo modo offline: si siguen instalados en el entorno de
+    # compilacion, que no se cuelen en el .exe (pesan cientos de MB).
+    cmd += ["--exclude-module", "faster_whisper", "--exclude-module", "ctranslate2",
+            "--exclude-module", "torch"]
 
     cmd.append(os.path.join(HERE, "app.py"))
     print("Ejecutando:", " ".join(cmd))

@@ -292,15 +292,14 @@ por ecosistema. La fuente de verdad es `vps-ops-toolkit/workflows/`.
 
 ## Overview
 - Windows-only desktop app (Windows 10 build 19041+ / 11), Python 3.11 + PySide6. Spike that exercises a real-time pipeline for a larger IDE project.
-- Pipeline: WASAPI loopback + microphone capture → speech-to-text (AssemblyAI Universal Streaming over WebSocket, or local `faster-whisper` in offline mode) → turn aggregation and question detection → streaming completion from Anthropic or OpenAI → rendering in frameless Qt overlay windows. Overlay windows use `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, `WS_EX_TRANSPARENT` click-through and `WS_EX_NOACTIVATE`.
+- Pipeline: WASAPI loopback + microphone capture → speech-to-text (AssemblyAI Universal Streaming over WebSocket) → turn aggregation and question detection → streaming completion from Anthropic or OpenAI → rendering in frameless Qt overlay windows. Overlay windows use `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, `WS_EX_TRANSPARENT` click-through and `WS_EX_NOACTIVATE`.
 - Packaged as a single `dist\Armony.exe` with PyInstaller (`build_exe.py`). No backend, database, web frontend or server deployment.
 
 ## Module map
 - `app.py` — entry point; `OverlayApp` controller wiring UI widgets to `CoachEngine` signals and global hotkeys.
 - `engine.py` — `CoachEngine(QObject)`: session lifecycle, turn aggregation (`threading.Timer`), worker thread + queue, context window assembly, sentinel (`NO_RESPONSE`) filtering, session transcript and metrics persistence.
-- `audio.py` — `AudioEngine`: WASAPI loopback and mic capture threads, resampling to 16 kHz (`soxr`), RMS levels, echo gate, default-device hot swap; `_Segmenter` energy/silence segmentation (offline mode only).
+- `audio.py` — `AudioEngine`: WASAPI loopback and mic capture threads, resampling to 16 kHz (`soxr`), RMS levels, continuous 16 kHz PCM feed to the streaming STT, default-device hot swap.
 - `stt_stream.py` — `StreamingSTT`: AssemblyAI v3 WebSocket client, 50 ms PCM chunking, bounded send queue, reconnection backoff, partial/final turn handling, latency estimation.
-- `transcribe.py` — `Transcriber`: `faster-whisper` wrapper (CUDA float16, CPU int8 fallback). `cuda_setup.py` registers pip-installed CUDA DLL dirs.
 - `intent.py` — `parece_pregunta(text, lang)`: lexical question/request detector (ES/EN/auto).
 - `llm.py` — `Coach`: prompt construction, voice vs. vision model selection, Anthropic/OpenAI streaming backends, single retry before first token, warm-up request.
 - `richtext.py` — model markdown → section/paragraph/list/code blocks; Pygments highlighting; inline HTML.
@@ -374,7 +373,7 @@ From WSL the Windows venv runs through interop (`.venv/Scripts/python.exe`); fro
 
 - **Name**: Armony (Meeting Coach)
 - **Platform**: Windows 10 (19041+) / 11 desktop app, distributed as `dist\Armony.exe`
-- **Stack**: Python 3.11 + PySide6 / PyAudioWPatch (WASAPI) / AssemblyAI streaming / faster-whisper / Anthropic + OpenAI SDKs
+- **Stack**: Python 3.11 + PySide6 / PyAudioWPatch (WASAPI) / AssemblyAI streaming / Anthropic + OpenAI SDKs
 - **Repo path**: `C:\Users\devgu\armony_project` (WSL: `/mnt/c/Users/devgu/armony_project`)
 - **User data**: `%APPDATA%\Armony\` (`config.json` with DPAPI-encrypted keys, `contexts/`, `metricas/`)
 

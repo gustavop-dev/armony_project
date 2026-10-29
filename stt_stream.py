@@ -1,18 +1,16 @@
 """Transcripcion en vivo con AssemblyAI (Universal Streaming v3).
 
-Sustituye a la transcripcion local por frases: en vez de esperar a que la persona
-termine de hablar, cortar el audio y pasarlo por Whisper, aqui el audio viaja
-continuo por un WebSocket y las palabras van llegando mientras se habla.
+El audio viaja continuo por un WebSocket y las palabras van llegando mientras se
+habla, sin esperar a que la persona termine.
 
 Dos tipos de resultado:
     parcial (end_of_turn=false) -> texto provisional, se repinta en vivo
     final   (end_of_turn=true)  -> turno cerrado; AssemblyAI decidio que la
                                    persona termino de hablar
 
-Ese "final" es el que dispara la sugerencia de Claude, igual que antes lo hacia
-el silencio detectado por el segmentador local (audio.py). La diferencia es que
-ahora el fin de turno lo decide un modelo entrenado para eso y no un umbral de
-energia, asi que aguanta mucho mejor las pausas al pensar.
+Ese "final" es el que dispara la sugerencia de Claude. El fin de turno lo decide
+un modelo entrenado para eso y no un umbral de energia, asi que aguanta mucho
+mejor las pausas al pensar.
 
 Detalles del protocolo que condicionan el codigo:
   - audio PCM 16 bits mono, sin cabecera, en trozos de 50 a 1000 ms
@@ -176,8 +174,7 @@ class StreamingSTT:
                     self._running = False
                     self._on_error(
                         "AssemblyAI rechazo la conexion (codigo "
-                        f"{codigo}): revisa la API key o el saldo de tu cuenta. "
-                        "Mientras tanto puedes activar el modo offline.")
+                        f"{codigo}): revisa la API key o el saldo de tu cuenta.")
                     break
                 if not self._running:
                     break
@@ -277,8 +274,7 @@ class StreamingSTT:
                 self._running = False
                 self._on_error(
                     f"AssemblyAI rechazo la conexion: {detalle}. Revisa la API "
-                    "key en Ajustes, o activa el modo offline para transcribir "
-                    "con Whisper local.")
+                    "key en Ajustes.")
             else:
                 self._on_error(f"Transcripcion en vivo: {detalle}")
 

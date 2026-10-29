@@ -177,10 +177,9 @@ class OverlayApp(QtCore.QObject):
             nombre = "OpenAI" if proveedor == "openai" else "Anthropic"
             self.panel.set_status(f"Add your {nombre} API key in Settings (⚙) to start")
             return
-        # La transcripcion en la nube necesita su propia key; en modo offline no.
-        if not self.cfg.get("offline_mode") and not self.cfg.get("assemblyai_api_key"):
-            self.panel.set_status("Add your AssemblyAI key in Settings (⚙), "
-                                  "or turn on Offline mode")
+        # La transcripcion en la nube necesita su propia key.
+        if not self.cfg.get("assemblyai_api_key"):
+            self.panel.set_status("Add your AssemblyAI key in Settings (⚙) to start")
             return
         self._running = True
         self._elapsed = 0
