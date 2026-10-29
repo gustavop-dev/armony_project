@@ -105,3 +105,40 @@ def test_manual_scroll_releases_the_pin(panel):
     _turn(panel, "Nueva intervención " + "z " * 20)
     _settle()
     assert panel.scroll.verticalScrollBar().value() == value   # stays where left
+
+
+def test_revision_rewrites_the_same_card_in_place(panel):
+    for i in range(3):
+        _turn(panel, f"Turno {i}: " + "texto " * 25)
+    _turn(panel, "¿Qué arquitectura usarías?")
+    _answer(panel, ["## Respuesta\n", "Una cola entre la API y los workers. " * 4])
+    _settle()
+    card = panel._burbujas[-1]
+    top = _top_in_viewport(panel, card)
+    cards = sum(1 for b in panel._burbujas if b.quien == "tu")
+
+    panel.revisar_respuesta()
+    for chunk in ("## Respuesta\n", "Una cola duradera con reintentos. " * 3):
+        panel.append_answer(chunk)
+        QTest.qWait(30)
+    panel.cerrar_respuesta()
+    _settle()
+
+    assert sum(1 for b in panel._burbujas if b.quien == "tu") == cards
+    assert panel._burbujas[-1] is card and card.actualizada
+    assert "duradera" in card._raw and "workers" not in card._raw
+    assert _top_in_viewport(panel, card) == top
+
+
+def test_one_answer_makes_one_card_even_when_done_follows_the_last_chunk(panel):
+    # Regression: the 90 ms batched repaint fired after cerrar_respuesta and
+    # opened a second card with the same answer.
+    panel.clear_answer()
+    panel.append_answer("## Respuesta\n")
+    QTest.qWait(30)
+    panel.append_answer("texto final")
+    panel.cerrar_respuesta()
+    _settle()
+    cards = [b for b in panel._burbujas if b.quien == "tu"]
+    assert len(cards) == 1
+    assert cards[0]._raw == "## Respuesta\ntexto final"

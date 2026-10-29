@@ -45,11 +45,12 @@ def score(results, umbrales=followup.Umbrales()):
     for case, j, err in results:
         if err:
             errors.append({"id": case["id"], "error": err})
-        action = followup.decidir(j, umbrales)
+        action = followup.decidir(j, case.get("state", "preguntada"), umbrales)
         if j is not None:
             latencies.append(j.ms)
         rows.append({
             "id": case["id"],
+            "state": case.get("state", "preguntada"),
             "follow_up": case["follow_up"],
             "expected_relation": case["expected_relation"],
             "relation": j.relacion if j else None,

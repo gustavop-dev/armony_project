@@ -168,6 +168,13 @@ class Coach:
         self._esfuerzo_vigente = effort_voice
         self._config_update_ok = True
         self.ultimo_uso = None            # (entrada, cacheados) de la ultima llamada
+        # Cortar la respuesta en curso: llega un anadido que la cambia y se va a
+        # reescribir, asi que seguir generandola es tiempo y dinero tirados.
+        self._cancelar = threading.Event()
+
+    def cancelar(self):
+        """Corta la respuesta que se este generando (lo ya escrito se queda)."""
+        self._cancelar.set()
 
     # ------------------------------------------------------------ conversacion
     def _developer(self):
@@ -182,11 +189,17 @@ class Coach:
             with self._lock:
                 self._pendientes.append((quien, texto))
 
-    def _turno(self, pendientes, latest, images, note, allow_silence):
+    def _turno(self, pendientes, latest, images, note, allow_silence, revision=False):
         """El mensaje de usuario de este turno: solo lo nuevo."""
         lineas = "\n".join(f"{q}: {t}" for q, t in pendientes) or "(nada nuevo)"
         partes = [f"Lo nuevo en la reunion desde mi ultimo mensaje:\n{lineas}"]
-        if images:
+        if revision:
+            partes.append(
+                f"Han anadido algo a la pregunta que acabas de responder: "
+                f"\"{latest}\". Reescribe tu respuesta anterior teniendolo en "
+                f"cuenta: la misma pregunta, la respuesta completa y ya corregida "
+                f"(sustituye a la anterior en mi pantalla, no la continues).")
+        elif images:
             partes.append(f"Te adjunto {len(images)} captura(s) de mi pantalla. "
                           f"Lo ultimo que se oyo en la reunion, como referencia: "
                           f"\"{latest}\"")
@@ -218,7 +231,8 @@ class Coach:
 
     # ------------------------------------------------------------------ publico
     def stream_response(self, latest, images=None, note=None, on_delta=None,
-                        on_done=None, on_error=None, allow_silence=False):
+                        on_done=None, on_error=None, allow_silence=False,
+                        revision=False):
         """Genera la respuesta sugerida en streaming.
 
         latest: la ultima frase de los demas (lo que hay que responder).
@@ -227,7 +241,10 @@ class Coach:
             nada. Devuelve NO_RESPONSE y quien llama decide no mostrar nada.
             Se desactiva cuando el usuario pide la respuesta a mano: entonces
             quiere una sugerencia si o si.
+        revision: latest es un anadido a la pregunta anterior; la respuesta
+            reescribe (no continua) la que se dio.
         """
+        self._cancelar.clear()
         tokens, esfuerzo = self.ajustes(images)
         with self._lock:
             self._recortar_si_hace_falta()
@@ -235,7 +252,8 @@ class Coach:
             nuevos = []
             if esfuerzo != self._esfuerzo_vigente and self._config_update_ok:
                 nuevos.append(self._cambio_esfuerzo(esfuerzo))
-            nuevos.append(self._turno(pendientes, latest, images, note, allow_silence))
+            nuevos.append(self._turno(pendientes, latest, images, note,
+                                      allow_silence, revision))
             base = list(self._items)
 
         # Un 429 o un corte de red no puede costarte la sugerencia: en una
@@ -350,6 +368,9 @@ class Coach:
             **self._cache_kwargs(),
         ) as stream:
             for ev in stream:
+                if self._cancelar.is_set():
+                    metricas.contar("respuestas_cortadas")
+                    return               # al salir del with se cierra la conexion
                 if ev.type == "response.output_text.delta" and on_delta:
                     on_delta(ev.delta)
             final = stream.get_final_response()

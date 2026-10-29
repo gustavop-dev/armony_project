@@ -11,8 +11,12 @@ from followup import MANTENER, NUEVA, RETIRAR, REVISAR, Juicio, Umbrales, decidi
 from stt_eval import followup_eval
 
 
-def _juicio(relacion, cambia=0.0, confianza=0.9):
-    return Juicio(relacion, confianza, {relacion: confianza}, cambia, 0.0)
+def _juicio(relacion, cambia=0.0, p=0.9, **otras):
+    probs = {relacion: p, **otras}
+    return Juicio(relacion, p, probs, cambia, 0.0)
+
+
+LEYENDO, CONTESTANDO, CONTESTADA = "preguntada", "respondiendo", "respondida"
 
 
 @pytest.mark.parametrize("relacion,cambia,esperado", [
@@ -20,24 +24,39 @@ def _juicio(relacion, cambia=0.0, confianza=0.9):
     ("unrelated", 0.9, MANTENER),
     ("extends_question", 0.8, REVISAR),
     ("extends_question", 0.2, MANTENER),
-    ("relaxes_or_answers", 0.7, REVISAR),
+    ("relaxes_or_answers", 0.75, REVISAR),
     ("relaxes_or_answers", 0.1, MANTENER),
     ("new_question", 0.0, NUEVA),
+    ("drills_into_part", 0.0, NUEVA),
     ("withdraws_question", 0.0, RETIRAR),
 ])
-def test_decidir_policy(relacion, cambia, esperado):
-    assert decidir(_juicio(relacion, cambia)) == esperado
+def test_decidir_while_tester_reads(relacion, cambia, esperado):
+    assert decidir(_juicio(relacion, cambia), LEYENDO) == esperado
+
+
+@pytest.mark.parametrize("estado", [CONTESTANDO, CONTESTADA])
+def test_once_answering_the_answer_is_never_rewritten(estado):
+    assert decidir(_juicio("extends_question", 0.99), estado) == MANTENER
+    assert decidir(_juicio("relaxes_or_answers", 0.99), estado) == MANTENER
+    assert decidir(_juicio("drills_into_part"), estado) == NUEVA
+    assert decidir(_juicio("new_question"), estado) == NUEVA
+
+
+def test_split_between_extends_and_relaxes_still_rewrites():
+    # Jev hesitates between the two relations that lead to the same action.
+    j = _juicio("extends_question", 0.9, p=0.45, relaxes_or_answers=0.42)
+    assert decidir(j, LEYENDO) == REVISAR
 
 
 def test_decidir_keeps_when_unsure_or_failed():
-    assert decidir(_juicio("new_question", confianza=0.1)) == MANTENER
-    assert decidir(None) == MANTENER
+    assert decidir(_juicio("new_question", p=0.4, filler_or_ack=0.35), LEYENDO) == MANTENER
+    assert decidir(None, LEYENDO) == MANTENER
 
 
 def test_decidir_threshold_is_configurable():
     j = _juicio("extends_question", cambia=0.5)
-    assert decidir(j) == MANTENER
-    assert decidir(j, Umbrales(cambio=0.4)) == REVISAR
+    assert decidir(j, LEYENDO) == MANTENER
+    assert decidir(j, LEYENDO, Umbrales(cambio=0.4)) == REVISAR
 
 
 def test_estado_marks_missing_answer_and_silence():

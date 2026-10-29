@@ -184,3 +184,37 @@ def test_very_long_conversation_is_trimmed_to_recent_turns(monkeypatch):
         c.stream_response(f"¿Pregunta {i}?")
     assert len(c._items) <= 1 + 4 + 2
     assert c._items[0]["role"] == "developer"
+
+
+def test_revision_turn_asks_to_rewrite_not_continue():
+    c = _coach()
+    c.stream_response("¿Qué arquitectura usarías?")
+    c.stream_response("Ah, pero sin perder pedidos.", revision=True)
+    turn = _calls(c)[-1]["input"][-1]["content"][-1]["text"]
+    assert "Reescribe tu respuesta anterior" in turn
+    assert "Ah, pero sin perder pedidos." in turn
+
+
+def test_cancel_stops_the_stream_and_keeps_what_was_shown():
+    c = _coach()
+
+    class TwoChunks(FakeResponses):
+        @contextmanager
+        def stream(self, **kw):
+            self.stream_calls.append(copy.deepcopy(kw))
+            def chunks():
+                yield SimpleNamespace(type="response.output_text.delta", delta="## Parte uno\n")
+                c.cancelar()
+                yield SimpleNamespace(type="response.output_text.delta", delta="parte dos")
+            yield chunks()
+
+    c.client = SimpleNamespace(responses=TwoChunks())
+    shown, done = [], []
+    c.stream_response("¿Pregunta?", on_delta=shown.append, on_done=lambda: done.append(1))
+    assert shown == ["## Parte uno\n"] and done == [1]
+    assert c._items[-1] == {"role": "assistant", "content": "## Parte uno\n"}
+    # The next answer is not cancelled by the old request.
+    c.client = SimpleNamespace(responses=FakeResponses())
+    out = []
+    c.stream_response("¿Otra?", on_delta=out.append)
+    assert out == ["## Respuesta\nUsaría PostgreSQL."]

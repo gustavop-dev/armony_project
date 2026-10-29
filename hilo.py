@@ -75,6 +75,8 @@ class HiloPregunta:
         self.partes = [pregunta]          # la pregunta y sus anadidos
         self.abierto_en = ahora
         self.dijo_tester = []             # todo lo que dijo el tester desde entonces
+        self.respuesta = ""               # la sugerencia que se le dio (para Jev)
+        self.revisiones = 0               # se reescribe como mucho una vez
         self._empezo_a_responder = None
         self._ultimo_tester = None
         self._interrumpio_entrevistador = False

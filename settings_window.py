@@ -184,6 +184,10 @@ def _schema():
             dict(key="openai_tokens_vision", label="Longitud máx. · capturas",
                  type="number", min=200, max=4000, step=100, unit=" tok",
                  hint="El código ocupa: quedarse corto lo deja cortado a medias."),
+            dict(key="typesafe_api_key", label="API key de TypeSafe (Jev)", type="text",
+                 secret=True, placeholder="apikey_…",
+                 hint="Opcional. Decide si lo que añaden a una pregunta cambia la "
+                      "respuesta o es ruido. Sin ella, todo añadido es contexto."),
             dict(key="assemblyai_api_key", label="API key de AssemblyAI", type="text",
                  secret=True, placeholder="…",
                  hint="Transcripción en vivo en la nube. Sin ella no se puede "

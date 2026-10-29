@@ -18,6 +18,7 @@ from collections import deque
 
 from PySide6 import QtCore
 
+import followup
 import hilo
 import intent
 from metrics import E2E, LLM_CALENTAMIENTO, STT_LATENCIA, metricas
@@ -62,6 +63,7 @@ class CoachEngine(QtCore.QObject):
     partial = QtCore.Signal(str)          # texto provisional, se repinta en vivo
     noAnswer = QtCore.Signal(str)         # no habra sugerencia, y por que
     respStart = QtCore.Signal()
+    respRevise = QtCore.Signal()          # reescribe en su sitio la ultima sugerencia
     respDelta = QtCore.Signal(str)
     respDone = QtCore.Signal()
     status = QtCore.Signal(str)
@@ -104,6 +106,10 @@ class CoachEngine(QtCore.QObject):
         self._listen_mic = True
         self._recientes_ellos = deque(maxlen=6)   # (instante, texto) para el eco
         self._eco_avisado = False
+        # Arbitro de anadidos (Jev). Sin clave, la regla fija de hilo.py.
+        self._arbitro = None
+        self._arbitrar_en_hilo = True    # las pruebas lo apagan para ir en linea
+        self._generando = False
 
     def start(self, cfg, test_mode=False):
         """test_mode: solo audio + transcripcion (sin llamar al modelo de respuestas)."""
@@ -209,6 +215,17 @@ class CoachEngine(QtCore.QObject):
             # Va en su hilo para no retrasar el arranque de la reunion.
             threading.Thread(target=self._calentar, daemon=True).start()
 
+            if cfg.get("typesafe_api_key"):
+                try:
+                    from typesafe_sdk import RetryPolicy, TypeSafeClient
+                    # Sin reintentos y con tope de 1 s: si Jev tarda, el anadido
+                    # se queda como contexto, que es lo seguro.
+                    self._arbitro = TypeSafeClient(
+                        api_key=cfg["typesafe_api_key"], model="jev-1.14.0",
+                        timeout=1.0, retry=RetryPolicy(max_retries=0))
+                except Exception as e:
+                    self.status.emit(f"Arbitro de anadidos desactivado: {e}")
+
         # El worker recibe SU cola y SU senal de parada. Asi un worker rezagado de una
         # sesion anterior no puede consumir eventos de la sesion nueva.
         self._worker = threading.Thread(
@@ -295,16 +312,74 @@ class CoachEngine(QtCore.QObject):
         self._anotar_oido(texto)
         metricas.contar("intervenciones")
         es_pregunta = intent.parece_pregunta(texto, self._language)
-        # Puerta 0: si hay una pregunta abierta que estas leyendo o contestando,
-        # lo que anadan es contexto, aunque suene a pregunta ("ah, pero ¿y en
-        # AWS?"). Solo con la anterior ya respondida abre otra respuesta.
+        # Puerta 0: si hay una pregunta abierta, lo que anadan se juzga segun en
+        # que punto va (hilo.py). Con Jev, el juicio fino (followup.py); sin el,
+        # la regla fija: contexto mientras lees o contestas.
         ahora = self._clock()
         with self._hilo_lock:
-            accion = hilo.decidir(self._hilo, es_pregunta, ahora)
-            if accion == "nueva":
-                self._hilo = hilo.HiloPregunta(texto, ahora)
-            elif self._hilo is not None:
-                self._hilo.entrevistador(texto, ahora)
+            actual = self._hilo
+            estado = actual.estado(ahora) if actual is not None else None
+            datos = None
+            if actual is not None and self._arbitro is not None:
+                datos = (actual, estado, actual.partes[0], actual.respuesta,
+                         list(actual.dijo_tester))
+            else:
+                accion = hilo.decidir(actual, es_pregunta, ahora)
+                if accion == "nueva":
+                    self._hilo = hilo.HiloPregunta(texto, ahora)
+            if actual is not None and (datos is not None or accion != "nueva"):
+                actual.entrevistador(texto, ahora)
+        if datos is not None:
+            if self._arbitrar_en_hilo:
+                threading.Thread(target=self._arbitrar, args=(texto, es_pregunta, datos),
+                                 daemon=True).start()
+            else:
+                self._arbitrar(texto, es_pregunta, datos)
+            return
+        self._aplicar(accion, texto, es_pregunta)
+
+    def _arbitrar(self, texto, es_pregunta, datos):
+        """Jev juzga el anadido (~150 ms) y la regla de followup decide."""
+        hilo_actual, estado, pregunta, respuesta, dijo_tester = datos
+        try:
+            juicio = followup.juzgar(self._arbitro, pregunta, respuesta,
+                                     dijo_tester, texto)
+            decision = followup.decidir(juicio, estado)
+            metricas.medir("jev_ms", juicio.ms)
+            metricas.contar(f"jev_{decision}")
+        except Exception:
+            # Jev no respondio a tiempo: la regla fija, que nunca reescribe.
+            metricas.contar("jev_fallos")
+            decision = (followup.NUEVA if es_pregunta and estado == hilo.RESPONDIDA
+                        else followup.MANTENER)
+        if not self._running:
+            return
+        if decision == followup.NUEVA:
+            with self._hilo_lock:
+                if self._hilo is not hilo_actual:
+                    return               # mientras tanto ya se abrio otra
+                self._hilo = hilo.HiloPregunta(texto, self._clock())
+            self._aplicar("nueva", texto, es_pregunta)
+        elif decision == followup.REVISAR:
+            with self._hilo_lock:
+                vale = self._hilo is hilo_actual and hilo_actual.revisiones == 0
+                if vale:
+                    hilo_actual.revisiones += 1
+            if not vale:
+                self._aplicar("contexto", texto, es_pregunta)
+                return
+            metricas.contar("revisiones")
+            if self._generando and self._coach is not None:
+                self._coach.cancelar()   # la respuesta en curso ya no vale
+            self.status.emit("Lo que añadieron cambia la respuesta: actualizándola.")
+            self._queue.put({"type": "revise", "text": texto})
+        else:
+            if decision == followup.RETIRAR:
+                metricas.contar("preguntas_retiradas")
+            self._aplicar("contexto", texto, es_pregunta)
+
+    def _aplicar(self, accion, texto, es_pregunta):
+        """Lo que se ve de una decision: responder o dejarlo como contexto."""
         if accion == "nueva":
             metricas.contar("con_pregunta")
             # Marca de tiempo para medir lo unico que notas de verdad: cuanto
@@ -425,6 +500,9 @@ class CoachEngine(QtCore.QObject):
                 elif item["type"] == "regen":
                     self._respond(self._last_question, images=None,
                                   note=item.get("note", ""))
+                elif item["type"] == "revise":
+                    # Anadido que cambia la respuesta: se reescribe en su sitio.
+                    self._respond(item["text"], images=None, revision=True)
             except Exception as e:
                 self.error.emit(str(e))
 
@@ -453,10 +531,12 @@ class CoachEngine(QtCore.QObject):
             if self._running:
                 self.status.emit(f"Modelo listo ({ms / 1000:.1f} s de calentamiento).")
 
-    def _respond(self, latest, images=None, note="", permitir_silencio=False):
+    def _respond(self, latest, images=None, note="", permitir_silencio=False,
+                 revision=False):
         # El contexto ya lo lleva la conversacion del coach (todo lo oido,
         # etiquetado por quien lo dijo, y las sugerencias anteriores).
-        self._last_question = latest
+        if not revision:
+            self._last_question = latest
         # Ese turno queda saldado: si luego llegan capturas, no se le vuelven a
         # emparejar (ver la rama de 'screenshot' en el bucle).
         if latest and latest == self._last_heard:
@@ -475,7 +555,7 @@ class CoachEngine(QtCore.QObject):
                 metricas.medir(E2E, ms)
                 self._t_pregunta = 0.0
                 self.e2eLatency.emit(int(ms))
-            self.respStart.emit()
+            (self.respRevise if revision else self.respStart).emit()
             self.respDelta.emit(estado["buffer"])
 
         def on_delta(txt):
@@ -494,40 +574,56 @@ class CoachEngine(QtCore.QObject):
                 return
             abrir()
 
+        # Una revision que falla deja en pantalla la respuesta anterior, que
+        # sigue valiendo: su pregunta no se cierra.
+        def sin_respuesta():
+            if not revision:
+                self._cerrar_hilo()
+
         def on_error(mensaje):
             if not estado["abierto"]:
-                self._cerrar_hilo()         # fallo antes de pintar nada
+                sin_respuesta()             # fallo antes de pintar nada
             self.error.emit(mensaje)
 
         def on_done():
             if estado["callado"]:
                 # No habia pregunta: nada en pantalla, asi que tampoco puede
                 # quedar una pregunta abierta bloqueando la siguiente.
-                self._cerrar_hilo()
+                sin_respuesta()
                 self.status.emit("Sin pregunta todavia: guardado como contexto.")
                 self.noAnswer.emit("model_declined")
                 return
             if not estado["abierto"]:
                 if not estado["buffer"].strip():
-                    self._cerrar_hilo()
+                    sin_respuesta()
                     return                  # respuesta vacia: no hay nada que pintar
                 abrir()                     # respuesta mas corta que el centinela
             # La sugerencia ya queda en la conversacion del coach: el modelo la
-            # da por dicha y continua desde ahi en vez de repetirse.
+            # da por dicha y continua desde ahi en vez de repetirse. Y en el
+            # hilo, para que el arbitro sepa que se le sugirio.
+            with self._hilo_lock:
+                if self._hilo is not None:
+                    self._hilo.respuesta = estado["todo"]
             # En el acta va la sugerencia ENTERA, con su codigo: es lo que luego
             # quieres releer para ver si la respuesta te sirvio de verdad.
-            self._registro.append(("Sugerido", estado["todo"]))
+            self._registro.append(("Sugerido (revisada)" if revision else "Sugerido",
+                                   estado["todo"]))
             self.respDone.emit()
 
-        self._coach.stream_response(
-            latest=latest,
-            images=images,
-            note=note,
-            on_delta=on_delta,
-            on_done=on_done,
-            on_error=on_error,
-            allow_silence=permitir_silencio,
-        )
+        self._generando = True
+        try:
+            self._coach.stream_response(
+                latest=latest,
+                images=images,
+                note=note,
+                on_delta=on_delta,
+                on_done=on_done,
+                on_error=on_error,
+                allow_silence=permitir_silencio,
+                revision=revision,
+            )
+        finally:
+            self._generando = False
 
     def _cerrar_hilo(self):
         """La pregunta abierta no llego a tener respuesta en pantalla."""
@@ -604,8 +700,8 @@ class CoachEngine(QtCore.QObject):
             with open(ruta, "w", encoding="utf-8") as f:
                 f.write(f"# Reunion del {time.strftime('%d/%m/%Y %H:%M')}\n\n")
                 for quien, texto in self._registro:
-                    if quien == "Sugerido":
-                        f.write(f"### Sugerido\n\n{texto.strip()}\n\n")
+                    if quien.startswith("Sugerido"):
+                        f.write(f"### {quien}\n\n{texto.strip()}\n\n")
                     else:
                         f.write(f"**{quien}:** {texto.strip()}\n\n")
             return ruta

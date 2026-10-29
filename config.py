@@ -35,7 +35,7 @@ CONFIG_PATH = os.path.join(data_dir(), "config.json")
 # Campos que se guardan cifrados con DPAPI (ver secretstore). Los de Anthropic ya
 # no se leen, pero si estan en config.json se conservan tal cual (cifrados): la
 # integracion con Claude se quito "por ahora" y volver no debe exigir reescribirlos.
-CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key")
+CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key", "typesafe_api_key")
 
 # Prompts por defecto: uno por idioma (cada instruccion va en su idioma).
 DEFAULT_PROMPT_ES = (
@@ -96,6 +96,11 @@ DEFAULTS = {
     # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
     # 1200 se quedaba a medias.
     "openai_tokens_vision": 2500,
+    # --- Arbitro de anadidos (Jev, TypeSafe) ---
+    # Decide si lo que anaden a una pregunta abierta cambia la respuesta, pide
+    # otra o es ruido (followup.py). Sin clave se usa la regla fija de hilo.py:
+    # todo anadido es contexto hasta que contestas.
+    "typesafe_api_key": "",
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
     # texto llega palabra a palabra mientras se habla, no al terminar la frase.

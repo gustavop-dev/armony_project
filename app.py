@@ -151,6 +151,7 @@ class OverlayApp(QtCore.QObject):
         e.partial.connect(self.on_partial)
         e.noAnswer.connect(self.on_no_answer)
         e.respStart.connect(self.on_resp_start)
+        e.respRevise.connect(self.on_resp_revise)
         e.respDelta.connect(self.panel.append_answer)
         e.respDone.connect(self.on_resp_done)
         e.status.connect(self.on_status)
@@ -379,6 +380,16 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_state("generating")   # borde dorado vivo mientras genera
         self.panel.set_status("Drafting…")
 
+    def on_resp_revise(self):
+        """Lo que anadieron cambia la respuesta: se reescribe en su sitio."""
+        if not self._running:
+            return
+        self._responding = True
+        self.panel.hide_skip()
+        self.panel.revisar_respuesta()   # misma burbuja, marcada "Updated"
+        self.panel.set_state("generating")
+        self.panel.set_status("Updating…")
+
     def on_resp_done(self):
         self._responding = False
         self.panel.cerrar_respuesta()         # pinta el ultimo trozo y cierra
@@ -422,6 +433,7 @@ class OverlayApp(QtCore.QObject):
             self.engine.partial.disconnect()
             self.engine.noAnswer.disconnect()
             self.engine.respStart.disconnect()
+            self.engine.respRevise.disconnect()
             self.engine.respDelta.disconnect()
             self.engine.respDone.disconnect()
             self.engine.status.disconnect()

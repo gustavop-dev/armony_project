@@ -242,6 +242,40 @@ Acceptance:
 - Scenario harness: at most 1 card per question except in new-question
   scenarios.
 
+Status (2026-10-28): **done**.
+- `followup.py`:
+  - New `drills_into_part` relation.
+  - The policy depends on the state. While the tester reads, rewrite if
+    P(extends)+P(relaxes) ≥ 0.6 and P(change) ≥ 0.7. From `respondiendo` on,
+    never rewrite.
+  - P(new_question)+P(drills_into_part) ≥ 0.6 opens a new answer.
+  - Everything else is context.
+- Eval (`stt_eval/followup_eval.py`, 46 cases incl. drill-downs and
+  post-answer follow-ups, `jev-1.14.0` × 3):
+  - relation 100% / 100% / 100%
+  - action 96% / 98% / 98%
+  - 0 revisions on noise
+  - missed revisions only on the borderline cases (`ext-06` always, `rel-04`
+    once)
+- Engine:
+  - With a `typesafe_api_key`, every interviewer final on an open thread goes
+    to Jev off the STT thread, with a 1 s timeout and no retries.
+  - A Jev failure falls back to the fixed rule, which never rewrites.
+  - A revision cancels an answer still being generated (`Coach.cancelar`) and
+    is queued as a `revise` turn of the cached conversation, at most once per
+    question.
+  - The panel rewrites the same card in place (`respRevise` →
+    `revisar_respuesta`) and tags it "Updated".
+- Live check with real Jev, four interview scenarios:
+  - read + changing follow-up → revise
+  - read + filler → nothing
+  - answering + follow-up → nothing
+  - answered + drill-down → new answer
+- **Pre-existing bug found and fixed:** when the last answer chunk and
+  `respDone` arrived < 90 ms apart (the common case), the batched repaint fired
+  after `cerrar_respuesta` and opened a **duplicate answer card**. It is now a
+  cancellable `QTimer`, with a regression test.
+
 ## Phase 4: Meeting memory with prompt caching
 
 - The conversation is an **append-only** Responses `input` list owned by the

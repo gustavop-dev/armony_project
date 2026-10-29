@@ -38,6 +38,11 @@ RELACIONES = {
         "Asks a DIFFERENT question, including a follow-up question about what "
         "the interviewee just answered ('¿y por qué no X?', '¿y si se cae?') or "
         "an explicit change of topic."),
+    "drills_into_part": (
+        "Asks to go deeper into ONE specific part of the question or of what the "
+        "interviewee answered, expecting more detail on that part "
+        "('¿y esa parte de la cola cómo la harías?', 'explícame más lo del "
+        "índice', 'bueno, ¿y esta parte en específico?')."),
     "withdraws_question": (
         "Withdraws or postpones the question so it no longer needs an answer "
         "('olvídalo', 'eso lo vemos luego', 'esa pregunta no aplica')."),
@@ -112,20 +117,43 @@ def juzgar(cliente, pregunta, respuesta, dijo_tester, anadido, clock=None):
 
 @dataclass
 class Umbrales:
-    cambio: float = 0.6       # P(cambia) para reescribir
-    confianza: float = 0.3    # por debajo, ante la duda no se toca nada
+    # Probabilidad conjunta de las relaciones que llevan a la misma accion.
+    # "Amplia" y "relaja" acaban igual (reescribir), asi que se suman: en los
+    # casos dudosos Jev reparte entre las dos y la confianza de cada una por
+    # separado salia baja aunque la accion estuviera clara.
+    masa: float = 0.6
+    # P(hay que reescribir). Medido: lo que hay que reescribir da >= 0.73 y lo
+    # que no, <= 0.26.
+    cambio: float = 0.7
 
 
-def decidir(juicio, umbrales=Umbrales()):
-    """Regla fija. Ante la duda se mantiene: una revision de mas confunde mas
-    al tester que un anadido que se queda como contexto."""
-    if juicio is None or juicio.confianza < umbrales.confianza:
+_REESCRIBE = ("extends_question", "relaxes_or_answers")
+_NUEVA = ("new_question", "drills_into_part")
+
+# Estados del hilo (los de hilo.py; aqui como texto para no acoplar modulos).
+LEYENDO = "preguntada"
+
+
+def decidir(juicio, estado=LEYENDO, umbrales=Umbrales()):
+    """Regla fija sobre lo que dice Jev y el punto en que va la pregunta.
+
+    - Mientras el tester LEE la sugerencia, un anadido que la cambia de verdad
+      la reescribe en su sitio.
+    - Una vez que la esta contestando (o ya la contesto), la sugerencia NO se
+      toca: solo una pregunta nueva o "¿y esta parte?" trae otra.
+    Ante la duda se mantiene: una revision de mas confunde mas al tester que un
+    anadido que se queda como contexto.
+    """
+    if juicio is None:
         return MANTENER
-    if juicio.relacion == "new_question":
+    p = juicio.probabilidades
+    p_nueva = sum(p.get(r, 0.0) for r in _NUEVA)
+    if estado == LEYENDO:
+        p_reescribe = sum(p.get(r, 0.0) for r in _REESCRIBE)
+        if p_reescribe >= umbrales.masa and juicio.cambia >= umbrales.cambio:
+            return REVISAR
+    if p_nueva >= umbrales.masa:
         return NUEVA
-    if juicio.relacion == "withdraws_question":
+    if p.get("withdraws_question", 0.0) >= umbrales.masa:
         return RETIRAR
-    if juicio.relacion in ("extends_question", "relaxes_or_answers") \
-            and juicio.cambia >= umbrales.cambio:
-        return REVISAR
     return MANTENER

@@ -23,6 +23,7 @@ desarrollo).
 | `openai_model` | *(no visible)* | Fijo | `gpt-6.1-sol` | `gpt-6.1-sol` | Un único modelo para voz y capturas: la caché de prompt es por modelo. |
 | `openai_effort_voice` | Razonamiento · preguntas habladas | Desplegable | `low`, `medium`, `high` | `low` | Cuánto razona en las preguntas habladas. Manda la latencia. |
 | `openai_effort_vision` | Razonamiento · capturas de pantalla | Desplegable | `low`, `medium`, `high` | `medium` | Cuánto razona con capturas, donde suele haber código. |
+| `typesafe_api_key` | API key de TypeSafe (Jev) | Texto (oculto) | `apikey_...` | *(vacío)* | Opcional. Jev decide si lo que añaden a una pregunta abierta cambia la respuesta (se reescribe en su sitio), pide otra o es ruido. Sin ella, todo añadido es contexto hasta que contestas. |
 | `language` | Idioma | Desplegable | `es`, `en`, `auto` | `es` | Idioma del reconocimiento de voz. `auto` = detección automática. |
 
 ## 🪟 Overlay

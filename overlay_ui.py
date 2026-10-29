@@ -658,6 +658,8 @@ class Burbuja(QtWidgets.QFrame):
 
         cab = QtWidgets.QHBoxLayout()
         cab.setSpacing(6)
+        self._cab = cab
+        self._actualizada = None
         if mio:
             cab.addStretch()
             cab.addWidget(icons.label("sparkles", T.GOLD, 12))
@@ -672,6 +674,17 @@ class Burbuja(QtWidgets.QFrame):
         self.cuerpo.setContentsMargins(0, 0, 0, 0)
         self.cuerpo.setSpacing(7)
         lay.addLayout(self.cuerpo)
+
+    def marcar_actualizada(self):
+        """La sugerencia se reescribio con lo que anadieron: que se note."""
+        if self._actualizada is None:
+            self._actualizada = _tracked("Updated", 10, QtGui.QFont.DemiBold,
+                                         T.TEXT_FAINT, 0.6, upper=True)
+            self._cab.insertWidget(1, self._actualizada)   # tras el hueco
+
+    @property
+    def actualizada(self):
+        return self._actualizada is not None
 
     # -- contenido ----------------------------------------------------------
     def _vaciar(self):
@@ -1049,7 +1062,17 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._burbujas = []         # todas las del hilo, para los botones copiar
         self._burbuja_viva = None   # la intervencion que se esta transcribiendo
         self._burbuja_resp = None   # la sugerencia que se esta generando
+        self._ultima_resp = None    # la ultima sugerencia, por si se reescribe
         self._repintado_pendiente = False
+        # Un temporizador propio, y no QTimer.singleShot: al cerrar la respuesta
+        # hay que poder CANCELAR el repintado pendiente. Con singleShot se
+        # disparaba igual despues del cierre, ya sin burbuja en curso, y abria
+        # una segunda burbuja con la misma respuesta (pasaba siempre que el
+        # ultimo trozo y el fin llegaban con menos de 90 ms entre si).
+        self._t_repintar = QtCore.QTimer(self)
+        self._t_repintar.setSingleShot(True)
+        self._t_repintar.setInterval(INTERVALO_REPINTADO)
+        self._t_repintar.timeout.connect(self._repintar)
         self._auto = {}             # se llena en _body, al crear el hilo
         self._build()
         # Animacion: pulso del borde (listening) + caret parpadeante.
@@ -1448,7 +1471,25 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
                          if b.quien == "ellos" and isValid(b)), None)
         self._auto["feed"].anotar()
         self._burbuja_resp = self._nueva_burbuja("tu")
+        self._ultima_resp = self._burbuja_resp
         self._auto["feed"].anclar(self._burbuja_resp, pregunta)
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
+
+    def revisar_respuesta(self):
+        """Reescribe en su sitio la ultima sugerencia (no abre otra).
+
+        Lo anadido cambia la respuesta, pero el tester ya la estaba leyendo ahi:
+        mismo sitio, mismo borde de arriba, marcada como actualizada. Si ya no
+        existe (se podo), se abre una nueva como siempre.
+        """
+        b = self._ultima_resp
+        if b is None or not isValid(b):
+            self.clear_answer()
+            return
+        self._raw = ""
+        self._burbuja_resp = b
+        b.marcar_actualizada()
+        self._auto["feed"].anotar()
         QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
     def append_answer(self, delta):
@@ -1461,10 +1502,11 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         self._raw += delta
         if not self._repintado_pendiente:
             self._repintado_pendiente = True
-            QtCore.QTimer.singleShot(INTERVALO_REPINTADO, self._repintar)
+            self._t_repintar.start()
 
     def _repintar(self):
         self._repintado_pendiente = False
+        self._t_repintar.stop()
         if self._burbuja_resp is None:
             self._burbuja_resp = self._nueva_burbuja("tu")
         with metricas.cronometro(PINTADO):
@@ -1499,6 +1541,7 @@ class TranscriptPanel(QtWidgets.QWidget, _Draggable):
         """Vacia la conversacion (al empezar una reunion nueva)."""
         self._burbuja_viva = None
         self._burbuja_resp = None
+        self._ultima_resp = None
         self._burbujas = []
         self._raw = ""
         self._auto["feed"].ir_al_final()
