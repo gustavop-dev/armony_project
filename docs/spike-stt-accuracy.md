@@ -192,6 +192,74 @@ Direction: a layered prompt with a stable, cacheable prefix.
 4. The current question, with an explicit instruction to answer that question
    and use the rest as background.
 
+## Product priority (2026-10-28): screen stability over revisions
+
+During testing the dominant need is that the screen does **not** change under
+the tester:
+- A question counts as answered when the tester answers it. That is heard on
+  the mic.
+- After that, follow-ups are context by default. New content appears only when
+  the interviewer reformulates or drills into a specific part ("¿y esta parte en
+  específico?").
+- Revising the answer is the exception, not the norm.
+
+Why the text "runs away" today (`overlay_ui._AutoScroll`): the feed follows
+the tail while the reader is at the bottom (`seguir`). Every new bubble pushes
+the answer being read upward, and the interviewer's live partials count as new
+bubbles. Only scrolling up by hand stops this.
+
+Direction:
+1. Pin the active answer: while an answer is the reading target, the feed does
+   not follow the tail. New items land below it and raise a "nuevo ↓"
+   indicator instead of scrolling.
+2. Thread state machine:
+   - `asked`: answer generating or shown
+   - `answering`: the tester is speaking substantively on the mic
+   - `answered`: the tester finished and the interviewer acknowledged or moved
+     on
+
+   The arbiter policy depends on the state. Before `answering`, a revision is
+   allowed only at high confidence. From `answering` on, extend/relax
+   follow-ups are context only, and only `new_question` or a drill-down creates
+   content. That content becomes a new card that never steals the scroll.
+3. Add a `drills_into_part` relation: asks to go deeper into one specific part
+   of the question or of the tester's answer.
+
+## Workstream C research: how chat products keep continuity
+
+- The Messages API is stateless. Chat UIs, Claude Code included, resend the
+  conversation every turn. What makes that cheap and fast is **prompt caching**:
+  the provider reuses the already-processed prefix, so only the new tail is
+  processed.
+  - Cache reads cost ~0.1× input (0.05× on Opus 5.5). Writes cost 1.25× for the
+    5-min TTL and 2× for the 1-h TTL.
+  - A read refreshes the TTL, so requests < 5 min apart keep it warm
+    indefinitely.
+- Multi-turn caching: put a breakpoint on the last block of the latest turn.
+  Earlier breakpoints stay valid read points, so hits accrue incrementally.
+  - Max 4 breakpoints.
+  - Each breakpoint looks back at most 20 blocks. Keep each transcript chunk as
+    one block, or add intermediate breakpoints.
+- Any byte change in the prefix invalidates everything after it. The
+  transcript must be **append-only**: no sliding window, no re-rendered
+  history, no timestamps in the system prompt. Today `engine._contexto`
+  rebuilds a sliding window inside one user message, which can never hit the
+  cache.
+- **Minimum cacheable prefix depends on the model.** `claude-haiku-4-5`, the
+  app's voice model, needs **4096 tokens**. Shorter prefixes silently don't
+  cache. `claude-haiku-5-5` needs 512 and costs $0.10 / $0.50 per MTok, vs
+  $1 / $5 for Haiku 4.5. Thinking is on by default with effort `medium`, so
+  pin `low` for latency. A model change is the product owner's call.
+- Long meetings: server-side **compaction** (beta `compact-2026-01-12`)
+  summarizes older context near a token threshold (default 150K). A 1-h meeting
+  transcript is ~10–15K tokens, so it is not needed for size. A running summary
+  is still useful as a cheap "what was covered" layer.
+- Pre-warming: a `max_tokens: 0` request at meeting start writes the cache so
+  the first question doesn't pay a cold prefill.
+- OpenAI equivalent: the Responses API can keep server-side state
+  (`previous_response_id` / Conversations), and it caches prefixes ≥ 1024
+  tokens automatically. The same append-only discipline applies.
+
 ## Results
 
 | Date | Dataset | Config | WER | WER no accents | CER | Final. latency p50 / p95 | Notes |
