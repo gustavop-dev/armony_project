@@ -98,7 +98,7 @@ def listar():
         return []
     out = []
     for fn in os.listdir(SESIONES_DIR):
-        if not fn.lower().endswith(".md"):
+        if not fn.lower().endswith(".md") or fn.lower().endswith(_NOTAS):
             continue
         sid = os.path.splitext(fn)[0]
         try:
@@ -123,10 +123,40 @@ def leer(sid):
 def borrar(sid):
     try:
         os.remove(os.path.join(SESIONES_DIR, sid + ".md"))
+        notas = os.path.join(SESIONES_DIR, sid + _NOTAS)
+        if os.path.exists(notas):
+            os.remove(notas)
         return True
     except OSError as e:
         log.warning("Session not deleted (%s): %s", type(e).__name__, sid)
         return False
+
+
+# Las notas de una reunion van al lado de su transcripcion.
+_NOTAS = ".notas.md"
+
+
+def id_de(ruta):
+    """Id de la reunion a partir de la ruta que devuelve guardar()."""
+    return os.path.splitext(os.path.basename(ruta))[0]
+
+
+def guardar_notas(sid, texto):
+    try:
+        with open(os.path.join(SESIONES_DIR, sid + _NOTAS), "w", encoding="utf-8") as f:
+            f.write(texto.strip() + "\n")
+        return True
+    except OSError:
+        log.warning("Meeting notes not written: %s", sid, exc_info=True)
+        return False
+
+
+def leer_notas(sid):
+    """Las notas de la reunion, o "" si no tiene."""
+    ruta = os.path.join(SESIONES_DIR, sid + _NOTAS)
+    if not os.path.exists(ruta):
+        return ""
+    return cfg_mod.read_user_text(ruta).replace("\r\n", "\n").strip()
 
 
 def etiqueta_fecha(cuando, hoy=None):

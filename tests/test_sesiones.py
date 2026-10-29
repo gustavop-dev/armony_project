@@ -70,3 +70,28 @@ def test_date_label_reads_like_a_chat_history():
     assert [sesiones.etiqueta_fecha(d, hoy) for d in (
         dt.datetime(2026, 10, 29, 16, 18), dt.datetime(2026, 10, 28, 11, 2),
         dt.datetime(2026, 10, 3, 9, 30))] == ["Hoy 16:18", "Ayer 11:02", "3 oct 09:30"]
+
+
+def test_notes_live_next_to_the_meeting(isolated_data_dir):
+    ruta = sesiones.guardar([("Ellos", "x")], "coach", "Coach", AHORA)
+    sid = sesiones.id_de(ruta)
+
+    sesiones.guardar_notas(sid, "## Resumen\nAlgo\n")
+
+    assert sesiones.leer_notas(sid) == "## Resumen\nAlgo"
+    assert [s["id"] for s in sesiones.listar()] == [sid]          # notes are not a meeting
+
+
+def test_meeting_without_notes_reads_empty(isolated_data_dir):
+    ruta = sesiones.guardar([("Ellos", "x")], "coach", "Coach", AHORA)
+
+    assert sesiones.leer_notas(sesiones.id_de(ruta)) == ""
+
+
+def test_deleting_a_meeting_deletes_its_notes(isolated_data_dir):
+    sid = sesiones.id_de(sesiones.guardar([("Ellos", "x")], "coach", "Coach", AHORA))
+    sesiones.guardar_notas(sid, "notas")
+
+    sesiones.borrar(sid)
+
+    assert list((isolated_data_dir / "sesiones").iterdir()) == []

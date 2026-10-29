@@ -26,11 +26,15 @@ class FakeEngine(QtCore.QObject):
     shotDelta = QtCore.Signal(str)
     shotDone = QtCore.Signal()
     screenSuggest = QtCore.Signal(str)
+    notesStarted = QtCore.Signal(str)
+    notesReady = QtCore.Signal(str, bool)
     status = QtCore.Signal(str)
     error = QtCore.Signal(str)
 
     def __init__(self):
         super().__init__()
+        self.modo = "automatico"
+        self.permite_capturas = True
         self.starts = []
         self.stops = 0
         self.answers = 0
@@ -928,3 +932,55 @@ class TestGlass:
         ui._apply_opacity()
 
         assert round(ui.panel.windowOpacity(), 2) == 0.5
+
+
+class TestModes:
+    def test_screenshot_is_refused_when_the_agent_has_no_screens(self, ui):
+        ui.start_meeting()
+        ui.engine.permite_capturas = False
+
+        ui.take_shot()
+
+        assert ui._shots == [] and ui.panel.skip_pill.text() == "This agent doesn't use screenshots"
+
+    def test_notetaker_does_not_answer_on_demand(self, ui):
+        ui.start_meeting()
+        ui.engine.modo = "notetaker"
+
+        ui.answer_now()
+
+        assert ui.engine.answers == 0 and ui.panel.skip_pill.text() == "This agent only takes notes"
+
+    def test_manual_question_offers_the_shortcut(self, ui):
+        ui.start_meeting()
+
+        ui.engine.noAnswer.emit("manual")
+
+        assert ui.panel.skip_pill.text() == "Question — Caps+A to answer"
+
+    def test_notetaker_listens_as_taking_notes(self, ui):
+        ui.start_meeting()
+        ui.engine.modo = "notetaker"
+
+        ui.engine.status.emit("Escuchando la reunion.")
+
+        assert badge(ui) == "Taking notes"
+
+    def test_notetaker_meeting_says_no_answers(self, ui, cfg):
+        import agents
+        lista = agents.list_agents()
+        lista[0]["modo"] = "notetaker"
+        agents.write_all(lista)
+
+        ui.start_meeting("coach")
+
+        assert any("Taking notes — no answers" in t for t in
+                   [lab.text() for lab in ui.panel.scroll.widget().findChildren(QtWidgets.QLabel)])
+
+    def test_notes_signals_reach_the_home(self, ui):
+        ui.engine.notesStarted.emit("sesion-x")
+        assert ui.home._notas_estado == {"sesion-x": "generando"}
+
+        ui.engine.notesReady.emit("sesion-x", False)
+
+        assert ui.home._notas_estado == {"sesion-x": "error"}

@@ -513,7 +513,7 @@ def test_tone_tab_exists_next_to_instructions(make_home):
 
     tabs = _find(win, hw.Segmented, "pestanas")
 
-    assert list(tabs._btns) == ["instrucciones", "tono", "conocimiento", "reglas"]
+    assert list(tabs._btns) == ["instrucciones", "tono", "conocimiento", "permisos", "reglas"]
 
 
 def test_tone_is_written_like_any_other_section(make_home):
@@ -604,3 +604,105 @@ def test_author_dialog_says_what_will_be_sent(qtbot):
     assert dialogo.info.text().startswith("Se enviarán a OpenAI tus últimos 30 mensajes")
     assert "Los mensajes de los demás no salen de tu equipo" in dialogo.info.text()
     assert dialogo.ok.isEnabled() is True
+
+
+# ------------------------------------------------------------------ permissions
+def test_permissions_tab_saves_the_mode(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "permisos")
+
+    selector = _find(win, hw.Segmented, "modo")
+    selector._btns["manual"].click()
+    win.guardar_ya()
+
+    assert agents.get("grok")["modo"] == "manual"
+    assert _find(win, QtWidgets.QLabel, "modo-explicacion").text().startswith("Detecta las preguntas")
+
+
+def test_notetaker_locks_screens_off_and_notes_on(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "permisos")
+
+    _find(win, hw.Segmented, "modo")._btns["notetaker"].click()
+
+    capturas = _find(win, hw.ToggleSwitch, "capturas")
+    notas_ = _find(win, hw.ToggleSwitch, "notas")
+    assert (capturas.isEnabled(), capturas.isChecked()) == (False, False)
+    assert (notas_.isEnabled(), notas_.isChecked()) == (False, True)
+
+
+def test_screens_and_notes_toggles_are_saved(make_home, qtbot):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "permisos")
+
+    qtbot.mouseClick(_find(win, hw.ToggleSwitch, "capturas"), LEFT)
+    qtbot.mouseClick(_find(win, hw.ToggleSwitch, "notas"), LEFT)
+    win.guardar_ya()
+
+    g = agents.get("grok")
+    assert (g["capturas"], g["notas"]) == (False, False)
+
+
+def test_agent_page_says_how_it_answers(make_home):
+    lista = agents.list_agents()
+    lista[2]["modo"] = "notetaker"
+    agents.write_all(lista)
+    win = make_home(agent="grok")
+
+    assert _find(win, QtWidgets.QLabel, "modo-portada").text() == "Notetaker · solo toma notas"
+
+
+# ------------------------------------------------------------------ meeting notes
+def test_meeting_page_opens_on_its_notes(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    sesiones.guardar_notas("sesion-20261029-161800", "## Resumen\nSe habló de pagos.")
+    win = make_home()
+
+    win.abrir_sesion("sesion-20261029-161800")
+
+    assert "Se habló de pagos." in _find(win, QtWidgets.QTextBrowser, "notas").toPlainText()
+
+
+def test_meeting_page_switches_to_the_transcript(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    sesiones.guardar_notas("sesion-20261029-161800", "## Resumen\nx")
+    win = make_home()
+    win.abrir_sesion("sesion-20261029-161800")
+
+    _find(win, hw.Segmented, "pestanas-sesion")._btns["transcripcion"].click()
+
+    assert "¿Pagos?" in _find(win, QtWidgets.QTextBrowser, "transcripcion").toPlainText()
+
+
+def test_meeting_without_notes_shows_only_the_transcript(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+
+    win.abrir_sesion("sesion-20261029-161800")
+
+    assert _find(win, hw.Segmented, "pestanas-sesion") is None
+
+
+def test_notes_being_written_are_announced_then_shown(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+    win.abrir_sesion("sesion-20261029-161800")
+
+    win.notas_en_curso("sesion-20261029-161800")
+    generando = _find(win, QtWidgets.QTextBrowser, "notas").toPlainText()
+    sesiones.guardar_notas("sesion-20261029-161800", "## Resumen\nListo")
+    win.notas_listas("sesion-20261029-161800", True)
+
+    assert generando.startswith("Generando las notas")
+    assert "Listo" in _find(win, QtWidgets.QTextBrowser, "notas").toPlainText()
+
+
+def test_failed_notes_are_explained(make_home):
+    _save_session("grok", "Grok", "¿Pagos?", dt.datetime(2026, 10, 29, 16, 18))
+    win = make_home()
+    win.abrir_sesion("sesion-20261029-161800")
+
+    win.notas_listas("sesion-20261029-161800", False)
+
+    assert _find(win, QtWidgets.QTextBrowser, "notas").toPlainText().startswith(
+        "No se pudieron generar las notas")

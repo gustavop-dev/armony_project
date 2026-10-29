@@ -2,6 +2,8 @@
 import json
 import os
 
+import pytest
+
 import agents
 import config
 from llm import REGLAS
@@ -162,3 +164,36 @@ def test_tone_survives_a_round_trip():
 
 def test_presets_start_without_tone():
     assert all(agents.preset(pid)["tono"] == "" for pid in agents.PRESETS)
+
+
+def test_presets_answer_automatically_with_screens_and_notes():
+    coach = agents.preset("coach")
+
+    assert (coach["modo"], coach["capturas"], coach["notas"]) == ("automatico", True, True)
+
+
+def test_permissions_survive_a_round_trip():
+    lista = agents.list_agents()
+    lista[1].update(modo="manual", capturas=False, notas=False)
+    agents.write_all(lista)
+
+    d = agents.get("directo")
+    assert (d["modo"], d["capturas"], d["notas"]) == ("manual", False, False)
+
+
+def test_unknown_mode_falls_back_to_automatic(isolated_data_dir):
+    import json
+    agents.list_agents()
+    (isolated_data_dir / "agents" / "agente-1.json").write_text(
+        json.dumps({"name": "Raro", "modo": "telepatico"}), encoding="utf-8")
+
+    assert agents.get("agente-1")["modo"] == "automatico"
+
+
+@pytest.mark.parametrize("agente, capturas, notas", [
+    ({"modo": "notetaker", "capturas": True, "notas": False}, False, True),
+    ({"modo": "manual", "capturas": False, "notas": False}, False, False),
+    ({"modo": "automatico", "capturas": True, "notas": True}, True, True),
+])
+def test_notetaker_has_no_screens_and_always_notes(agente, capturas, notas):
+    assert (agents.usa_capturas(agente), agents.toma_notas(agente)) == (capturas, notas)

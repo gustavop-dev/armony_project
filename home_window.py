@@ -12,6 +12,9 @@ Como la de ChatGPT, Claude o Grok, pero para reuniones:
   - todo lo escrito en markdown se lee formateado; "Editar" lo abre en bruto.
   - el tono de cada agente se escribe o se saca de tus chats de WhatsApp
     (estilo.py): solo tus mensajes, y solo cuando lo pides.
+  - permisos de cada agente: notetaker, responder al pedir o automatico,
+    capturas de pantalla y notas al terminar. Las notas de una reunion se
+    leen en su pagina, junto a la transcripcion.
   - "Ajustes" es una vista aparte: claves, idioma y opacidad.
 
 Todo se guarda solo, un momento despues de cada cambio. Borrar un agente o
@@ -439,6 +442,24 @@ class ElegirAutor(QtWidgets.QDialog):
             f"Los mensajes de los demás no salen de tu equipo.")
 
 
+# Como responde un agente: (valor, nombre corto, explicacion).
+MODOS = [
+    (agents_mod.NOTETAKER, "Notetaker",
+     "No responde: escucha la reunión y, al terminar, deja las notas (resumen, "
+     "decisiones, tareas) en el historial."),
+    (agents_mod.MANUAL, "Al pedir",
+     "Detecta las preguntas pero solo responde cuando se lo pides con el botón "
+     "o Bloq Mayús+A."),
+    (agents_mod.AUTOMATICO, "Automático",
+     "Responde en cuanto detecta una pregunta, sin que tengas que pedirlo."),
+]
+MODO_CORTO = {
+    agents_mod.NOTETAKER: "Notetaker · solo toma notas",
+    agents_mod.MANUAL: "Responde al pedir · Bloq Mayús+A",
+    agents_mod.AUTOMATICO: "Responde automáticamente",
+}
+
+
 def _resumen(texto, largo=160):
     """Primera frase con contenido de unas instrucciones, sin markdown."""
     for linea in texto.splitlines():
@@ -502,6 +523,10 @@ class HomeWindow(QtWidgets.QWidget):
         # habia antes de importar (para deshacer).
         self._analizando = None
         self._tono_anterior = {}
+        # Notas de reuniones que se estan generando o que fallaron, y la
+        # pestana abierta en la pagina de una reunion.
+        self._notas_estado = {}
+        self.pestana_sesion = "notas"
         # La app pasa aqui como excluir de la captura las ventanas que abre la
         # Home (el dialogo del tono), igual que la propia Home.
         self.proteger_ventana = None
@@ -805,6 +830,12 @@ class HomeWindow(QtWidgets.QWidget):
         meta.setAlignment(QtCore.Qt.AlignCenter)
         meta.setStyleSheet(f"color: {TXT_FA}; font-size: 11px; background: transparent;")
         t.addWidget(meta)
+        modo = QtWidgets.QLabel(MODO_CORTO[agents_mod.modo(a)])
+        modo.setObjectName("modo-portada")
+        modo.setAlignment(QtCore.Qt.AlignCenter)
+        modo.setStyleSheet(f"color: {ACENTO}; font-size: 12px; font-weight: 600; "
+                           f"background: transparent;")
+        t.addWidget(modo)
         t.addSpacing(8)
         botones = QtWidgets.QHBoxLayout(); botones.setSpacing(6)
         botones.addStretch()
@@ -856,7 +887,7 @@ class HomeWindow(QtWidgets.QWidget):
         n_docs = len(a["conocimiento"])
         tabs = Segmented([("instrucciones", "Instrucciones"), ("tono", "Tono"),
                           ("conocimiento", f"Conocimiento · {n_docs}" if n_docs else "Conocimiento"),
-                          ("reglas", "Reglas")],
+                          ("permisos", "Permisos"), ("reglas", "Reglas")],
                          self.pestana)
         tabs.setObjectName("pestanas")
         tabs.changed.connect(lambda p, aid=a["id"]: self.editar_agente(aid, p))
@@ -865,6 +896,9 @@ class HomeWindow(QtWidgets.QWidget):
 
         if self.pestana == "conocimiento":
             v.addLayout(self._conocimiento(a), 1)
+        elif self.pestana == "permisos":
+            v.addWidget(self._permisos(a))
+            v.addStretch(1)
         else:
             campo = self.pestana
             extra = []
@@ -890,6 +924,71 @@ class HomeWindow(QtWidgets.QWidget):
             v.addLayout(self._cabecera_campo(a, campo, ayuda, texto.boton, extra))
             v.addWidget(texto, 1)
         return page
+
+    def _permisos(self, a):
+        """Que puede hacer el agente: como responde, capturas y notas."""
+        tarjeta = N.Surface("relieve", radio=22, prof=7)
+        tv = QtWidgets.QVBoxLayout(tarjeta); tv.setContentsMargins(26, 14, 22, 14); tv.setSpacing(4)
+        modo = agents_mod.modo(a)
+        titulo = QtWidgets.QLabel("Cómo responde")
+        tf = titulo.font(); tf.setPixelSize(14); tf.setWeight(QtGui.QFont.DemiBold); titulo.setFont(tf)
+        titulo.setStyleSheet(f"color: {TXT_LB}; background: transparent;")
+        tv.addWidget(titulo)
+        selector = Segmented([(m, nombre) for m, nombre, _ in MODOS], modo)
+        selector.setObjectName("modo")
+        selector.changed.connect(lambda m, aid=a["id"]: self._permiso(aid, "modo", m))
+        fila = QtWidgets.QHBoxLayout(); fila.addWidget(selector); fila.addStretch()
+        tv.addLayout(fila)
+        explica = QtWidgets.QLabel(next(d for m, _, d in MODOS if m == modo))
+        explica.setObjectName("modo-explicacion")
+        explica.setWordWrap(True)
+        explica.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px; background: transparent; "
+                              f"padding: 2px 4px 8px 4px;")
+        tv.addWidget(explica)
+        notetaker = modo == agents_mod.NOTETAKER
+        tv.addWidget(self._fila_permiso(
+            a, "capturas", "Capturas de pantalla",
+            "Puede leer tus pantallazos y resolver lo que se ve (Bloq Mayús+S / D)."
+            + (" El notetaker no resuelve nada." if notetaker else ""),
+            agents_mod.usa_capturas(a), habilitado=not notetaker))
+        tv.addWidget(self._fila_permiso(
+            a, "notas", "Notas al terminar",
+            "Al acabar la reunión deja resumen, decisiones, tareas y preguntas "
+            "abiertas junto a la transcripción."
+            + (" El notetaker las toma siempre." if notetaker else ""),
+            agents_mod.toma_notas(a), habilitado=not notetaker))
+        return tarjeta
+
+    def _fila_permiso(self, a, campo, titulo, ayuda, valor, habilitado=True):
+        row = QtWidgets.QWidget()
+        row.setObjectName("fila")
+        row.setProperty("clave", campo)
+        lay = QtWidgets.QHBoxLayout(row); lay.setContentsMargins(0, 10, 0, 10); lay.setSpacing(24)
+        left = QtWidgets.QWidget()
+        lv = QtWidgets.QVBoxLayout(left); lv.setContentsMargins(0, 0, 0, 0); lv.setSpacing(3)
+        nombre = QtWidgets.QLabel(titulo)
+        nf = nombre.font(); nf.setPixelSize(14); nf.setWeight(QtGui.QFont.DemiBold); nombre.setFont(nf)
+        nombre.setStyleSheet(f"color: {TXT_LB if habilitado else TXT_FA}; background: transparent;")
+        lv.addWidget(nombre)
+        hint = QtWidgets.QLabel(ayuda); hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px; background: transparent;")
+        lv.addWidget(hint)
+        lay.addWidget(left, 1)
+        sw = ToggleSwitch(valor)
+        sw.setObjectName(campo)
+        sw.setEnabled(habilitado)
+        sw.toggled.connect(lambda on, aid=a["id"], c=campo: self._permiso(aid, c, on))
+        lay.addWidget(sw, 0, QtCore.Qt.AlignVCenter)
+        return row
+
+    def _permiso(self, aid, campo, valor):
+        a = self._ag_get(aid)
+        if a is None:
+            return
+        a[campo] = valor
+        self._marcar()
+        if campo == "modo":
+            self._mostrar()            # cambia lo que se puede tocar
 
     def _modo(self, clave, editando):
         """Recuerda que campos estan en edicion al redibujar la vista."""
@@ -1142,11 +1241,52 @@ class HomeWindow(QtWidgets.QWidget):
             texto = sesiones.leer(sid)
         except OSError:
             texto = "No se pudo leer esta reunión."
-        lector = lector_markdown("transcripcion")
-        lector.setMarkdown(texto)
-        caja = N.campo(lector)
-        v.addWidget(caja, 1)
+        try:
+            notas = sesiones.leer_notas(sid)
+        except OSError:
+            notas = ""
+        estado = self._notas_estado.get(sid)
+        if notas or estado:
+            tabs = Segmented([("notas", "Notas"), ("transcripcion", "Transcripción")],
+                             self.pestana_sesion)
+            tabs.setObjectName("pestanas-sesion")
+            tabs.changed.connect(lambda p: self._pestana_sesion(p))
+            fila = QtWidgets.QHBoxLayout(); fila.addWidget(tabs); fila.addStretch()
+            v.addLayout(fila)
+        if (notas or estado) and self.pestana_sesion == "notas":
+            if notas:
+                contenido = notas
+            elif estado == "generando":
+                contenido = "*Generando las notas de la reunión… tardan unos segundos.*"
+            else:
+                contenido = ("*No se pudieron generar las notas. La transcripción "
+                             "está en la otra pestaña.*")
+            lector = lector_markdown("notas")
+            lector.setMarkdown(contenido)
+        else:
+            lector = lector_markdown("transcripcion")
+            lector.setMarkdown(texto)
+        v.addWidget(N.campo(lector), 1)
         return page
+
+    def _pestana_sesion(self, pestana):
+        self.pestana_sesion = pestana
+        self._mostrar()
+
+    def notas_en_curso(self, sid):
+        """El motor empezo a generar las notas de esa reunion."""
+        self._notas_estado[sid] = "generando"
+        if self.vista == ("sesion", sid):
+            self.pestana_sesion = "notas"
+            self._mostrar()
+
+    def notas_listas(self, sid, ok):
+        if ok:
+            self._notas_estado.pop(sid, None)
+        else:
+            self._notas_estado[sid] = "error"
+        if self.vista == ("sesion", sid):
+            self._mostrar()
 
     # ---------------------------------------------------- vista: ajustes
     def _vista_ajustes(self):

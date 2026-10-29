@@ -231,6 +231,9 @@ class OverlayApp(QtCore.QObject):
         e.shotDelta.connect(self.screen.append_answer)
         e.shotDone.connect(self.on_shot_done)
         e.screenSuggest.connect(self.on_screen_suggest)
+        # Las notas se generan cuando la Home ya esta a la vista.
+        e.notesStarted.connect(lambda sid: self.home.notas_en_curso(sid))
+        e.notesReady.connect(lambda sid, ok: self.home.notas_listas(sid, ok))
         e.status.connect(self.on_status)
         e.error.connect(self.on_error)
         self.screen.relaunchClicked.connect(self.relaunch_screen)
@@ -263,7 +266,10 @@ class OverlayApp(QtCore.QObject):
         self._refresh_agents()
         # Es un aviso de paso, no un estado: el badge sigue diciendo que hace.
         if self.engine.set_agent(agent_id):
-            self.panel.aviso(f"{agents_mod.get(agent_id)['name']} answers from now on")
+            agente = agents_mod.get(agent_id)
+            hace = ("takes notes" if agents_mod.modo(agente) == agents_mod.NOTETAKER
+                    else "answers")
+            self.panel.aviso(f"{agente['name']} {hace} from now on")
 
     # ------------------------------------------------ acciones
     def toggle_meeting(self):
@@ -314,10 +320,17 @@ class OverlayApp(QtCore.QObject):
         self.screen.set_shots(0)
         self.set_screen_mode(False)     # vuelve a haber solo el hablado
         self._answer_lleva_capturas = False
-        n = len(agents_mod.get(self.cfg.get("agent"))["conocimiento"])
+        agente = agents_mod.get(self.cfg.get("agent"))
+        n = len(agente["conocimiento"])
         chip = f"{n} document{'s' if n != 1 else ''} loaded · " if n else ""
+        modo = agents_mod.modo(agente)
         if test:
             self.panel.set_hint("TEST MODE — audio + transcription only (no AI).")
+        elif modo == agents_mod.NOTETAKER:
+            self.panel.set_hint("Taking notes — no answers. The notes will be in the "
+                                "Home when the meeting ends.")
+        elif modo == agents_mod.MANUAL:
+            self.panel.set_hint(chip + "Answers only when you ask — Caps+A.")
         else:
             self.panel.set_hint(chip + "Listening for the question — the answer will draft here.")
         self.engine.start(self.cfg, test_mode=test)
@@ -375,6 +388,9 @@ class OverlayApp(QtCore.QObject):
         """
         if not self._running:
             return
+        if not self.engine.permite_capturas:
+            self.panel.aviso("This agent doesn't use screenshots")
+            return
         # Sin destello ni aviso de ningun tipo: la captura tiene que ser
         # indistinguible de no hacer nada. El unico acuse de recibo es la
         # miniatura en el panel, que solo ves tu (el panel esta excluido de
@@ -430,6 +446,9 @@ class OverlayApp(QtCore.QObject):
         """
         if not self._running:
             return
+        if self.engine.modo == agents_mod.NOTETAKER:
+            self.panel.aviso("This agent only takes notes")
+            return
         self.panel.hide_skip()
         self.panel.set_status("Answering…")
         self.engine.answer_now()
@@ -464,6 +483,9 @@ class OverlayApp(QtCore.QObject):
             return
         if motivo == "model_declined":
             self.panel.show_skip("Not a question — Caps+A to answer")
+        elif motivo == "manual":
+            # Agente "al pedir": hay pregunta, pero solo responde si se lo pides.
+            self.panel.show_skip("Question — Caps+A to answer")
         elif motivo == "follow_up":
             # Anadieron algo a la pregunta que estas leyendo o contestando: no
             # se te pone otra respuesta encima, pero puedes pedirla.
@@ -543,7 +565,8 @@ class OverlayApp(QtCore.QObject):
         if "cargando" in bajo:
             self.panel.set_status("Loading model…")
         elif "escuchando" in bajo:
-            self.panel.set_status("Listening")
+            notas = self.engine.modo == agents_mod.NOTETAKER
+            self.panel.set_status("Taking notes" if notas else "Listening")
         elif "sigue hablando" in bajo:
             self.panel.set_status("Still talking…")
         # "Sin pregunta" / "nada que responder" no son estados: el aviso ya va
@@ -580,6 +603,8 @@ class OverlayApp(QtCore.QObject):
             self.engine.shotDelta.disconnect()
             self.engine.shotDone.disconnect()
             self.engine.screenSuggest.disconnect()
+            self.engine.notesStarted.disconnect()
+            self.engine.notesReady.disconnect()
             self.engine.status.disconnect()
             self.engine.error.disconnect()
         except (RuntimeError, TypeError):

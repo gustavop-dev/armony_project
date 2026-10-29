@@ -330,6 +330,15 @@ Un agente es una personalidad del coach con su system prompt **entero y editable
 - **Tono**: cómo quieres que suene (registro, muletillas, ritmo, humor), en
   markdown. Se escribe a mano o se saca de tus chats con *Importar de WhatsApp*
   (ver abajo). Va en el prompt entre las instrucciones y el conocimiento.
+- **Permisos**: cómo responde y qué puede usar.
+  - *Notetaker*: no responde; escucha y, al terminar, deja las notas.
+  - *Al pedir*: detecta las preguntas pero solo responde con el botón o `Bloq Mayús+A`.
+  - *Automático*: responde en cuanto detecta una pregunta (como siempre).
+  - *Capturas de pantalla*: si puede usar pantallazos (el notetaker no).
+  - *Notas al terminar*: resumen, decisiones, tareas y preguntas abiertas, que se
+    generan en segundo plano y se leen en la página de la reunión, junto a la
+    transcripción (el notetaker las toma siempre). Se guardan como
+    `sesiones/<reunión>.notas.md`.
 - **Conocimiento**: sus documentos (tu CV, la oferta, el producto…), como los de un
   GPT o un proyecto. Se le dan enteros al empezar la reunión. Los contextos activos
   de versiones anteriores pasaron, una sola vez, al agente que estaba en uso.

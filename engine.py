@@ -62,6 +62,9 @@ class CoachEngine(QtCore.QObject):
     # Lo que dijeron parece ir para la solucion en pantalla: se ofrece relanzarla
     # con ello (texto); "" retira la sugerencia.
     screenSuggest = QtCore.Signal(str)
+    # Notas al terminar (en segundo plano): (id de la reunion) / (id, ok)
+    notesStarted = QtCore.Signal(str)
+    notesReady = QtCore.Signal(str, bool)
     status = QtCore.Signal(str)
     error = QtCore.Signal(str)
 
@@ -111,6 +114,12 @@ class CoachEngine(QtCore.QObject):
         # esperando a las preguntas habladas.
         self._coach_pantalla = None
         self._agente = None             # el que responde (id, nombre) para el acta
+        # Permisos del agente en uso (agents.py): como responde, si usa
+        # capturas y si deja notas al terminar.
+        self._modo = "automatico"
+        self._capturas = True
+        self._notas = False
+        self._clave_notas = None        # (api key, modelo) para las notas
         self._queue_pantalla = queue.Queue()
         self._worker_pantalla = None
         self._generando_pantalla = False
@@ -214,6 +223,8 @@ class CoachEngine(QtCore.QObject):
                 import agents as agents_mod
                 agente = agents_mod.get(cfg.get("agent"))
                 self._agente = (agente["id"], agente["name"])
+                self._permisos(agente)
+                self._clave_notas = (cfg["openai_api_key"], cfg["openai_model"])
                 sys_prompt = agents_mod.system_prompt(agente)
                 metricas.nota(f"agente: {agente['name']}")
                 # Un modelo y dos conversaciones: la hablada razona poco y la de
@@ -441,6 +452,10 @@ class CoachEngine(QtCore.QObject):
             if not vale:
                 self._aplicar("contexto", texto, es_pregunta)
                 return
+            if self._modo != "automatico":
+                # Reescribir tambien es responder: solo en automatico.
+                self._aplicar("contexto", texto, es_pregunta)
+                return
             metricas.contar("revisiones")
             if self._generando and self._coach is not None:
                 self._coach.cancelar()   # la respuesta en curso ya no vale
@@ -453,6 +468,13 @@ class CoachEngine(QtCore.QObject):
 
     def _aplicar(self, accion, texto, es_pregunta):
         """Lo que se ve de una decision: responder o dejarlo como contexto."""
+        if accion == "nueva" and self._modo != "automatico":
+            # Notetaker: no responde nunca. Manual: solo cuando se pide; la
+            # pregunta queda abierta por si la pides (Bloq Mayus+A).
+            metricas.contar("con_pregunta")
+            if self._modo == "manual":
+                self.noAnswer.emit("manual")
+            return
         if accion == "nueva":
             metricas.contar("con_pregunta")
             # Marca de tiempo para medir lo unico que notas de verdad: cuanto
@@ -475,6 +497,9 @@ class CoachEngine(QtCore.QObject):
         no puso los signos, esto lo arregla sin esperar a nada.
         """
         if not self._running or self._test_mode:
+            return
+        if self._modo == "notetaker":
+            self.status.emit("Este agente solo toma notas: no responde.")
             return
         with self._turn_lock:
             pendiente = " ".join(self._turn_parts).strip()
@@ -550,14 +575,30 @@ class CoachEngine(QtCore.QObject):
         agente = agents_mod.get(agent_id)
         sys_prompt = agents_mod.system_prompt(agente)
         if (self._coach.system_prompt, self._coach.reglas) == (sys_prompt, agente["reglas"]):
-            return agente["name"]           # el mismo: no se tira la cache
+            self._permisos(agente)          # los permisos pueden haber cambiado
+            return agente["name"]           # el mismo prompt: no se tira la cache
         for coach in (self._coach, self._coach_pantalla):
             if coach is not None:
                 coach.cambiar_instrucciones(sys_prompt, agente["reglas"])
+        self._permisos(agente)
         metricas.nota(f"agente: {agente['name']}")
         self._registro.append(("Agente", f"desde aquí responde {agente['name']}"))
         threading.Thread(target=self._calentar, daemon=True).start()
         return agente["name"]
+
+    def _permisos(self, agente):
+        import agents as agents_mod
+        self._modo = agents_mod.modo(agente)
+        self._capturas = agents_mod.usa_capturas(agente)
+        self._notas = agents_mod.toma_notas(agente)
+
+    @property
+    def modo(self):
+        return self._modo
+
+    @property
+    def permite_capturas(self):
+        return self._capturas
 
     def request_screenshots(self, images):
         """Envia una o varias capturas juntas (util si el enunciado no cabe en una).
@@ -565,6 +606,8 @@ class CoachEngine(QtCore.QObject):
         Van por el carril de la pantalla: su respuesta no espera a las habladas
         ni las hace esperar. Un problema nuevo retira la sugerencia pendiente.
         """
+        if not self._capturas:
+            return                      # este agente no usa capturas
         if self._running and images:
             self._sugerir_pantalla("")
             self._queue_pantalla.put({"type": "screenshot", "images": list(images)})
@@ -830,7 +873,9 @@ class CoachEngine(QtCore.QObject):
         try:
             import config as cfg_mod
             ruta = metricas.guardar(cfg_mod.data_dir())
-            self._guardar_acta()
+            acta = self._guardar_acta()
+            if acta:
+                self._lanzar_notas(acta)
             if ruta:
                 self.status.emit(f"Métricas de la sesión guardadas en {ruta}")
         except Exception:
@@ -846,3 +891,28 @@ class CoachEngine(QtCore.QObject):
         import sesiones
         agente_id, nombre = self._agente or ("", "")
         return sesiones.guardar(self._registro, agente_id, nombre)
+
+    def _lanzar_notas(self, ruta_acta):
+        """Notas al terminar, en segundo plano: tardan unos segundos y la Home
+        ya esta a la vista. Solo si el agente las toma y hay algo que resumir."""
+        import notas
+        import sesiones
+        if not self._notas or self._test_mode or not self._clave_notas:
+            return
+        registro = list(self._registro)
+        if not notas.hay_que_resumir(registro):
+            return
+        sid = sesiones.id_de(ruta_acta)
+        clave, modelo = self._clave_notas
+        self.notesStarted.emit(sid)
+
+        def generar():
+            try:
+                texto = notas.generar(clave, modelo, registro)
+                ok = sesiones.guardar_notas(sid, texto)
+            except Exception as e:
+                log.warning("Meeting notes failed: %s", type(e).__name__)
+                ok = False
+            self.notesReady.emit(sid, ok)
+
+        threading.Thread(target=generar, daemon=True, name="notas").start()

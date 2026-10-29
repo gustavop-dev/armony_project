@@ -6,6 +6,7 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
      "instrucciones": "...personalidad, tono, longitud...",
      "reglas": "...como funciona la conversacion, formato, codigo...",
      "tono": "...como hablas: registro, muletillas, ritmo...",
+     "modo": "automatico", "capturas": true, "notas": true,
      "conocimiento": [{"id": "doc-1", "name": "Mi CV", "body": "..."}]}
 
 - Las dos partes se editan enteras desde Configuracion. 'reglas' es la mecanica
@@ -15,6 +16,10 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
   Un agente nuevo nace como copia del Coach para que se vea lo que ya hay.
 - 'tono': como quieres que suene (markdown). Se escribe a mano o se saca de
   tus chats de WhatsApp (estilo.py). Vacio en los de ejemplo.
+- permisos: 'modo' (notetaker: solo escucha y toma notas; manual: responde
+  solo cuando lo pides; automatico: responde en cuanto detecta una pregunta),
+  'capturas' (puede usar pantallazos) y 'notas' (notas al terminar; el
+  notetaker las toma siempre).
 - 'conocimiento': documentos markdown del agente (CV, oferta, producto...),
   como los de un GPT o un proyecto. Se le dan enteros al empezar la reunion.
 - El que se usa es config["agent"]. Al empezar la reunion su texto y su
@@ -36,6 +41,10 @@ log = logging.getLogger("armony.agents")
 AGENTS_DIR = os.path.join(cfg_mod.data_dir(), "agents")
 
 DEFAULT_ID = "coach"
+
+# Como responde un agente.
+NOTETAKER, MANUAL, AUTOMATICO = "notetaker", "manual", "automatico"
+MODOS = (NOTETAKER, MANUAL, AUTOMATICO)
 
 
 def prompt_bilingue(es, en):
@@ -103,6 +112,7 @@ def preset(preset_id):
     nombre, instrucciones = PRESETS[pid]
     return {"id": pid, "name": nombre, "preset": pid,
             "instrucciones": instrucciones, "reglas": REGLAS, "tono": "",
+            "modo": AUTOMATICO, "capturas": True, "notas": True,
             "conocimiento": []}
 
 
@@ -166,6 +176,9 @@ def list_agents():
                     "instrucciones": str(data.get("instrucciones", base["instrucciones"])),
                     "reglas": str(data.get("reglas", base["reglas"])),
                     "tono": str(data.get("tono", base["tono"])),
+                    "modo": data.get("modo") if data.get("modo") in MODOS else AUTOMATICO,
+                    "capturas": bool(data.get("capturas", True)),
+                    "notas": bool(data.get("notas", True)),
                     "conocimiento": [
                         {"id": str(d.get("id") or f"doc-{i + 1}"),
                          "name": str(d.get("name") or "Documento"),
@@ -194,6 +207,9 @@ def write_all(agentes):
                  "instrucciones": a.get("instrucciones", ""),
                  "reglas": a.get("reglas", ""),
                  "tono": a.get("tono", ""),
+                 "modo": a.get("modo", AUTOMATICO),
+                 "capturas": bool(a.get("capturas", True)),
+                 "notas": bool(a.get("notas", True)),
                  "conocimiento": a.get("conocimiento", [])}
         with open(os.path.join(AGENTS_DIR, a["id"] + ".json"), "w",
                   encoding="utf-8") as f:
@@ -211,6 +227,20 @@ def get(agent_id):
     """El agente con ese id; si ya no existe, el primero (el Coach si esta)."""
     agentes = list_agents()
     return next((a for a in agentes if a["id"] == agent_id), agentes[0])
+
+
+def modo(agente):
+    m = agente.get("modo")
+    return m if m in MODOS else AUTOMATICO
+
+
+def usa_capturas(agente):
+    """El notetaker no resuelve nada, asi que tampoco usa capturas."""
+    return modo(agente) != NOTETAKER and bool(agente.get("capturas", True))
+
+
+def toma_notas(agente):
+    return modo(agente) == NOTETAKER or bool(agente.get("notas", True))
 
 
 def texto_conocimiento(agente):
