@@ -105,8 +105,8 @@ def _ctx_card(win, name):
 
 
 def _ctx_editor(win):
-    """Editor column of the Contexts section (parent of the name QLineEdit)."""
-    return _page(win).findChild(QtWidgets.QLineEdit).parentWidget()
+    """Editor column of the Contexts section (holds the name field's inset box)."""
+    return _page(win).findChild(QtWidgets.QLineEdit).parentWidget().parentWidget()
 
 
 def _filter_segmented(win):
@@ -125,9 +125,9 @@ def _card_names(win):
 
 
 def _cards(win):
-    """Context cards: frames in the list column that own a small ToggleSwitch."""
+    """Context cards: surfaces in the list column that own a small ToggleSwitch."""
     switches = _page(win).findChildren(sw.ToggleSwitch)
-    return [s.parentWidget() for s in switches if s.width() == 34]
+    return [s.parentWidget() for s in switches if s.small]
 
 
 def _ctx_file(ctx_dir, cid):
@@ -538,7 +538,7 @@ def test_other_key_does_not_emit_closed(qtbot, make_window):
 def test_title_bar_drag_moves_window(make_window):
     win = make_window()
     win.move(200, 200)
-    bar = next(lab for lab in _labels(win) if "Settings" in lab.text()).parentWidget()
+    bar = next(lab for lab in _labels(win) if "AJUSTES" in lab.text()).parentWidget()
     local = QtCore.QPointF(5, 5)
 
     bar.mousePressEvent(QtGui.QMouseEvent(
@@ -570,7 +570,7 @@ def test_nav_right_click_keeps_section(qtbot, make_window):
     assert _heading(win) == "Conexión"
 
 
-@pytest.mark.parametrize("label, color", [("General", "#f7e39a"), ("Conexión", "#b8af9a")])
+@pytest.mark.parametrize("label, color", [("General", "#5B7CFA"), ("Conexión", "#8691AB")])
 def test_nav_item_color_marks_active_section(qtbot, make_window, label, color):
     win = make_window()
 
@@ -874,7 +874,7 @@ def test_contexts_summary_silent_on_small_context(qtbot, make_window, ctx_dir):
 
 
 # ================================================================== ToggleSwitch
-@pytest.mark.parametrize("small, size", [(False, (42, 24)), (True, (34, 20))])
+@pytest.mark.parametrize("small, size", [(False, (56, 34)), (True, (48, 30))])
 def test_toggle_switch_size(qtbot, small, size):
     switch = sw.ToggleSwitch(small=small)
     qtbot.addWidget(switch)
@@ -949,7 +949,7 @@ def test_segmented_highlights_picked_option(qtbot):
 
     qtbot.mouseClick(_button(seg, "B"), LEFT)
 
-    assert "color: #f7e39a" in _button(seg, "B").styleSheet()
+    assert (_button(seg, "A").isChecked(), _button(seg, "B").isChecked()) == (False, True)
 
 
 # ================================================================== Dot
@@ -989,7 +989,7 @@ import agents  # noqa: E402
 
 
 def _agent_cards(win):
-    return [c for c in _page(win).findChildren(QtWidgets.QFrame, "agente")]
+    return [c for c in _page(win).findChildren(QtWidgets.QWidget, "agente")]
 
 
 def _agent_names(win):

@@ -12,49 +12,28 @@ import agents as agents_mod
 import config as cfg_mod
 import contexts as ctx_mod
 import icons
+import neu as N
 import theme as T
 
-# --- colores propios del diseno de settings ---
-WIN_BG   = "#1c1a14"
-BAR_BG   = "#232019"
-SIDE_BG  = "#211e18"
-TXT_BR   = "#f3ead4"
-TXT_MU   = "#b8af9a"
-TXT_FA   = "#8f8674"
-TXT_LB   = "#ece3cd"
-GOLD     = "#f2c94c"
-GOLD_LT  = "#f7e39a"
-INK      = "#2a2410"
-INPUT_BG = "rgba(0,0,0,0.28)"
-INPUT_BD = "rgba(243,234,212,0.14)"
-DIV      = "rgba(243,234,212,0.07)"
+# --- colores: neumorfismo claro (ver neu.py), acento pervinca ---
+WIN_BG   = N.BG
+TXT_BR   = N.TITULO
+TXT_MU   = N.APAGADO
+TXT_FA   = N.TENUE
+TXT_LB   = N.TEXTO
+ACENTO   = N.ACENTO
+INK      = "#FFFFFF"            # texto sobre el acento
 
-SANS = T.SANS_STACK
+SANS = N.SANS
 MONO = T.MONO_STACK
 
 
-class ToggleSwitch(QtWidgets.QAbstractButton):
-    """Interruptor pista+perilla del diseno."""
+class ToggleSwitch(N.Toggle):
+    """Interruptor: pista hundida y perilla en relieve (ver neu.Toggle)."""
 
     def __init__(self, checked=False, small=False):
-        super().__init__()
-        self.setCheckable(True)
-        self.setChecked(checked)
-        self._w, self._h = (34, 20) if small else (42, 24)
-        self._k = 15 if small else 18
-        self.setFixedSize(self._w, self._h)
-
-    def paintEvent(self, _e):
-        p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.Antialiasing)
-        p.setPen(QtCore.Qt.NoPen)
-        on = self.isChecked()
-        p.setBrush(QtGui.QColor(GOLD) if on else QtGui.QColor(243, 234, 212, 41))
-        p.drawRoundedRect(0, 0, self._w, self._h, self._h / 2, self._h / 2)
-        p.setBrush(QtGui.QColor(INK) if on else QtGui.QColor("#efe7d4"))
-        x = (self._w - self._k - 3) if on else 3
-        p.drawEllipse(QtCore.QRectF(x, 3, self._k, self._k))
-        p.end()
+        super().__init__(checked, small)
+        self.small = small
 
 
 class Dot(QtWidgets.QWidget):
@@ -79,39 +58,32 @@ class Dot(QtWidgets.QWidget):
         p.end()
 
 
-class Segmented(QtWidgets.QWidget):
-    """Control segmentado (p. ej. ES | EN | Ambos)."""
+class Segmented(N.Surface):
+    """Control segmentado (p. ej. ES | EN | Ambos): carril hundido y la opcion
+    elegida en relieve, en pervinca."""
     changed = QtCore.Signal(str)
 
     def __init__(self, options, current, small=False):
-        super().__init__()
+        super().__init__("hundido", radio=12, prof=4, margen=2)
         self._options = options
         self._current = current
         self._btns = {}
-        lay = QtWidgets.QHBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
-        pad = "4px 10px" if small else "6px 14px"
-        for i, (val, label) in enumerate(options):
-            b = QtWidgets.QPushButton(label)
-            fs = "11px" if small else "12px"
-            b.setStyleSheet(self._qss(val == current, pad, fs))
+        lay = QtWidgets.QHBoxLayout(self); lay.setContentsMargins(2, 0, 2, 0); lay.setSpacing(0)
+        for val, label in options:
+            b = N.Button(label, variante="plano", radio=10, prof=3)
+            f = b.font(); f.setPixelSize(11 if small else 12); b.setFont(f)
+            b.setCheckable(True)
+            b.setChecked(val == current)
             b.clicked.connect(lambda _c=False, v=val: self._pick(v))
-            self._btns[val] = (b, pad, fs)
+            self._btns[val] = b
             lay.addWidget(b)
 
-    def _qss(self, on, pad, fs):
-        if on:
-            return (f"QPushButton {{ border: 1px solid rgba(242,201,76,0.5); background: rgba(242,201,76,0.16); "
-                    f"color: #f7e39a; font-size: {fs}; font-weight: 600; padding: {pad}; border-radius: 8px; }}")
-        return (f"QPushButton {{ border: 1px solid rgba(243,234,212,0.12); background: transparent; "
-                f"color: #b8af9a; font-size: {fs}; padding: {pad}; border-radius: 8px; }} "
-                f"QPushButton:hover {{ background: rgba(243,234,212,0.06); }}")
-
     def _pick(self, val):
+        for v, b in self._btns.items():
+            b.setChecked(v == val)
         if val == self._current:
             return
         self._current = val
-        for v, (b, pad, fs) in self._btns.items():
-            b.setStyleSheet(self._qss(v == val, pad, fs))
         self.changed.emit(val)
 
     def value(self):
@@ -160,15 +132,17 @@ def _schema():
 
 
 class NavItem(QtWidgets.QFrame):
-    """Fila del sidebar (contenedor fiable, a diferencia de QPushButton con layout)."""
+    """Fila del sidebar. La seccion abierta sale en relieve, con el acento."""
     clicked = QtCore.Signal()
 
     def __init__(self, icon, label):
         super().__init__()
         self._iconname = icon
+        self._activo = False
+        self.setCursor(QtCore.Qt.PointingHandCursor)
         lay = QtWidgets.QHBoxLayout(self)
-        lay.setContentsMargins(11, 9, 11, 9)
-        lay.setSpacing(10)
+        lay.setContentsMargins(24, 18, 22, 18)
+        lay.setSpacing(12)
         self._icon = icons.label(icon, TXT_MU, 17)
         lay.addWidget(self._icon)
         self._lab = QtWidgets.QLabel(label)
@@ -176,20 +150,28 @@ class NavItem(QtWidgets.QFrame):
         lay.addWidget(self._lab, 1)
         self._badge = QtWidgets.QLabel("")
         self._badge.setStyleSheet(
-            f"color: {INK}; background: {GOLD}; border-radius: 9px; padding: 1px 7px; "
+            f"color: {INK}; background: {ACENTO}; border-radius: 9px; padding: 1px 7px; "
             f"font-size: 11px; font-weight: 700;")
         self._badge.setVisible(False)
         lay.addWidget(self._badge)
+        self.setStyleSheet("NavItem { border: none; background: transparent; } "
+                           "QLabel { background: transparent; border: none; }")
         self.set_active(False)
 
     def set_active(self, on):
-        self.setStyleSheet(
-            f"NavItem {{ border: none; border-radius: 10px; "
-            f"background: {'rgba(242,201,76,0.14)' if on else 'transparent'}; }} "
-            f"QLabel {{ background: transparent; border: none; }}")
-        col = GOLD_LT if on else TXT_MU
+        self._activo = bool(on)
+        col = ACENTO if on else TXT_MU
         self._lab.setStyleSheet(f"color: {col}; background: transparent;")
         self._icon.setPixmap(icons.pixmap(self._iconname, col, 17))
+        self.update()
+
+    def paintEvent(self, e):
+        if self._activo:
+            p = QtGui.QPainter(self)
+            p.drawPixmap(0, 0, N.superficie(self.width(), self.height(),
+                                            N.margen_relieve(4), 14, "relieve", 4))
+            p.end()
+        super().paintEvent(e)
 
     def mousePressEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton:
@@ -218,7 +200,7 @@ class SettingsWindow(QtWidgets.QWidget):
         self._active = "connection"
         self._drag = None
         self._chevron = icons.save_png(
-            "chevron_down", TXT_MU, 24,
+            "chevron_down", N.APAGADO, 24,
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "_chevron.png"))
 
         # Ventana (no Tool) para que tenga entrada en la barra de tareas y se pueda minimizar.
@@ -233,7 +215,9 @@ class SettingsWindow(QtWidgets.QWidget):
         h = min(720, int(scr.height() * 0.9))
         self.resize(w, h)
         self.move(scr.x() + (scr.width() - w) // 2, scr.y() + (scr.height() - h) // 2)
-        self.setStyleSheet(f"QWidget#root {{ background: {WIN_BG}; border-radius: 14px; }}")
+        self.setStyleSheet(
+            f"QWidget#root {{ background: {WIN_BG}; border-radius: 22px; }}"
+            f"QToolTip {{ background: {N.BG}; color: {N.TEXTO}; border: 1px solid #CBD3E3; }}")
 
         root = QtWidgets.QWidget(self); root.setObjectName("root")
         outer = QtWidgets.QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0)
@@ -246,7 +230,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self.content = QtWidgets.QScrollArea()
         self.content.setWidgetResizable(True)
         self.content.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.content.setStyleSheet(f"QScrollArea {{ background: {WIN_BG}; border: none; }}")
+        self.content.setStyleSheet(
+            f"QScrollArea {{ background: {WIN_BG}; border: none; }}" + N.qss_campo())
         mid.addWidget(self.content, 1)
         col.addLayout(mid, 1)
         col.addWidget(self._footer())
@@ -255,21 +240,22 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _titlebar(self):
         bar = QtWidgets.QWidget()
-        bar.setFixedHeight(52)
-        bar.setStyleSheet(f"background: {BAR_BG};")
-        lay = QtWidgets.QHBoxLayout(bar); lay.setContentsMargins(18, 0, 12, 0); lay.setSpacing(10)
-        # marca Armony. (Arm dorado, resto blanco)
+        bar.setFixedHeight(68)
+        bar.setStyleSheet("background: transparent;")
+        lay = QtWidgets.QHBoxLayout(bar); lay.setContentsMargins(16, 6, 16, 0); lay.setSpacing(6)
+        # Como la cabecera de la imagen de referencia: botones redondos a los
+        # lados y en el centro una etiqueta pequena en mayusculas.
+        lay.addWidget(self._win_btn("arrow-left", self._cancel, "Volver a la reunión"))
+        lay.addStretch()
         brand = QtWidgets.QLabel(
-            f'<span style="color:{GOLD};font-weight:700;">Arm</span>'
-            f'<span style="color:#ffffff;font-weight:700;">ony.</span>'
-            f'<span style="color:#7c7565;"> &nbsp;·&nbsp; </span>'
-            f'<span style="color:{TXT_MU};">Settings</span>')
-        f = brand.font(); f.setPixelSize(14); brand.setFont(f)
+            f'<span style="color:{ACENTO};font-weight:700;">ARM</span>'
+            f'<span style="color:{N.TITULO};font-weight:700;">ONY</span>'
+            f'<span style="color:{N.TENUE};"> &nbsp;·&nbsp; AJUSTES</span>')
+        f = brand.font(); f.setPixelSize(11)
+        f.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 2.2); brand.setFont(f)
         brand.setStyleSheet("background: transparent;")
         lay.addWidget(brand)
         lay.addStretch()
-        # botones de ventana: back (volver al overlay), minimizar, cerrar app
-        lay.addWidget(self._win_btn("arrow-left", self._cancel, "Volver a la reunión"))
         lay.addWidget(self._win_btn("minus", self.showMinimized, "Minimizar"))
         lay.addWidget(self._win_btn("x", lambda: self.closeApp.emit(), "Cerrar Armony.", danger=True))
         bar.mousePressEvent = self._bar_press
@@ -277,14 +263,9 @@ class SettingsWindow(QtWidgets.QWidget):
         return bar
 
     def _win_btn(self, icon, cb, tip, danger=False):
-        b = QtWidgets.QPushButton()
-        b.setFixedSize(30, 30)
+        b = N.Button(icono=icon, redondo=34, prof=4,
+                     color_icono=N.PELIGRO if danger else N.APAGADO)
         b.setToolTip(tip)
-        hover = "rgba(217,74,61,0.9)" if danger else "rgba(243,234,212,0.12)"
-        b.setStyleSheet(
-            f"QPushButton {{ border: none; border-radius: 8px; background: transparent; }} "
-            f"QPushButton:hover {{ background: {hover}; }}")
-        b.setIcon(QtGui.QIcon(icons.pixmap(icon, TXT_MU, 15)))
         b.clicked.connect(lambda: cb())
         return b
 
@@ -298,17 +279,15 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _sidebar(self):
         side = QtWidgets.QWidget()
-        side.setFixedWidth(236)
-        side.setStyleSheet(f"background: {SIDE_BG}; border-right: 1px solid rgba(255,255,255,0.05);")
-        lay = QtWidgets.QVBoxLayout(side); lay.setContentsMargins(12, 14, 12, 14); lay.setSpacing(3)
+        side.setFixedWidth(244)
+        side.setStyleSheet("background: transparent;")
+        lay = QtWidgets.QVBoxLayout(side); lay.setContentsMargins(12, 6, 6, 16); lay.setSpacing(0)
 
         # Volver a la reunion (vista overlay)
         goto = NavItem("arrow-left", "Go to the meeting")
         goto.clicked.connect(self._cancel)
         lay.addWidget(goto)
-        sep = QtWidgets.QFrame(); sep.setFixedHeight(1)
-        sep.setStyleSheet("background: rgba(255,255,255,0.06); margin: 6px 4px;")
-        lay.addWidget(sep)
+        lay.addSpacing(10)
 
         for sid, icon, label, _desc, _fields in _schema():
             item = NavItem(icon, label)
@@ -320,34 +299,27 @@ class SettingsWindow(QtWidgets.QWidget):
             "Los cambios valen para la próxima reunión. En plena reunión, el "
             "agente se cambia desde el overlay.")
         nota.setWordWrap(True)
-        nota.setStyleSheet(
-            f"color: {TXT_FA}; font-size: 11px; background: rgba(243,234,212,0.04); "
-            f"border: 1px solid rgba(243,234,212,0.08); border-radius: 10px; padding: 10px 12px;")
-        lay.addWidget(nota)
+        nota.setStyleSheet(f"color: {N.APAGADO}; font-size: 11px; background: transparent;")
+        caja = N.Surface("hundido", radio=14, prof=4, margen=2)
+        cl = QtWidgets.QVBoxLayout(caja); cl.setContentsMargins(12, 10, 12, 10)
+        cl.addWidget(nota)
+        lay.addWidget(caja)
         return side
 
     def _footer(self):
         bar = QtWidgets.QWidget()
-        bar.setStyleSheet(f"background: {BAR_BG};")   # sin linea encima (minimalista)
-        lay = QtWidgets.QHBoxLayout(bar); lay.setContentsMargins(22, 14, 22, 14)
-        self.saved_dot = Dot("#28c840", 8)
+        bar.setStyleSheet("background: transparent;")
+        lay = QtWidgets.QHBoxLayout(bar); lay.setContentsMargins(26, 4, 22, 14)
+        self.saved_dot = Dot(N.OK, 8)
         self.saved_lbl = QtWidgets.QLabel("Todo guardado")
         self.saved_lbl.setStyleSheet(f"color: {TXT_FA}; font-size: 12px; background: transparent;")
         lay.addWidget(self.saved_dot); lay.addSpacing(7); lay.addWidget(self.saved_lbl)
         lay.addStretch()
-        cancel = QtWidgets.QPushButton("Cancelar")
-        cancel.setStyleSheet(
-            f"QPushButton {{ padding: 10px 18px; border-radius: 10px; border: 1px solid {INPUT_BD}; "
-            f"background: transparent; color: #cec5b0; font-size: 13px; }}"
-            f"QPushButton:hover {{ background: rgba(243,234,212,0.06); }}")
+        cancel = N.Button("Cancelar", radio=14)
         cancel.clicked.connect(self._cancel)
-        save = QtWidgets.QPushButton("Guardar")
-        save.setStyleSheet(
-            f"QPushButton {{ padding: 10px 22px; border-radius: 10px; border: none; "
-            f"background: {GOLD}; color: {INK}; font-size: 13px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background: {GOLD_LT}; }}")
+        save = N.Button("Guardar", variante="acento", radio=14)
         save.clicked.connect(self._save)
-        lay.addWidget(cancel); lay.addSpacing(10); lay.addWidget(save)
+        lay.addWidget(cancel); lay.addSpacing(4); lay.addWidget(save)
         self._paint_saved()
         return bar
 
@@ -380,10 +352,10 @@ class SettingsWindow(QtWidgets.QWidget):
         w = QtWidgets.QWidget()
         v = QtWidgets.QVBoxLayout(w); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(5)
         h = QtWidgets.QLabel(label)
-        hf = h.font(); hf.setPixelSize(21); hf.setWeight(QtGui.QFont.Bold); h.setFont(hf)
+        hf = h.font(); hf.setPixelSize(22); hf.setWeight(QtGui.QFont.DemiBold); h.setFont(hf)
         h.setStyleSheet(f"color: {TXT_BR}; background: transparent;")
         d = QtWidgets.QLabel(desc); d.setWordWrap(True); d.setMaximumWidth(560)
-        d.setStyleSheet(f"color: #a89f8a; font-size: 13px; background: transparent;")
+        d.setStyleSheet(f"color: {N.APAGADO}; font-size: 13px; background: transparent;")
         # Un QLabel con salto de linea no reserva su alto: en una pagina llena
         # (Contexts) el layout lo aplastaba y se cortaba la segunda linea.
         d.setMinimumHeight(d.heightForWidth(560))
@@ -394,18 +366,23 @@ class SettingsWindow(QtWidgets.QWidget):
     def _fields_view(self, label, desc, fields):
         page = QtWidgets.QWidget()
         page.setStyleSheet("background: transparent;")
-        v = QtWidgets.QVBoxLayout(page); v.setContentsMargins(30, 26, 30, 30); v.setSpacing(0)
+        v = QtWidgets.QVBoxLayout(page); v.setContentsMargins(26, 18, 30, 24); v.setSpacing(0)
         v.addWidget(self._heading(label, desc))
-        v.addSpacing(16)
+        v.addSpacing(14)
+        # Todas las filas en una tarjeta en relieve, sin lineas entre ellas: en
+        # el neumorfismo separa el aire, no los bordes.
+        tarjeta = N.Surface("relieve", radio=22, prof=7)
+        tv = QtWidgets.QVBoxLayout(tarjeta); tv.setContentsMargins(26, 10, 22, 10); tv.setSpacing(0)
         # Filas que solo aplican a cierta configuracion (las que declaran
         # visible_si=(clave, valor)): se guardan con su condicion y se ocultan en
         # cuanto deja de cumplirse.
         self._condicionales = []
         for f in fields:
             fila = self._field_row(f)
-            v.addWidget(fila)
+            tv.addWidget(fila)
             if f.get("visible_si"):
                 self._condicionales.append((fila, f["visible_si"]))
+        v.addWidget(tarjeta)
         v.addStretch()
         self._aplicar_visibilidad()
         return page
@@ -416,11 +393,9 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _field_row(self, f):
         row = QtWidgets.QWidget()
-        # Con selector: sin el, cada etiqueta de la fila hereda la linea.
         row.setObjectName("fila")
         row.setProperty("clave", f["key"])
-        row.setStyleSheet(f"#fila {{ border-bottom: 1px solid {DIV}; }}")
-        lay = QtWidgets.QHBoxLayout(row); lay.setContentsMargins(0, 16, 0, 16); lay.setSpacing(24)
+        lay = QtWidgets.QHBoxLayout(row); lay.setContentsMargins(0, 14, 0, 14); lay.setSpacing(24)
         # izquierda: label + hint (la clave interna de config no se ensena)
         left = QtWidgets.QWidget(); left.setMaximumWidth(340)
         lv = QtWidgets.QVBoxLayout(left); lv.setContentsMargins(0, 0, 0, 0); lv.setSpacing(3)
@@ -431,7 +406,7 @@ class SettingsWindow(QtWidgets.QWidget):
         top.addWidget(name); top.addStretch()
         lv.addLayout(top)
         hint = QtWidgets.QLabel(f["hint"]); hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: #948b78; font-size: 12px; background: transparent;")
+        hint.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px; background: transparent;")
         lv.addWidget(hint)
         lay.addWidget(left, 1)
         # derecha: control
@@ -448,12 +423,11 @@ class SettingsWindow(QtWidgets.QWidget):
             if f.get("secret"):
                 e.setEchoMode(QtWidgets.QLineEdit.Password)
             e.setPlaceholderText(f.get("placeholder", ""))
-            e.setFixedWidth(300)
-            e.setStyleSheet(self._input_qss(mono=True))
+            e.setStyleSheet(N.qss_campo(mono=True))
             e.textChanged.connect(lambda _t, e=e, k=key: self._set_value(k, e.text().strip()))
-            return e
+            return N.campo(e, ancho=310)
         if typ == "select":
-            c = QtWidgets.QComboBox(); c.setFixedWidth(240)
+            c = QtWidgets.QComboBox()
             for v, lab in f["options"]:
                 c.addItem(lab, v)
             i = c.findData(val)
@@ -461,7 +435,7 @@ class SettingsWindow(QtWidgets.QWidget):
                 c.setCurrentIndex(i)
             c.setStyleSheet(self._combo_qss())
             c.currentIndexChanged.connect(lambda _i, c=c, k=key: self._set_value(k, c.currentData()))
-            return c
+            return N.campo(c, ancho=250)
         if typ == "toggle":
             sw = ToggleSwitch(bool(val))
             sw.toggled.connect(lambda on, k=key: self._set_value(k, on))
@@ -470,10 +444,11 @@ class SettingsWindow(QtWidgets.QWidget):
             return self._number_control(f, val)
         if typ == "textarea":
             t = QtWidgets.QPlainTextEdit(str(val or ""))
-            t.setFixedSize(460, 150)
-            t.setStyleSheet(self._input_qss())
+            t.setStyleSheet(N.qss_campo())
             t.textChanged.connect(lambda t=t, k=key: self._set_value(k, t.toPlainText()))
-            return t
+            caja = N.campo(t, ancho=460)
+            caja.setFixedHeight(150)
+            return caja
         return QtWidgets.QWidget()
 
     def _set_value(self, key, v):
@@ -492,7 +467,8 @@ class SettingsWindow(QtWidgets.QWidget):
         s.setStyleSheet(self._slider_qss())
         disp = QtWidgets.QLabel()
         disp.setMinimumWidth(62); disp.setAlignment(QtCore.Qt.AlignRight)
-        disp.setStyleSheet(f"color: {GOLD_LT}; font-family: {MONO}; font-size: 13px; background: transparent;")
+        disp.setStyleSheet(f"color: {ACENTO}; font-family: {MONO}; font-size: 13px; "
+                           f"font-weight: 600; background: transparent;")
         dec = 0 if st >= 1 else (1 if st >= 0.1 else (2 if st >= 0.01 else 3))
         unit = f.get("unit", "")
 
@@ -519,24 +495,37 @@ class SettingsWindow(QtWidgets.QWidget):
         v.addLayout(grid, 1)
         return page
 
+    def _add_btn(self, texto, cb, tip=""):
+        """Boton de alta ("Nuevo agente", "Nuevo contexto"): en relieve, con el
+        mas en pervinca."""
+        b = N.Button(texto, icono="plus", radio=16, color_icono=ACENTO)
+        b.setToolTip(tip)
+        b.clicked.connect(cb)
+        return b
+
+    def _tarjeta(self, elegida, al_pulsar):
+        """Tarjeta de lista: en relieve; la elegida, hundida (como la cancion que
+        suena en la imagen de referencia)."""
+        # Mismo margen en las dos: la elegida no cambia de ancho al hundirse.
+        card = N.Surface("hundido" if elegida else "relieve", radio=16, prof=5,
+                         margen=N.margen_relieve(5))
+        card.setCursor(QtCore.Qt.PointingHandCursor)
+        card.mousePressEvent = lambda e: al_pulsar()
+        return card
+
+    def _nombre_tarjeta(self, texto, elegida):
+        nm = QtWidgets.QLabel(texto)
+        nf = nm.font(); nf.setPixelSize(14); nf.setWeight(QtGui.QFont.DemiBold); nm.setFont(nf)
+        nm.setStyleSheet(f"color: {ACENTO if elegida else N.TITULO}; background: transparent;")
+        return nm
+
     def _ag_list(self):
-        box = QtWidgets.QWidget(); box.setFixedWidth(250)
-        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
-        add = QtWidgets.QPushButton()
-        add.setFixedHeight(42)
-        al = QtWidgets.QHBoxLayout(add); al.setContentsMargins(11, 0, 11, 0); al.setSpacing(8)
-        al.addStretch(); al.addWidget(icons.label("plus", GOLD_LT, 15))
-        pl = QtWidgets.QLabel("Nuevo agente")
-        pl.setStyleSheet(f"color: {GOLD_LT}; font-weight: 600; font-size: 13px; background: transparent;")
-        al.addWidget(pl); al.addStretch()
-        add.setStyleSheet(
-            f"QPushButton {{ border: 1px dashed rgba(242,201,76,0.4); background: rgba(242,201,76,0.08); "
-            f"border-radius: 11px; }} QPushButton:hover {{ background: rgba(242,201,76,0.14); }} "
-            f"QLabel {{ border: none; }}")
-        add.setToolTip("Empieza como copia del Coach: verás todo lo que ya tiene "
-                       "y decides qué cambiar.")
-        add.clicked.connect(self._ag_add)
-        v.addWidget(add)
+        box = QtWidgets.QWidget(); box.setFixedWidth(262)
+        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(4)
+        v.addWidget(self._add_btn(
+            "Nuevo agente", self._ag_add,
+            "Empieza como copia del Coach: verás todo lo que ya tiene y decides qué cambiar."))
+        v.addSpacing(6)
         for a in self.agents:
             v.addWidget(self._ag_card(a))
         v.addStretch()
@@ -544,28 +533,19 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _ag_card(self, a):
         seld = a["id"] == self.sel_agent
-        card = QtWidgets.QFrame()
+        card = self._tarjeta(seld, lambda aid=a["id"]: self._ag_select(aid))
         card.setObjectName("agente")
-        card.setStyleSheet(
-            f"QFrame {{ border-radius: 12px; border: 1px solid "
-            f"{'rgba(242,201,76,0.45)' if seld else 'rgba(243,234,212,0.09)'}; "
-            f"background: {'rgba(242,201,76,0.09)' if seld else 'rgba(243,234,212,0.03)'}; }} "
-            f"QLabel {{ border: none; background: transparent; }}")
-        card.mousePressEvent = lambda e, aid=a["id"]: self._ag_select(aid)
-        lay = QtWidgets.QHBoxLayout(card); lay.setContentsMargins(14, 10, 10, 10); lay.setSpacing(8)
-        nm = QtWidgets.QLabel(a["name"])
-        nf = nm.font(); nf.setPixelSize(14); nf.setWeight(QtGui.QFont.DemiBold); nm.setFont(nf)
-        nm.setStyleSheet("color: #f0e8d6;")
-        lay.addWidget(nm, 1)
+        lay = QtWidgets.QHBoxLayout(card); lay.setContentsMargins(14, 8, 6, 8); lay.setSpacing(4)
+        lay.addWidget(self._nombre_tarjeta(a["name"], seld), 1)
         if a["id"] == self.values.get("agent"):
             uso = QtWidgets.QLabel("En uso")
             uso.setStyleSheet(
-                f"color: {INK}; background: {GOLD}; border-radius: 5px; "
-                f"padding: 1px 6px; font-size: 10px; font-weight: 700;")
+                f"color: {INK}; background: {ACENTO}; border-radius: 8px; "
+                f"padding: 2px 8px; font-size: 10px; font-weight: 700;")
             lay.addWidget(uso)
-        lay.addWidget(self._mini_btn("duplicate", "#b8af9a",
+        lay.addWidget(self._mini_btn("duplicate", N.APAGADO,
                                      lambda aid=a["id"]: self._ag_dup(aid)))
-        dele = self._mini_btn("trash", "#e39a90", lambda aid=a["id"]: self._ag_del(aid))
+        dele = self._mini_btn("trash", N.PELIGRO, lambda aid=a["id"]: self._ag_del(aid))
         dele.setEnabled(len(self.agents) > 1)       # siempre queda al menos uno
         lay.addWidget(dele)
         return card
@@ -578,9 +558,9 @@ class SettingsWindow(QtWidgets.QWidget):
             return box
         top = QtWidgets.QHBoxLayout(); top.setSpacing(12)
         name = QtWidgets.QLineEdit(a["name"])
-        name.setStyleSheet(self._input_qss() + "font-weight: 600; font-size: 15px;")
+        name.setStyleSheet(N.qss_campo() + "QLineEdit { font-weight: 600; font-size: 15px; }")
         name.textChanged.connect(lambda t, aid=a["id"]: self._ag_set(aid, "name", t))
-        top.addWidget(name, 1)
+        top.addWidget(N.campo(name), 1)
         uso = QtWidgets.QLabel("Usar en las reuniones")
         uso.setStyleSheet(f"color: {TXT_MU}; font-size: 12px;")
         sw = ToggleSwitch(a["id"] == self.values.get("agent"))
@@ -595,11 +575,11 @@ class SettingsWindow(QtWidgets.QWidget):
             "Personalidad, tono y cómo responde. Lo que pongas aquí manda."))
         ins = QtWidgets.QPlainTextEdit(a["instrucciones"])
         ins.setObjectName("instrucciones")
-        ins.setMinimumHeight(190)
-        ins.setStyleSheet(self._input_qss())
+        ins.setMinimumHeight(170)
+        ins.setStyleSheet(N.qss_campo())
         ins.textChanged.connect(
             lambda aid=a["id"], w=ins: self._ag_set(aid, "instrucciones", w.toPlainText()))
-        v.addWidget(ins, 1)
+        v.addWidget(N.campo(ins), 1)
         v.addSpacing(6)
         v.addLayout(self._ag_field_head(
             a, "reglas", "Reglas de funcionamiento",
@@ -608,11 +588,11 @@ class SettingsWindow(QtWidgets.QWidget):
             "puede dejar de pintar bien las respuestas."))
         reg = QtWidgets.QPlainTextEdit(a["reglas"])
         reg.setObjectName("reglas")
-        reg.setMinimumHeight(190)
-        reg.setStyleSheet(self._input_qss(mono=True))
+        reg.setMinimumHeight(170)
+        reg.setStyleSheet(N.qss_campo(mono=True))
         reg.textChanged.connect(
             lambda aid=a["id"], w=reg: self._ag_set(aid, "reglas", w.toPlainText()))
-        v.addWidget(reg, 1)
+        v.addWidget(N.campo(reg), 1)
         return box
 
     def _ag_field_head(self, a, campo, titulo, ayuda):
@@ -622,19 +602,15 @@ class SettingsWindow(QtWidgets.QWidget):
         tf = t.font(); tf.setPixelSize(13); tf.setWeight(QtGui.QFont.DemiBold); t.setFont(tf)
         t.setStyleSheet(f"color: {TXT_LB}; background: transparent;")
         h = QtWidgets.QLabel(ayuda); h.setWordWrap(True)
-        h.setStyleSheet(f"color: #948b78; font-size: 12px; background: transparent;")
+        h.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px; background: transparent;")
         col.addWidget(t); col.addWidget(h)
         head.addLayout(col, 1)
         cambiado = a[campo] != agents_mod.predeterminado(a)[campo]
-        rest = QtWidgets.QPushButton("Restaurar")
+        rest = N.Button("Restaurar", radio=12, prof=3)
+        f = rest.font(); f.setPixelSize(12); rest.setFont(f)
         rest.setObjectName(f"restaurar-{campo}")
         rest.setEnabled(cambiado)
         rest.setToolTip(f"Vuelve al texto de «{agents_mod.predeterminado(a)['name']}»")
-        rest.setStyleSheet(
-            f"QPushButton {{ padding: 6px 12px; border-radius: 8px; border: 1px solid {INPUT_BD}; "
-            f"background: transparent; color: #cec5b0; font-size: 12px; }}"
-            f"QPushButton:hover {{ background: rgba(243,234,212,0.06); }}"
-            f"QPushButton:disabled {{ color: #6f685a; }}")
         rest.clicked.connect(lambda _c=False, aid=a["id"], f=campo: self._ag_restore(aid, f))
         head.addWidget(rest, 0, QtCore.Qt.AlignTop)
         return head
@@ -707,23 +683,9 @@ class SettingsWindow(QtWidgets.QWidget):
         return page
 
     def _ctx_list(self):
-        box = QtWidgets.QWidget(); box.setFixedWidth(288)
-        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
-
-        # boton "Nuevo contexto" (fijo arriba)
-        add = QtWidgets.QPushButton()
-        add.setFixedHeight(42)
-        al = QtWidgets.QHBoxLayout(add); al.setContentsMargins(11, 0, 11, 0); al.setSpacing(8)
-        al.addStretch(); al.addWidget(icons.label("plus", GOLD_LT, 15))
-        pl = QtWidgets.QLabel("Nuevo contexto")
-        pl.setStyleSheet(f"color: {GOLD_LT}; font-weight: 600; font-size: 13px; background: transparent;")
-        al.addWidget(pl); al.addStretch()
-        add.setStyleSheet(
-            f"QPushButton {{ border: 1px dashed rgba(242,201,76,0.4); background: rgba(242,201,76,0.08); "
-            f"border-radius: 11px; }} QPushButton:hover {{ background: rgba(242,201,76,0.14); }} "
-            f"QLabel {{ border: none; }}")
-        add.clicked.connect(self._ctx_add)
-        v.addWidget(add)
+        box = QtWidgets.QWidget(); box.setFixedWidth(296)
+        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(8)
+        v.addWidget(self._add_btn("Nuevo contexto", self._ctx_add))
 
         # filtro por idioma
         filt = Segmented([("all", "Todos"), ("es", "ES"), ("en", "EN")],
@@ -739,7 +701,7 @@ class SettingsWindow(QtWidgets.QWidget):
         scroll.setStyleSheet("background: transparent;")
         scroll.viewport().setStyleSheet("background: transparent;")
         inner = QtWidgets.QWidget(); inner.setStyleSheet("background: transparent;")
-        iv = QtWidgets.QVBoxLayout(inner); iv.setContentsMargins(0, 0, 0, 0); iv.setSpacing(10)
+        iv = QtWidgets.QVBoxLayout(inner); iv.setContentsMargins(0, 0, 0, 0); iv.setSpacing(2)
         visibles = [c for c in self.contexts
                     if self._ctx_filter == "all" or c.get("lang", "both") in (self._ctx_filter, "both")]
         for c in visibles:
@@ -758,76 +720,62 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _ctx_card(self, c):
         seld = c["id"] == self.sel_id
-        card = QtWidgets.QFrame()
-        card.setStyleSheet(
-            f"QFrame {{ border-radius: 12px; border: 1px solid "
-            f"{'rgba(242,201,76,0.45)' if seld else 'rgba(243,234,212,0.09)'}; "
-            f"background: {'rgba(242,201,76,0.09)' if seld else 'rgba(243,234,212,0.03)'}; }} "
-            f"QLabel {{ border: none; background: transparent; }}")
-        card.mousePressEvent = lambda e, cid=c["id"]: self._ctx_select(cid)
-        v = QtWidgets.QVBoxLayout(card); v.setContentsMargins(14, 12, 14, 12); v.setSpacing(8)
+        card = self._tarjeta(seld, lambda cid=c["id"]: self._ctx_select(cid))
+        v = QtWidgets.QVBoxLayout(card); v.setContentsMargins(14, 8, 8, 8); v.setSpacing(4)
         top = QtWidgets.QHBoxLayout(); top.setSpacing(8)
-        nm = QtWidgets.QLabel(c["name"]); nm.setStyleSheet(f"color: #f0e8d6; font-weight: 600; font-size: 14px;")
-        nf = nm.font(); nf.setPixelSize(14); nm.setFont(nf)
-        top.addWidget(nm, 1)
+        top.addWidget(self._nombre_tarjeta(c["name"], seld), 1)
         sw = ToggleSwitch(c["active"], small=True)
         sw.toggled.connect(lambda on, cid=c["id"]: self._ctx_toggle(cid, on))
         top.addWidget(sw)
         v.addLayout(top)
-        bot = QtWidgets.QHBoxLayout(); bot.setSpacing(6)
+        bot = QtWidgets.QHBoxLayout(); bot.setSpacing(4)
         chip = QtWidgets.QLabel({"es": "ES", "en": "EN", "both": "ES·EN"}.get(c.get("lang", "both")))
         chip.setStyleSheet(
-            f"color: {TXT_MU}; background: rgba(243,234,212,0.06); border-radius: 5px; "
-            f"padding: 1px 6px; font-family: {MONO}; font-size: 10px;")
+            f"color: {N.APAGADO}; background: transparent; font-size: 10px; "
+            f"font-weight: 700; letter-spacing: 1px;")
         bot.addWidget(chip)
         tok = QtWidgets.QLabel(f"~{ctx_mod.estimate_tokens(c['body'])} tok")
         tok.setStyleSheet(f"color: {TXT_FA}; font-family: {MONO}; font-size: 11px;")
         bot.addWidget(tok); bot.addStretch()
-        dup = self._mini_btn("duplicate", "#b8af9a", lambda cid=c["id"]: self._ctx_dup(cid))
-        dele = self._mini_btn("trash", "#e39a90", lambda cid=c["id"]: self._ctx_del(cid))
+        dup = self._mini_btn("duplicate", N.APAGADO, lambda cid=c["id"]: self._ctx_dup(cid))
+        dele = self._mini_btn("trash", N.PELIGRO, lambda cid=c["id"]: self._ctx_del(cid))
         bot.addWidget(dup); bot.addWidget(dele)
         v.addLayout(bot)
         return card
 
     def _mini_btn(self, icon, color, cb):
-        b = QtWidgets.QPushButton(); b.setFixedSize(26, 26);        b.setStyleSheet(
-            f"QPushButton {{ border: 1px solid rgba(243,234,212,0.1); background: rgba(243,234,212,0.04); "
-            f"border-radius: 7px; }} QPushButton:hover {{ background: rgba(243,234,212,0.12); }}")
-        b.setIcon(QtGui.QIcon(icons.pixmap(icon, color, 13)))
+        b = N.Button(icono=icon, redondo=24, prof=3, color_icono=color)
         b.clicked.connect(lambda: cb())
         return b
 
     def _ctx_summary(self):
-        box = QtWidgets.QFrame()
-        box.setStyleSheet(
-            f"QFrame {{ background: rgba(243,234,212,0.04); border: 1px solid rgba(243,234,212,0.08); "
-            f"border-radius: 11px; }} QLabel {{ background: transparent; border: none; }}")
-        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(14, 12, 14, 12); v.setSpacing(8)
+        box = N.Surface("relieve", radio=16, prof=5)
+        box.setStyleSheet("QLabel { background: transparent; border: none; }")
+        v = QtWidgets.QVBoxLayout(box); v.setContentsMargins(14, 10, 14, 10); v.setSpacing(6)
         n = sum(1 for c in self.contexts if c["active"])
         tot = sum(ctx_mod.estimate_tokens(c["body"]) for c in self.contexts if c["active"])
         top = QtWidgets.QHBoxLayout()
-        a = QtWidgets.QLabel(f"{n} activos"); a.setStyleSheet(f"color: {TXT_MU}; font-size: 12px;")
-        tk = QtWidgets.QLabel(f"~{tot} tok"); tk.setStyleSheet(f"color: {GOLD_LT}; font-family: {MONO}; font-size: 12px;")
+        a = QtWidgets.QLabel(f"{n} activos"); a.setStyleSheet(f"color: {N.TEXTO}; font-size: 12px;")
+        tk = QtWidgets.QLabel(f"~{tot} tok")
+        tk.setStyleSheet(f"color: {ACENTO}; font-family: {MONO}; font-size: 12px; font-weight: 600;")
         top.addWidget(a); top.addStretch(); top.addWidget(tk)
         v.addLayout(top)
         if tot > 4000:
             warn = QtWidgets.QLabel("⚠ Contexto grande: puede subir el costo y la latencia de la primera respuesta.")
-            warn.setWordWrap(True); warn.setStyleSheet(f"color: #e7b93a; font-size: 11px;")
+            warn.setWordWrap(True); warn.setStyleSheet(f"color: {N.AVISO}; font-size: 11px;")
             v.addWidget(warn)
         chip = QtWidgets.QWidget()
-        ch = QtWidgets.QHBoxLayout(chip); ch.setContentsMargins(10, 5, 10, 5); ch.setSpacing(6)
-        ch.addWidget(icons.label("puzzle", GOLD, 12))
+        ch = QtWidgets.QHBoxLayout(chip); ch.setContentsMargins(10, 4, 10, 4); ch.setSpacing(6)
+        ch.addWidget(icons.label("puzzle", ACENTO, 12))
         cl = QtWidgets.QLabel(f"{n} contexts loaded")
-        cl.setStyleSheet(f"color: {TXT_LB}; font-size: 11px;")
+        cl.setStyleSheet(f"color: {ACENTO}; font-size: 11px; font-weight: 600;")
         ch.addWidget(cl)
         chip.setObjectName("chip")
-        chip.setStyleSheet(
-            "#chip { background: rgba(24,22,16,0.55); border: 1px solid rgba(242,201,76,0.3); "
-            "border-radius: 12px; }")
+        chip.setStyleSheet("#chip { background: rgba(91,124,250,0.10); border-radius: 11px; }")
         row = QtWidgets.QHBoxLayout(); row.addWidget(chip); row.addStretch()
         v.addLayout(row)
         note = QtWidgets.QLabel("Chip que verás en el overlay al iniciar.")
-        note.setStyleSheet(f"color: #7c7565; font-size: 11px;")
+        note.setStyleSheet(f"color: {N.TENUE}; font-size: 11px;")
         v.addWidget(note)
         return box
 
@@ -838,16 +786,16 @@ class SettingsWindow(QtWidgets.QWidget):
         if c is None:
             empty = QtWidgets.QLabel("Selecciona un contexto para editarlo")
             empty.setAlignment(QtCore.Qt.AlignCenter)
-            empty.setStyleSheet(
-                f"color: #7c7565; font-size: 14px; border: 1px dashed rgba(243,234,212,0.12); "
-                f"border-radius: 12px;")
-            v.addWidget(empty, 1)
+            empty.setStyleSheet(f"color: {N.TENUE}; font-size: 14px; background: transparent;")
+            hueco = N.Surface("hundido", radio=18, prof=5, margen=2)
+            QtWidgets.QVBoxLayout(hueco).addWidget(empty)
+            v.addWidget(hueco, 1)
             return box
         top = QtWidgets.QHBoxLayout(); top.setSpacing(12)
         name = QtWidgets.QLineEdit(c["name"])
-        name.setStyleSheet(self._input_qss() + "font-weight: 600; font-size: 15px;")
+        name.setStyleSheet(N.qss_campo() + "QLineEdit { font-weight: 600; font-size: 15px; }")
         name.textChanged.connect(lambda t, cid=c["id"]: self._ctx_set(cid, "name", t))
-        top.addWidget(name, 1)
+        top.addWidget(N.campo(name), 1)
         act = QtWidgets.QLabel("Activo"); act.setStyleSheet(f"color: {TXT_MU}; font-size: 12px;")
         sw = ToggleSwitch(c["active"])
         sw.toggled.connect(lambda on, cid=c["id"]: self._ctx_toggle(cid, on))
@@ -859,7 +807,7 @@ class SettingsWindow(QtWidgets.QWidget):
         ll.setToolTip("Solo para organizarlos: todos los contextos activos se le "
                       "mandan a la IA, en el idioma que estén, porque la reunión "
                       "puede cambiar de idioma a media frase.")
-        ll.setStyleSheet(f"color: #948b78; font-size: 12px;")
+        ll.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px;")
         seg = Segmented([("es", "ES"), ("en", "EN"), ("both", "Ambos")],
                         c.get("lang", "both"), small=True)
         seg.changed.connect(lambda val, cid=c["id"]: self._ctx_set_lang(cid, val))
@@ -867,17 +815,17 @@ class SettingsWindow(QtWidgets.QWidget):
         v.addLayout(langrow)
         meta = QtWidgets.QHBoxLayout()
         ml = QtWidgets.QLabel("Markdown · lo lee la IA al iniciar la reunión")
-        ml.setStyleSheet(f"color: #948b78; font-size: 12px;")
+        ml.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px;")
         mt = QtWidgets.QLabel(f"~{ctx_mod.estimate_tokens(c['body'])} tok")
         mt.setStyleSheet(f"color: {TXT_FA}; font-family: {MONO}; font-size: 12px;")
         meta.addWidget(ml); meta.addStretch(); meta.addWidget(mt)
         v.addLayout(meta)
         body = QtWidgets.QPlainTextEdit(c["body"])
         body.setPlaceholderText("# Producto X\nPrecios: plan básico $9/mes…")
-        body.setStyleSheet(self._input_qss(mono=True))
+        body.setStyleSheet(N.qss_campo(mono=True))
         body.textChanged.connect(
             lambda cid=c["id"], w=body: self._ctx_set(cid, "body", w.toPlainText()))
-        v.addWidget(body, 1)
+        v.addWidget(N.campo(body), 1)
         return box
 
     # ---------------------------------------------------- acciones contextos
@@ -940,36 +888,25 @@ class SettingsWindow(QtWidgets.QWidget):
         self._show_section("contexts")
 
     # ---------------------------------------------------- estilos de input
-    def _input_qss(self, mono=False):
-        fam = MONO if mono else SANS
-        return (f"QLineEdit, QPlainTextEdit {{ background: {INPUT_BG}; border: 1px solid {INPUT_BD}; "
-                f"border-radius: 10px; padding: 10px 13px; color: #f0e8d6; font-family: {fam}; "
-                f"font-size: 13px; }} "
-                f"QLineEdit:focus, QPlainTextEdit:focus {{ border: 1px solid rgba(242,201,76,0.55); }}"
-                # Barra a juego: la de Windows salia blanca y cuadriculada.
-                f"QScrollBar:vertical {{ background: transparent; width: 10px; margin: 4px 2px; }}"
-                f"QScrollBar::handle:vertical {{ background: rgba(242,201,76,0.28); "
-                f"border-radius: 4px; min-height: 30px; }}"
-                f"QScrollBar::handle:vertical:hover {{ background: rgba(242,201,76,0.5); }}"
-                f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
-                f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}")
-
     def _combo_qss(self):
         arrow = self._chevron.replace("\\", "/")
-        return (f"QComboBox {{ background: {INPUT_BG}; border: 1px solid {INPUT_BD}; border-radius: 10px; "
-                f"padding: 9px 34px 9px 13px; color: #f0e8d6; font-size: 13px; }} "
-                f"QComboBox:focus {{ border: 1px solid rgba(242,201,76,0.55); }} "
-                f"QComboBox::drop-down {{ border: none; width: 30px; subcontrol-position: center right; }} "
+        return (f"QComboBox {{ background: transparent; border: none; padding: 8px 30px 8px 6px; "
+                f"color: {N.TEXTO}; font-size: 13px; }} "
+                f"QComboBox::drop-down {{ border: none; width: 28px; subcontrol-position: center right; }} "
                 f"QComboBox::down-arrow {{ image: url({arrow}); width: 12px; height: 12px; }} "
-                f"QComboBox QAbstractItemView {{ background: {BAR_BG}; color: #f0e8d6; "
-                f"selection-background-color: rgba(242,201,76,0.25); border: 1px solid {INPUT_BD}; }}")
+                f"QComboBox QAbstractItemView {{ background: {N.BG}; color: {N.TEXTO}; outline: none; "
+                f"padding: 4px; border: 1px solid #CBD3E3; border-radius: 10px; "
+                f"selection-background-color: rgba(91,124,250,0.16); selection-color: {ACENTO}; }}")
 
     def _slider_qss(self):
-        return (f"QSlider::groove:horizontal {{ height: 4px; border-radius: 2px; "
-                f"background: rgba(243,234,212,0.16); }} "
-                f"QSlider::handle:horizontal {{ width: 16px; height: 16px; margin: -6px 0; "
-                f"border-radius: 8px; background: {GOLD}; }} "
-                f"QSlider::sub-page:horizontal {{ background: rgba(242,201,76,0.5); border-radius: 2px; }}")
+        # Pista hundida (tono mas oscuro del material), tramo recorrido en
+        # pervinca y tirador blanco, como la barra de progreso de la referencia.
+        return (f"QSlider::groove:horizontal {{ height: 6px; border-radius: 3px; "
+                f"background: #D3DAE8; }} "
+                f"QSlider::handle:horizontal {{ width: 18px; height: 18px; margin: -6px 0; "
+                f"border-radius: 9px; background: #FFFFFF; border: 1px solid #D5DCEA; }} "
+                f"QSlider::sub-page:horizontal {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+                f"stop:0 {N.ACENTO_LT}, stop:1 {N.ACENTO}); border-radius: 3px; }}")
 
     # ---------------------------------------------------- guardar / cerrar
     def _dirty_mark(self, *_):
@@ -980,15 +917,15 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _paint_saved(self):
         if getattr(self, "_error", None):
-            self.saved_dot.set_color("#e0554b")     # rojo = fallo
+            self.saved_dot.set_color(N.PELIGRO)     # rojo = fallo
             self.saved_lbl.setText(self._error)
-            self.saved_lbl.setStyleSheet("color: #e39a90; font-size: 12px; background: transparent;")
+            self.saved_lbl.setStyleSheet(f"color: {N.PELIGRO}; font-size: 12px; background: transparent;")
         elif self._dirty:
-            self.saved_dot.set_color("#f2c94c")     # amarillo = sin guardar
+            self.saved_dot.set_color(N.AVISO)       # ambar = sin guardar
             self.saved_lbl.setText("Cambios sin guardar")
-            self.saved_lbl.setStyleSheet("color: #f7e39a; font-size: 12px; background: transparent;")
+            self.saved_lbl.setStyleSheet(f"color: {N.AVISO}; font-size: 12px; background: transparent;")
         else:
-            self.saved_dot.set_color("#28c840")     # verde = guardado
+            self.saved_dot.set_color(N.OK)          # verde = guardado
             self.saved_lbl.setText("Todo guardado")
             self.saved_lbl.setStyleSheet(f"color: {TXT_FA}; font-size: 12px; background: transparent;")
 
