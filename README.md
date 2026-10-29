@@ -85,7 +85,7 @@ Desmárcalo y añade la API key para las sugerencias reales.
 1. La app se abre en la **Home**. En **Ajustes** (abajo a la izquierda) pega tus API
    keys de **OpenAI** y **AssemblyAI** (y, si la tienes, la de **TypeSafe**). Se
    guardan solas.
-2. Elige un agente a la izquierda y pulsa **Iniciar reunión** (o `Bloq Mayús+Esc`):
+2. Elige un agente a la izquierda y pulsa **Iniciar reunión**:
    la Home se oculta y aparece el overlay. Al terminar la reunión vuelves a la Home,
    con la reunión recién terminada abierta.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
@@ -161,9 +161,10 @@ respuesta hablada. Por eso las capturas tienen su propio límite, 4000 (el de vo
 
 Mantén **Bloq Mayús** y pulsa la tecla: todo queda junto a la mano izquierda en
 reposo. Funcionan aunque el foco esté en Zoom, Meet o Excel, y no chocan con sus
-atajos (Zoom usa Alt+A, Alt+S, Alt+Q…). Mientras la app corre, Bloq Mayús ya no
-bloquea mayúsculas ni le llega a la aplicación de debajo; **`Shift+Bloq Mayús`** sí
-las activa, como siempre.
+atajos (Zoom usa Alt+A, Alt+S, Alt+Q…). **Solo existen durante la reunión**: en la
+Home, Bloq Mayús y Alt+1…6 funcionan como siempre en todas las apps. En la reunión,
+Bloq Mayús ya no bloquea mayúsculas ni le llega a la aplicación de debajo;
+**`Shift+Bloq Mayús`** sí las activa, como siempre.
 
 | Atajo | Respaldo | Qué hace |
 |---|---|---|
@@ -172,7 +173,7 @@ las activa, como siempre.
 | `Bloq Mayús+D` | `Alt+3` | Generar respuesta con las capturas tomadas |
 | `Bloq Mayús+F` | `Alt+6` | Actualizar la solución en pantalla con lo que acaban de decir |
 | `Bloq Mayús+Q` | `Alt+1` | Mostrar / ocultar el overlay |
-| `Bloq Mayús+Esc` | `Alt+4` | Iniciar / detener la reunión (a propósito, difícil de pulsar sin querer) |
+| `Bloq Mayús+Esc` | `Alt+4` | Terminar la reunión (a propósito, difícil de pulsar sin querer) |
 
 Todos menos `Bloq Mayús+F` tienen su botón en la barra superior con el atajo
 escrito al lado (`Caps`); `Bloq Mayús+F` aparece como sugerencia en el panel de la

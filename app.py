@@ -50,6 +50,9 @@ class OverlayApp(QtCore.QObject):
 
         self._visible = True
         self._running = False
+        # Atajos globales (hotkeys.GlobalHotkeys), solo activos en la reunion:
+        # fuera de ella Bloq Mayus y Alt+1..6 son de las demas apps.
+        self.atajos = None
         self._elapsed = 0
         self._responding = False
         self._shots = []          # capturas acumuladas, pendientes de enviar
@@ -281,7 +284,7 @@ class OverlayApp(QtCore.QObject):
             self.start_meeting(self.home.agente_actual())
 
     def start_meeting(self, agent_id=None):
-        """Desde la Home (boton o Bloq Mayus+Esc): la Home se oculta y queda el
+        """Desde la Home (boton Iniciar reunion): la Home se oculta y queda el
         overlay. Sin claves no arranca: se vuelve a Ajustes con el aviso."""
         self.home.guardar_ya()
         self.cfg = cfg_mod.load_config()
@@ -308,6 +311,7 @@ class OverlayApp(QtCore.QObject):
         self.panel.show()
         self._refresh_agents()
         self._running = True
+        self._activar_atajos(True)
         self._elapsed = 0
         self.top.set_meeting(True)
         self.top.set_timer("00:00")
@@ -342,6 +346,7 @@ class OverlayApp(QtCore.QObject):
 
     def stop_meeting(self):
         self._running = False        # a partir de aqui los eventos en cola se ignoran
+        self._activar_atajos(False)
         self._timer.stop()
         self.top.set_meeting(False)
         self.panel.set_listening(False)
@@ -355,6 +360,17 @@ class OverlayApp(QtCore.QObject):
             w.hide()
         self.home.refrescar(abrir_ultima=True)
         self._mostrar_home()
+
+    def _activar_atajos(self, on):
+        if self.atajos is None:
+            return
+        ocupados = self.atajos.set_activo(on)
+        if on and not self.atajos.hook_instalado:
+            # Sin el hook no hay Bloq Mayus: quedan los Alt+1..6 de respaldo.
+            aviso = "Caps Lock shortcuts unavailable — use Alt+1…6"
+            if ocupados:
+                aviso += f" (in use: {', '.join(ocupados)})"
+            self.panel.aviso(aviso)
 
     def _mostrar_home(self):
         self.home.show()
@@ -639,14 +655,9 @@ def main():
         HK.ACTION_RELAUNCH: ui.relaunch_screen,
     })
     app.installNativeEventFilter(hk)
-    ok, fallidos = hk.register()
-    if not hk.caps_layer:
-        # Sin el hook no hay Bloq Mayus: quedan los Alt+1..6 de respaldo, y ahi
-        # si estorba que otra aplicacion tenga la combinacion tomada.
-        aviso = "Los atajos con Bloq Mayús no están disponibles: usa Alt+1…6"
-        if fallidos:
-            aviso += " (ocupados: " + ", ".join(fallidos) + ")"
-        ui.home.mostrar_aviso(aviso + ".")
+    # Instalados pero apagados: se encienden al iniciar la reunion.
+    hk.instalar()
+    ui.atajos = hk
 
     faltan = T.fonts_missing()
     if faltan:

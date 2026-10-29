@@ -17,9 +17,11 @@ Alt + letra choca con las apps de reunion (en Zoom, Alt+A silencia, Alt+S
 comparte pantalla y Alt+Q termina la reunion). Bloq Mayus no lo usa ninguna, y
 como modificador propio no hace falta tragar ni reinyectar teclas del sistema.
 
-Mientras la app corre, Bloq Mayus solo deja de bloquear mayusculas: el hook se
-traga la tecla, asi que nadie la ve. Shift+Bloq Mayus pasa intacto y lo activa
-de verdad, como siempre.
+Solo durante la reunion: fuera de ella (en la Home) Bloq Mayus y Alt+1..6 son
+de las demas apps, como si Armony no estuviera (ver GlobalHotkeys.set_activo).
+En la reunion, Bloq Mayus deja de bloquear mayusculas: el hook se traga la
+tecla, asi que nadie la ve. Shift+Bloq Mayus pasa intacto y lo activa de
+verdad, como siempre.
 
 Por que un hook de bajo nivel: RegisterHotKey solo admite Alt / Ctrl / Shift /
 Win como modificadores, no Bloq Mayus. Un hook WH_KEYBOARD_LL se ejecuta antes
@@ -319,27 +321,58 @@ class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
         """True si los atajos con Bloq Mayus estan activos."""
         return self._caps.active
 
+    @property
+    def hook_instalado(self):
+        """True si Windows dejo instalar el hook (sin el, solo hay Alt+1..6)."""
+        return bool(self._caps._hook)
+
     def register(self):
-        """Instala hook + atajos de respaldo. Devuelve (registrados, fallidos)
-        de los de respaldo (Alt+1..6)."""
+        """Instala hook + atajos de respaldo, ya activos. Devuelve (registrados,
+        fallidos) de los de respaldo (Alt+1..6)."""
         self._caps.install()
+        self._registrar_respaldo()
+        return [BINDINGS[i][2] for i in self._registered], self._failed
+
+    def instalar(self):
+        """Instala el hook sin activar nada: hasta set_activo(True) deja pasar
+        todas las teclas y no hay Alt+1..6 registrados."""
+        self._caps.set_enabled(False)
+        self._caps.install()
+
+    def set_activo(self, on):
+        """Atajos solo durante la reunion. Activa (o apaga) la capa de Bloq
+        Mayus y registra (o libera) los Alt+1..6 de respaldo. Devuelve los de
+        respaldo que no se pudieron registrar (otra app los tiene)."""
+        self._caps.set_enabled(on)
+        if on:
+            self._registrar_respaldo()
+            return list(self._failed)
+        self._liberar_respaldo()
+        return []
+
+    def _registrar_respaldo(self):
+        self._failed = []
         for hk_id, (mods, vk, nombre) in BINDINGS.items():
+            if hk_id in self._registered:
+                continue
             # hWnd=None: el mensaje va a la cola del hilo, que Qt ya procesa.
             if user32.RegisterHotKey(None, hk_id, mods | MOD_NOREPEAT, vk):
                 self._registered.append(hk_id)
             else:
                 # Otra aplicacion ya tiene esa combinacion registrada.
                 self._failed.append(nombre)
-        return [BINDINGS[i][2] for i in self._registered], self._failed
 
-    def unregister(self):
-        self._caps.uninstall()
+    def _liberar_respaldo(self):
         for hk_id in self._registered:
             try:
                 user32.UnregisterHotKey(None, hk_id)
             except Exception:
                 log.debug("UnregisterHotKey(%d) failed", hk_id, exc_info=True)
         self._registered = []
+
+    def unregister(self):
+        self._caps.uninstall()
+        self._liberar_respaldo()
 
     def set_caps_layer(self, on):
         """Activa/desactiva la capa de Bloq Mayus en caliente."""

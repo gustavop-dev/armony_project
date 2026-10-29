@@ -984,3 +984,47 @@ class TestModes:
         ui.engine.notesReady.emit("sesion-x", False)
 
         assert ui.home._notas_estado == {"sesion-x": "error"}
+
+
+class FakeAtajos:
+    def __init__(self, hook=True, ocupados=()):
+        self.hook_instalado = hook
+        self.ocupados = list(ocupados)
+        self.estados = []
+
+    def set_activo(self, on):
+        self.estados.append(on)
+        return self.ocupados if on else []
+
+
+class TestShortcutsOnlyInMeetings:
+    def test_meeting_switches_shortcuts_on_and_off(self, ui):
+        ui.atajos = FakeAtajos()
+
+        ui.start_meeting()
+        ui.stop_meeting()
+
+        assert ui.atajos.estados == [True, False]
+
+    def test_blocked_start_never_switches_them_on(self, ui, cfg):
+        ui.atajos = FakeAtajos()
+        cfg["openai_api_key"] = ""
+
+        ui.start_meeting()
+
+        assert ui.atajos.estados == []
+
+    def test_failed_start_switches_them_off_again(self, ui):
+        ui.atajos = FakeAtajos()
+        ui.engine.start_error = "No se pudo conectar"
+
+        ui.start_meeting()
+
+        assert ui.atajos.estados == [True, False]
+
+    def test_without_hook_the_meeting_points_to_alt(self, ui):
+        ui.atajos = FakeAtajos(hook=False, ocupados=["Alt+2"])
+
+        ui.start_meeting()
+
+        assert ui.panel.skip_pill.text() == "Caps Lock shortcuts unavailable — use Alt+1…6 (in use: Alt+2)"

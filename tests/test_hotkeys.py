@@ -672,3 +672,56 @@ def test_global_native_unreadable_message_is_ignored(global_hotkeys):
     result = global_hotkeys.nativeEventFilter(b"windows_generic_MSG", None)
 
     assert result == (False, 0)
+
+
+# -- active only during a meeting ------------------------------------------
+
+def test_installed_shortcuts_start_switched_off(global_hotkeys, fake_user32):
+    global_hotkeys.instalar()
+
+    assert global_hotkeys.hook_instalado is True
+    assert global_hotkeys.caps_layer is False
+    assert fake_user32.register_calls == []
+
+
+def test_switched_off_layer_lets_caps_lock_through(global_hotkeys, fake_user32):
+    global_hotkeys.instalar()
+    proc = fake_user32.hook_procs[0]
+    caps = hotkeys.KBDLLHOOKSTRUCT(vkCode=VK_CAPITAL)
+
+    assert proc(0, WM_KEYDOWN, ctypes.addressof(caps)) == PASSED
+
+
+def test_meeting_switches_shortcuts_on(global_hotkeys, fake_user32):
+    global_hotkeys.instalar()
+
+    ocupados = global_hotkeys.set_activo(True)
+
+    assert (global_hotkeys.caps_layer, ocupados) == (True, [])
+    assert len(fake_user32.register_calls) == 6
+
+
+def test_end_of_meeting_releases_everything(global_hotkeys, fake_user32):
+    global_hotkeys.instalar()
+    global_hotkeys.set_activo(True)
+
+    global_hotkeys.set_activo(False)
+
+    assert global_hotkeys.caps_layer is False
+    assert len(fake_user32.unregister_calls) == 6
+
+
+def test_switching_on_twice_registers_once(global_hotkeys, fake_user32):
+    global_hotkeys.instalar()
+    global_hotkeys.set_activo(True)
+
+    global_hotkeys.set_activo(True)
+
+    assert len(fake_user32.register_calls) == 6
+
+
+def test_busy_fallbacks_are_reported(global_hotkeys, fake_user32):
+    fake_user32.failing_hotkey_ids = {2}
+    global_hotkeys.instalar()
+
+    assert global_hotkeys.set_activo(True) == ["Alt+2"]
