@@ -860,8 +860,8 @@ class AgentChip(QtWidgets.QPushButton):
     _CARA = 18                # lado de la mascota junto al nombre
 
     def set_agents(self, agentes, activo):
-        """agentes: [(id, nombre)] o [(id, nombre, color de su mascota)];
-        activo: id del que se usa."""
+        """agentes: [(id, nombre)] o [(id, nombre, (forma, color) de su
+        mascota)]; activo: id del que se usa."""
         self._agentes = [(a[0], a[1]) for a in agentes]
         self._caras = {a[0]: a[2] for a in agentes if len(a) > 2}
         self.activo = activo
@@ -897,7 +897,8 @@ class AgentChip(QtWidgets.QPushButton):
         if cara is None or not getattr(self, "mostrar_cara", True):
             self.setIcon(QtGui.QIcon())
             return
-        self.setIcon(QtGui.QIcon(avatares.pixmap(cara, self._CARA, self._expresion)))
+        forma, color = cara
+        self.setIcon(QtGui.QIcon(avatares.pixmap(color, self._CARA, self._expresion, forma=forma)))
         self.setIconSize(QtCore.QSize(self._CARA, self._CARA))
 
     def set_pensando(self, on):
@@ -921,7 +922,8 @@ class AgentChip(QtWidgets.QPushButton):
         for aid, nombre in self._agentes:
             accion = self.menu.addAction(nombre)
             if aid in self._caras:
-                accion.setIcon(QtGui.QIcon(avatares.pixmap(self._caras[aid], 18)))
+                forma, color = self._caras[aid]
+                accion.setIcon(QtGui.QIcon(avatares.pixmap(color, 18, forma=forma)))
             accion.setCheckable(True)
             accion.setChecked(aid == self.activo)
             accion.triggered.connect(lambda _c=False, a=aid: self.chosen.emit(a))
@@ -1429,8 +1431,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
 
         self.bars = AudioBars()
         lay.addWidget(self.bars)
-        # El companero: la mascota en el color del agente, viva. En el hablado
-        # sustituye a las barras: bota con la voz, piensa, habla y se alegra.
+        # El companero: la mascota del agente, viva. En el hablado sustituye a
+        # las barras: bota con la voz, piensa, habla y se alegra.
         self.compa = avatares.Avatar(avatares.COLOR_POR_DEFECTO, 38, vivo=True)
         self.compa.setObjectName("compa")
         self.compa.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)  # se arrastra igual
@@ -1561,9 +1563,10 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         """Agentes para el selector de la cabecera (solo el panel hablado)."""
         if self.modo == "voz":
             self.agent_chip.set_agents(agentes, activo)
-            color = next((a[2] for a in agentes if a[0] == activo and len(a) > 2), None)
-            if color is not None:
-                self.compa.set_color(color)
+            cara = next((a[2] for a in agentes if a[0] == activo and len(a) > 2), None)
+            if cara is not None:
+                forma, color = cara
+                self.compa.set_color(color, forma)
 
     def show_suggestion(self, texto):
         """Ofrece relanzar la solucion con lo que dijeron; "" la retira."""

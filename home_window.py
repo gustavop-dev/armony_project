@@ -12,8 +12,8 @@ Como la de ChatGPT, Claude o Grok, pero para reuniones:
   - todo lo escrito en markdown se lee formateado; "Editar" lo abre en bruto.
   - el tono de cada agente se escribe o se saca de tus chats de WhatsApp
     (estilo.py): solo tus mensajes, y solo cuando lo pides.
-  - cada agente lleva la mascota de Armony en su color (avatares.py); se
-    cambia pulsando la mascota.
+  - cada agente tiene su mascota: una figura lisa (circulo, cuadrado o
+    triangulo) de su color, solo con ojos (avatares.py); se cambia pulsandola.
   - permisos de cada agente: notetaker, responder al pedir o automatico,
     capturas de pantalla y notas al terminar. Las notas de una reunion se
     leen en su pagina, junto a la transcripcion.
@@ -337,7 +337,7 @@ class AgentRow(NavItem):
         self.setProperty("agente", agente["id"])
         # Su mascota en vez del icono de chat.
         self._icon.setFixedSize(26, 26)
-        self._icon.setPixmap(avatares.pixmap(self._cara, 26))
+        self._icon.setPixmap(self._mini_mascota())
         self._lab.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         lay = self.layout()
         lay.setContentsMargins(24, 12, 16, 12)
@@ -350,6 +350,10 @@ class AgentRow(NavItem):
         lay.addWidget(self.btn_editar)
         lay.addWidget(self.btn_flecha)
         self._actualizar()
+
+    def _mini_mascota(self):
+        forma, color = self._cara
+        return avatares.pixmap(color, 26, forma=forma)
 
     def _mini(self, icono, tip):
         b = QtWidgets.QPushButton()
@@ -365,7 +369,7 @@ class AgentRow(NavItem):
     def set_active(self, on):
         super().set_active(on)
         if hasattr(self, "_cara"):
-            self._icon.setPixmap(avatares.pixmap(self._cara, 26))
+            self._icon.setPixmap(self._mini_mascota())
         if hasattr(self, "btn_editar"):
             self._actualizar()
 
@@ -416,16 +420,36 @@ class _BotonColor(QtWidgets.QAbstractButton):
         p.end()
 
 
-class ElegirColor(QtWidgets.QDialog):
-    """Color de la mascota de un agente, con la vista previa en grande."""
+class _BotonForma(QtWidgets.QAbstractButton):
+    """Una forma del selector, en el color elegido: en relieve; la elegida,
+    hundida."""
 
-    def __init__(self, color, nombre, parent=None):
+    def __init__(self, forma, color, nombre):
+        super().__init__()
+        self.forma, self.color = forma, color
+        self.setCheckable(True)
+        self.setFixedSize(74, 74)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip(nombre)
+
+    def paintEvent(self, _e):
+        p = QtGui.QPainter(self)
+        modo = "hundido" if self.isChecked() else "relieve"
+        p.drawPixmap(0, 0, N.superficie(self.width(), self.height(), 8, 18, modo, 4))
+        avatares.pintar(p, QtCore.QRectF(19, 19, 36, 36), self.color, self.forma)
+        p.end()
+
+
+class ElegirMascota(QtWidgets.QDialog):
+    """Forma y color de la mascota de un agente, con la vista previa en grande."""
+
+    def __init__(self, forma, color, nombre, parent=None):
         super().__init__(parent)
-        self.color = color
-        self.setWindowTitle("Color")
+        self.forma, self.color = forma, color
+        self.setWindowTitle("Mascota")
         self.setStyleSheet(f"QDialog {{ background: {N.BG}; }} QLabel {{ background: transparent; }}")
         v = QtWidgets.QVBoxLayout(self); v.setContentsMargins(30, 24, 30, 18); v.setSpacing(12)
-        self.vista = avatares.Avatar(color, 120, vivo=True, alegre_al_pasar=True)
+        self.vista = avatares.Avatar(color, 120, vivo=True, alegre_al_pasar=True, forma=forma)
         v.addWidget(self.vista, 0, QtCore.Qt.AlignHCenter)
         self.titulo = QtWidgets.QLabel(nombre)
         tf = self.titulo.font(); tf.setPixelSize(18); tf.setWeight(QtGui.QFont.DemiBold)
@@ -433,14 +457,25 @@ class ElegirColor(QtWidgets.QDialog):
         self.titulo.setAlignment(QtCore.Qt.AlignCenter)
         self.titulo.setStyleSheet(f"color: {N.TITULO};")
         v.addWidget(self.titulo)
-        colores = QtWidgets.QHBoxLayout(); colores.setSpacing(4)
+        formas = QtWidgets.QHBoxLayout(); formas.setSpacing(2); formas.addStretch()
+        self._formas = {}
+        for fid, nombre_forma in avatares.FORMAS:
+            b = _BotonForma(fid, color, nombre_forma)
+            b.setObjectName(f"forma-{fid}")
+            b.setChecked(fid == forma)
+            b.clicked.connect(lambda _c=False, x=fid: self._elegir(forma=x))
+            self._formas[fid] = b
+            formas.addWidget(b)
+        formas.addStretch()
+        v.addLayout(formas)
+        colores = QtWidgets.QHBoxLayout(); colores.setSpacing(2)
         colores.addStretch()
         self._colores = {}
         for cid, nombre_color, hexa in avatares.COLORES:
             b = _BotonColor(cid, hexa, nombre_color)
             b.setObjectName(f"color-{cid}")
             b.setChecked(cid == color)
-            b.clicked.connect(lambda _c=False, x=cid: self._elegir(x))
+            b.clicked.connect(lambda _c=False, x=cid: self._elegir(color=x))
             self._colores[cid] = b
             colores.addWidget(b)
         colores.addStretch()
@@ -454,11 +489,16 @@ class ElegirColor(QtWidgets.QDialog):
         botones.addWidget(cancelar); botones.addWidget(listo)
         v.addLayout(botones)
 
-    def _elegir(self, color):
-        self.color = color
+    def _elegir(self, forma=None, color=None):
+        self.forma = forma or self.forma
+        self.color = color or self.color
+        for fid, b in self._formas.items():
+            b.setChecked(fid == self.forma)
+            b.color = self.color
+            b.update()
         for cid, b in self._colores.items():
-            b.setChecked(cid == color)
-        self.vista.set_color(color)
+            b.setChecked(cid == self.color)
+        self.vista.set_color(self.color, self.forma)
         self.vista.set_estado(avatares.CONTENTO)     # le gusta el cambio
 
 
@@ -930,32 +970,33 @@ class HomeWindow(QtWidgets.QWidget):
         return page
 
     def _cara_agente(self, a, lado, vivo=False):
-        """La mascota del agente; al pulsarla se le cambia el color. Viva,
-        respira, parpadea y se alegra al pasarle el raton."""
-        cara = avatares.Avatar(avatares.de_agente(a), lado, vivo=vivo, alegre_al_pasar=vivo)
+        """La mascota del agente; al pulsarla se cambia su forma y su color.
+        Viva, respira, parpadea y se alegra al pasarle el raton."""
+        forma, color = avatares.de_agente(a)
+        cara = avatares.Avatar(color, lado, vivo=vivo, alegre_al_pasar=vivo, forma=forma)
         cara.setObjectName("cara")
         cara.setCursor(QtCore.Qt.PointingHandCursor)
-        cara.setToolTip("Cambiar el color")
-        cara.clicked.connect(lambda aid=a["id"]: self.cambiar_color(aid))
+        cara.setToolTip("Cambiar forma y color")
+        cara.clicked.connect(lambda aid=a["id"]: self.cambiar_mascota(aid))
         return cara
 
-    def _elegir_color(self, color, nombre):
-        """Dialogo: el color elegido, o None si se cancela."""
-        dialogo = ElegirColor(color, nombre, self)
+    def _elegir_mascota(self, forma, color, nombre):
+        """Dialogo: (forma, color) elegidos, o None si se cancela."""
+        dialogo = ElegirMascota(forma, color, nombre, self)
         if self.proteger_ventana is not None:
             self.proteger_ventana(dialogo)
         if dialogo.exec() != QtWidgets.QDialog.Accepted:
             return None
-        return dialogo.color
+        return dialogo.forma, dialogo.color
 
-    def cambiar_color(self, aid):
+    def cambiar_mascota(self, aid):
         a = self._ag_get(aid)
         if a is None:
             return
-        elegido = self._elegir_color(avatares.de_agente(a), a["name"])
+        elegido = self._elegir_mascota(*avatares.de_agente(a), a["name"])
         if elegido is None:
             return
-        a["color"] = elegido
+        a["forma"], a["color"] = elegido
         self._marcar()
         self._rellenar_lista()
         self._mostrar()

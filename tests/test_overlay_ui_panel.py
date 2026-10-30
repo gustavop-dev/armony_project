@@ -449,9 +449,9 @@ def test_agent_name_that_fits_is_never_cut(panel, qtbot, nombre):
 
 
 def test_spoken_panel_has_the_agent_as_companion(panel):
-    panel.set_agents([("grok", "Grok", "coral")], "grok")
+    panel.set_agents([("grok", "Grok", ("triangulo", "naranja"))], "grok")
 
-    assert panel.compa.color == "coral"
+    assert (panel.compa.forma, panel.compa.color) == ("triangulo", "naranja")
     assert panel.compa.isVisibleTo(panel) and not panel.bars.isVisibleTo(panel)
     assert panel.agent_chip.icon().isNull() is True      # the face is the companion
 

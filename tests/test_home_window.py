@@ -709,38 +709,43 @@ def test_failed_notes_are_explained(make_home):
         "No se pudieron generar las notas")
 
 
-# ------------------------------------------------------------------ mascot colour
+# ------------------------------------------------------------------ mascot
 def test_agent_page_shows_its_mascot(make_home):
     win = make_home(agent="grok")
 
-    assert _find(win, avatares.Avatar, "cara").color == "coral"
+    cara = _find(win, avatares.Avatar, "cara")
+
+    assert (cara.forma, cara.color) == ("circulo", "negro")
 
 
-def test_picking_a_colour_is_saved(make_home, monkeypatch):
+def test_picking_shape_and_colour_is_saved(make_home, monkeypatch):
     win = make_home(agent="grok")
-    monkeypatch.setattr(win, "_elegir_color", lambda c, n: "lavanda")
+    monkeypatch.setattr(win, "_elegir_mascota", lambda f, c, n: ("triangulo", "rosa"))
 
-    win.cambiar_color("grok")
+    win.cambiar_mascota("grok")
     win.guardar_ya()
 
-    assert agents.get("grok")["color"] == "lavanda"
-    assert win._filas_agente["grok"]._cara == "lavanda"
+    g = agents.get("grok")
+    assert (g["forma"], g["color"]) == ("triangulo", "rosa")
+    assert win._filas_agente["grok"]._cara == ("triangulo", "rosa")
 
 
 def test_cancelled_picker_changes_nothing(make_home, monkeypatch):
     win = make_home(agent="grok")
-    monkeypatch.setattr(win, "_elegir_color", lambda c, n: None)
+    monkeypatch.setattr(win, "_elegir_mascota", lambda f, c, n: None)
 
-    win.cambiar_color("grok")
+    win.cambiar_mascota("grok")
 
     assert win._dirty is False
 
 
-def test_picker_previews_the_colour(qtbot):
-    dialogo = hw.ElegirColor("pervinca", "Coach")
+def test_picker_previews_shape_and_colour(qtbot):
+    dialogo = hw.ElegirMascota("circulo", "azul", "Coach")
     qtbot.addWidget(dialogo)
 
-    qtbot.mouseClick(dialogo.findChild(QtWidgets.QAbstractButton, "color-menta"), LEFT)
+    qtbot.mouseClick(dialogo.findChild(QtWidgets.QAbstractButton, "forma-triangulo"), LEFT)
+    qtbot.mouseClick(dialogo.findChild(QtWidgets.QAbstractButton, "color-rosa"), LEFT)
 
-    assert (dialogo.color, dialogo.vista.color) == ("menta", "menta")
-    assert dialogo._colores["menta"].isChecked() and not dialogo._colores["pervinca"].isChecked()
+    assert (dialogo.forma, dialogo.color) == ("triangulo", "rosa")
+    assert (dialogo.vista.forma, dialogo.vista.color) == ("triangulo", "rosa")
+    assert dialogo._formas["triangulo"].color == "rosa"

@@ -1,16 +1,28 @@
-"""The Armony mascot: draws in every colour and face, and comes alive."""
+"""The Armony mascot: a flat shape with eyes, in every shape, colour and face,
+and it comes alive."""
 import pytest
 from PySide6 import QtCore, QtGui
 
 import avatares
 
 
+@pytest.mark.parametrize("forma", [f for f, _ in avatares.FORMAS])
 @pytest.mark.parametrize("expresion", [avatares.ABIERTOS, avatares.CERRADOS,
                                        avatares.PENSANDO, avatares.FELIZ])
-def test_mascot_draws_with_every_face(qapp, expresion):
-    img = avatares.pixmap("coral", 48, expresion).toImage()
+def test_mascot_draws_every_shape_with_every_face(qapp, forma, expresion):
+    img = avatares.pixmap("naranja", 48, expresion, forma=forma).toImage()
 
-    assert img.pixelColor(img.width() // 2, int(img.height() * 0.85)).alpha() > 0
+    assert img.pixelColor(img.width() // 2, int(img.height() * 0.8)).alpha() > 0
+
+
+def test_eyes_are_white_and_look_right(qapp):
+    img = avatares.pixmap("negro", 100).toImage()
+    w, h = img.width(), img.height()
+
+    derecha = img.pixelColor(int(w * 0.56), int(h * 0.42))
+    izquierda = img.pixelColor(int(w * 0.30), int(h * 0.42))
+
+    assert derecha.lightness() > 200 and izquierda.lightness() < 60
 
 
 @pytest.mark.parametrize("cid, hexa", [(c, h) for c, _, h in avatares.COLORES])
@@ -28,10 +40,14 @@ def test_pixmap_has_the_logical_size(qapp):
     assert round(pm.width() / pm.devicePixelRatio()) == 26
 
 
-@pytest.mark.parametrize("agente, color", [
-    ({"color": "menta"}, "menta"), ({"color": "neon"}, "pervinca"), ({}, "pervinca")])
-def test_unknown_colours_fall_back_to_the_default(agente, color):
-    assert avatares.de_agente(agente) == color
+@pytest.mark.parametrize("agente, cara", [
+    ({"forma": "triangulo", "color": "rosa"}, ("triangulo", "rosa")),
+    ({"forma": "estrella", "color": "neon"}, ("circulo", "azul")),
+    ({"color": "menta"}, ("circulo", "turquesa")),            # old colours translate
+    ({}, ("circulo", "azul")),
+])
+def test_faces_are_validated(agente, cara):
+    assert avatares.de_agente(agente) == cara
 
 
 def _vivo(estado=avatares.REPOSO):
@@ -86,16 +102,16 @@ def test_thinking_avatar_looks_up_with_dots(qtbot):
     assert (pose["expresion"], pose["puntos"] is not None) == (avatares.PENSANDO, True)
 
 
-def test_talking_avatar_opens_and_closes_its_mouth(qtbot):
+def test_talking_avatar_pulses_its_eyes(qtbot):
     cara = _vivo(avatares.HABLANDO)
     qtbot.addWidget(cara)
 
-    bocas = set()
+    latidos = set()
     for _ in range(8):
         cara.avanzar(0.05)
-        bocas.add(cara.pose()["boca_abierta"])
+        latidos.add(round(cara.pose()["latido"], 2))
 
-    assert bocas == {True, False}
+    assert len(latidos) > 2 and max(latidos) <= 1.0
 
 
 def test_joy_is_brief_and_returns_to_the_state(qtbot):
