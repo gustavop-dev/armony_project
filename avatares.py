@@ -1,11 +1,13 @@
-"""Personajes de los agentes: minimalistas, de un color, con cara y vivos.
+"""La mascota de Armony: un bichito tipo mochi con auriculares de reunion.
 
-Se dibujan con QPainter sobre un lienzo de 100x100 (sin imagenes): se ven
-nitidos a cualquier tamano y el color de cada agente es el del cuerpo. La cara
-admite cuatro expresiones: ojos abiertos, cerrados (parpadeo), mirando arriba
-(pensando) y felices (^ ^); y la boca se abre al hablar.
+Una sola mascota para todos los agentes; cada uno la lleva de su color (como
+el companero de Grok). Se dibuja con QPainter sobre un lienzo de 100x100, sin
+imagenes: nitida a cualquier tamano. Cuerpo de judia con patitas, auriculares
+de diadema con microfono (su trabajo es escuchar reuniones), ojos grandes con
+brillo, mejillas y boquita.
 
-Avatar los anima segun lo que pasa en la reunion, como un companero:
+Expresiones: ojos abiertos, cerrados (parpadeo), mirando arriba (pensando) y
+felices (^ ^); la boca se abre al hablar. Avatar la anima segun la reunion:
   reposo     respira y parpadea.
   escuchando bota con la voz del entrevistador (el nivel de audio).
   pensando   mira arriba con tres puntitos: se esta preparando la respuesta.
@@ -18,8 +20,8 @@ import time
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-TINTA = QtGui.QColor("#1F2433")          # ojos, boca, nariz
-MEJILLA = QtGui.QColor(255, 120, 150, 90)
+TINTA = QtGui.QColor("#1F2433")          # ojos y boca
+MEJILLA = QtGui.QColor(255, 120, 150, 95)
 
 # (id, nombre, hex)
 COLORES = [
@@ -33,6 +35,7 @@ COLORES = [
     ("grafito", "Grafito", "#5B6478"),
 ]
 HEX = {cid: h for cid, _, h in COLORES}
+COLOR_POR_DEFECTO = "pervinca"
 
 ABIERTOS, CERRADOS, PENSANDO, FELIZ = "abiertos", "cerrados", "pensando", "feliz"
 
@@ -41,203 +44,67 @@ REPOSO, ESCUCHANDO, PENSANDO_E, HABLANDO, CONTENTO = (
     "reposo", "escuchando", "pensando", "hablando", "contento")
 DURACION_CONTENTO = 1.6        # s que dura la alegria al terminar una respuesta
 
-PERSONAJE_POR_DEFECTO = "gota"
-COLOR_POR_DEFECTO = "pervinca"
+_OJOS = (38, 62)               # x de los ojos
+_OJO_Y = 60
 
 
-def _p(*puntos):
-    """Poligono cerrado como QPainterPath."""
-    camino = QtGui.QPainterPath()
-    camino.moveTo(*puntos[0])
-    for x, y in puntos[1:]:
-        camino.lineTo(x, y)
-    camino.closeSubpath()
-    return camino
-
-
-def _elipse(x, y, w, h):
-    camino = QtGui.QPainterPath()
-    camino.addEllipse(QtCore.QRectF(x, y, w, h))
-    return camino
-
-
-def _redondeado(x, y, w, h, r):
-    camino = QtGui.QPainterPath()
-    camino.addRoundedRect(QtCore.QRectF(x, y, w, h), r, r)
-    return camino
-
-
-# ------------------------------------------------------------------ cuerpos
-# Cada personaje: cuerpo (QPainterPath), donde van los ojos (x izq, x der, y,
-# tamano), su boca y sus detalles. Todo en coordenadas de 0 a 100.
-def _gota():
-    return _redondeado(12, 16, 76, 72, 36)
-
-
-def _gato():
-    cabeza = _elipse(14, 30, 72, 60)
-    return (cabeza.united(_p((18, 46), (22, 10), (46, 32)))
-            .united(_p((82, 46), (78, 10), (54, 32))))
-
-
-def _robot():
-    cuerpo = _redondeado(16, 28, 68, 58, 16)
-    antena = _redondeado(48, 12, 4, 18, 2).united(_elipse(43, 5, 14, 14))
-    orejas = _redondeado(8, 48, 10, 18, 4).united(_redondeado(82, 48, 10, 18, 4))
-    return cuerpo.united(antena).united(orejas)
-
-
-def _fantasma():
+def _cuerpo():
+    """Judia: mas estrecha arriba, panzona abajo."""
     c = QtGui.QPainterPath()
-    c.moveTo(16, 50)
-    c.arcTo(QtCore.QRectF(16, 14, 68, 72), 180, -180)   # cupula
-    c.lineTo(84, 86)
-    for i, x in enumerate((73, 61, 50, 39, 27, 16)):
-        c.quadTo(x + 5.5, 96 if i % 2 == 0 else 80, x, 86)
-    c.closeSubpath()
+    c.moveTo(50, 24)
+    c.cubicTo(74, 24, 86, 42, 86, 62)
+    c.cubicTo(86, 82, 70, 92, 50, 92)
+    c.cubicTo(30, 92, 14, 82, 14, 62)
+    c.cubicTo(14, 42, 26, 24, 50, 24)
     return c
 
 
-def _buho():
-    cuerpo = _elipse(16, 22, 68, 70)
-    return (cuerpo.united(_p((20, 36), (22, 10), (40, 26)))
-            .united(_p((80, 36), (78, 10), (60, 26))))
-
-
-def _zorro():
-    cara = QtGui.QPainterPath()
-    cara.moveTo(12, 34)
-    cara.quadTo(14, 66, 50, 90)
-    cara.quadTo(86, 66, 88, 34)
-    cara.quadTo(50, 22, 12, 34)
-    return (cara.united(_p((14, 40), (20, 6), (44, 28)))
-            .united(_p((86, 40), (80, 6), (56, 28))))
-
-
-def _nube():
-    return (_elipse(10, 42, 44, 44).united(_elipse(28, 22, 52, 52))
-            .united(_elipse(54, 40, 38, 38)).united(_redondeado(18, 58, 66, 28, 14)))
-
-
-def _oso():
-    return (_elipse(18, 26, 64, 64).united(_elipse(14, 16, 26, 26))
-            .united(_elipse(60, 16, 26, 26)))
-
-
-# id -> (nombre, cuerpo, (ojo izq x, ojo der x, y, tamano), boca, mejillas)
-PERSONAJES = {
-    "gota": ("Gota", _gota, (38, 62, 50, 9), "sonrisa", True),
-    "gato": ("Gato", _gato, (38, 62, 58, 8), "gato", True),
-    "robot": ("Robot", _robot, (37, 63, 54, 9), "recta", False),
-    "fantasma": ("Fantasma", _fantasma, (39, 61, 48, 10), "o", True),
-    "buho": ("Búho", _buho, (37, 63, 50, 7), "pico", False),
-    "zorro": ("Zorro", _zorro, (38, 62, 52, 8), "hocico", False),
-    "nube": ("Nube", _nube, (42, 62, 58, 8), "sonrisa", True),
-    "oso": ("Oso", _oso, (39, 61, 52, 8), "oso", False),
-}
-
-
-def _ojo(p, x, y, t, expresion):
-    if expresion == FELIZ:
-        # ^ ^ : arco hacia arriba
-        p.setPen(QtGui.QPen(TINTA, t * 0.42, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
-        p.setBrush(QtCore.Qt.NoBrush)
-        camino = QtGui.QPainterPath()
-        camino.moveTo(x - t * 0.6, y + t * 0.2)
-        camino.quadTo(x, y - t * 0.7, x + t * 0.6, y + t * 0.2)
-        p.drawPath(camino)
-        return
-    if expresion == CERRADOS:
-        p.setPen(QtGui.QPen(TINTA, t * 0.42, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
-        p.setBrush(QtCore.Qt.NoBrush)
-        camino = QtGui.QPainterPath()
-        camino.moveTo(x - t * 0.6, y)
-        camino.quadTo(x, y + t * 0.55, x + t * 0.6, y)
-        p.drawPath(camino)
-        return
-    dy = -t * 0.35 if expresion == PENSANDO else 0
-    dx = t * 0.2 if expresion == PENSANDO else 0
-    p.setPen(QtCore.Qt.NoPen)
-    p.setBrush(TINTA)
-    p.drawEllipse(QtCore.QPointF(x + dx, y + dy), t * 0.5, t * 0.62)
-    p.setBrush(QtGui.QColor(255, 255, 255, 230))          # brillo
-    p.drawEllipse(QtCore.QPointF(x + dx + t * 0.17, y + dy - t * 0.22), t * 0.17, t * 0.17)
-
-
-def _boca(p, tipo, color):
-    p.setBrush(QtCore.Qt.NoBrush)
-    p.setPen(QtGui.QPen(TINTA, 2.6, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap,
+def _trazo(p, color, grosor):
+    p.setPen(QtGui.QPen(color, grosor, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap,
                         QtCore.Qt.RoundJoin))
-    c = QtGui.QPainterPath()
-    if tipo == "sonrisa":
-        c.moveTo(45, 62); c.quadTo(50, 67, 55, 62)
+    p.setBrush(QtCore.Qt.NoBrush)
+
+
+def _ojo(p, x, y, expresion):
+    if expresion in (CERRADOS, FELIZ):
+        # cerrados: arco hacia abajo; felices (^ ^): hacia arriba
+        _trazo(p, TINTA, 3.2)
+        c = QtGui.QPainterPath()
+        if expresion == CERRADOS:
+            c.moveTo(x - 5.5, y + 1); c.quadTo(x, y + 5.5, x + 5.5, y + 1)
+        else:
+            c.moveTo(x - 5.5, y + 2); c.quadTo(x, y - 6.5, x + 5.5, y + 2)
         p.drawPath(c)
-    elif tipo == "gato":
-        c.moveTo(43, 69); c.quadTo(46.5, 73, 50, 69); c.quadTo(53.5, 73, 57, 69)
-        p.drawPath(c)
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(TINTA)
-        p.drawPath(_p((47, 64), (53, 64), (50, 67.5)))
-        p.setPen(QtGui.QPen(QtGui.QColor(31, 36, 51, 110), 1.6, QtCore.Qt.SolidLine,
-                            QtCore.Qt.RoundCap))
-        for y in (66, 71):
-            p.drawLine(QtCore.QPointF(24, y - 2), QtCore.QPointF(36, y))
-            p.drawLine(QtCore.QPointF(76, y - 2), QtCore.QPointF(64, y))
-    elif tipo == "recta":
-        p.drawLine(QtCore.QPointF(43, 70), QtCore.QPointF(57, 70))
-    elif tipo == "o":
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(TINTA)
-        p.drawEllipse(QtCore.QPointF(50, 64), 3.6, 4.6)
-    elif tipo == "pico":
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor("#FFB547"))
-        p.drawPath(_p((45, 60), (55, 60), (50, 69)))
-    elif tipo == "hocico":
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor(255, 255, 255, 215))
-        hocico = QtGui.QPainterPath()
-        hocico.moveTo(30, 62); hocico.quadTo(50, 54, 70, 62); hocico.quadTo(62, 80, 50, 86)
-        hocico.quadTo(38, 80, 30, 62)
-        p.drawPath(hocico)
-        p.setBrush(TINTA)
-        p.drawEllipse(QtCore.QPointF(50, 66), 4, 3)
-    elif tipo == "oso":
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(color.lighter(135))
-        p.drawEllipse(QtCore.QRectF(38, 58, 24, 18))
-        p.setBrush(TINTA)
-        p.drawEllipse(QtCore.QPointF(50, 63), 3.6, 2.8)
-        p.setPen(QtGui.QPen(TINTA, 2.2, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
-        c.moveTo(46, 69); c.quadTo(50, 72, 54, 69)
-        p.setBrush(QtCore.Qt.NoBrush)
-        p.drawPath(c)
-
-
-# Donde se abre la boca al hablar, segun el tipo de boca.
-_BOCA_Y = {"sonrisa": 64, "gato": 71, "recta": 70, "o": 64, "pico": 64,
-           "hocico": 75, "oso": 70}
-
-
-def _boca_abierta(p, tipo, color):
-    if tipo == "pico":
-        p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor("#FFB547"))
-        p.drawPath(_p((45, 58), (55, 58), (50, 63)))
-        p.drawPath(_p((46, 66), (54, 66), (50, 71)))
         return
-    if tipo == "hocico":
-        _boca(p, "hocico", color)          # el hocico y la nariz se quedan
-    elif tipo == "oso":
-        _boca(p, "oso", color)
+    ox, oy = (2.0, -3.5) if expresion == PENSANDO else (0.0, 0.0)
     p.setPen(QtCore.Qt.NoPen)
     p.setBrush(TINTA)
-    y = _BOCA_Y.get(tipo, 66)
-    p.drawEllipse(QtCore.QPointF(50, y), 6.5, 5.5)
-    p.setBrush(QtGui.QColor(255, 120, 140, 220))          # lengua
-    p.drawEllipse(QtCore.QPointF(50, y + 2.6), 3.8, 2.2)
+    p.drawEllipse(QtCore.QPointF(x + ox, y + oy), 6.4, 8.0)
+    p.setBrush(QtGui.QColor(255, 255, 255, 240))           # brillo grande
+    p.drawEllipse(QtCore.QPointF(x + ox + 2.2, y + oy - 2.9), 2.3, 2.3)
+    p.setBrush(QtGui.QColor(255, 255, 255, 160))           # y uno pequeno
+    p.drawEllipse(QtCore.QPointF(x + ox - 2.0, y + oy + 3.2), 1.1, 1.1)
+
+
+def _boca(p, abierta):
+    if abierta:
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(TINTA)
+        p.drawEllipse(QtCore.QPointF(50, 72), 5.2, 4.4)
+        p.setBrush(QtGui.QColor(255, 120, 140, 230))       # lengua
+        p.drawEllipse(QtCore.QPointF(50, 74.2), 3.1, 1.8)
+        return
+    _trazo(p, TINTA, 2.6)
+    c = QtGui.QPainterPath()
+    c.moveTo(46, 70); c.quadTo(50, 74, 54, 70)
+    p.drawPath(c)
 
 
 def _puntos(p, fase, color):
-    """Tres puntitos de "estoy pensando", arriba a la derecha, del color del
-    personaje (se ven tanto en la Home clara como en el overlay oscuro)."""
+    """Tres puntitos de "estoy pensando", arriba a la derecha, de su color (se
+    ven tanto en la Home clara como en el overlay oscuro)."""
     p.setPen(QtCore.Qt.NoPen)
-    for i, (x, y, r) in enumerate(((72, 12, 3.6), (81, 7, 4.0), (90, 3, 4.4))):
+    for i, (x, y, r) in enumerate(((74, 14, 3.6), (83, 8, 4.0), (92, 3, 4.4))):
         a = 0.35 + 0.65 * max(0.0, math.sin((fase - i * 0.18) * math.tau))
         c = QtGui.QColor(color)
         c.setAlpha(int(255 * a))
@@ -245,15 +112,15 @@ def _puntos(p, fase, color):
         p.drawEllipse(QtCore.QPointF(x, y), r, r)
 
 
-def pintar(p, rect, personaje, color, expresion=ABIERTOS, boca_abierta=False,
+def pintar(p, rect, color, expresion=ABIERTOS, boca_abierta=False,
            escala=1.0, dy=0.0, angulo=0.0, puntos=None):
-    """Dibuja el personaje dentro de rect (cuadrado) con el color dado.
+    """Dibuja la mascota dentro de rect (cuadrado) con el color dado.
 
-    Pose (para animarlo): escala y giro alrededor del centro, dy en unidades
-    del lienzo (100 = alto entero), boca abierta y 'puntos' (fase 0..1 de los
+    Pose (para animarla): escala y giro alrededor del centro, dy en unidades del
+    lienzo (100 = alto entero), boca abierta y 'puntos' (fase 0..1 de los
     puntitos de pensar; None, sin puntitos)."""
-    nombre_, cuerpo, ojos, boca, mejillas = PERSONAJES.get(personaje, PERSONAJES["gota"])
     color = QtGui.QColor(HEX.get(color, color))
+    oscuro = color.darker(170)              # auriculares: el mismo tono, hondo
     p.save()
     p.setRenderHint(QtGui.QPainter.Antialiasing)
     lado = min(rect.width(), rect.height())
@@ -265,36 +132,49 @@ def pintar(p, rect, personaje, color, expresion=ABIERTOS, boca_abierta=False,
     p.rotate(angulo)
     p.scale(escala, escala)
     p.translate(-50, -50)
-    # cuerpo con un degradado suave: mas claro arriba, como si le diera la luz
-    g = QtGui.QLinearGradient(0, 0, 0, 100)
-    g.setColorAt(0, color.lighter(118))
-    g.setColorAt(1, color.darker(108))
+
     p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(color.darker(125))                           # patitas
+    p.drawEllipse(QtCore.QPointF(37, 91), 7.5, 4.2)
+    p.drawEllipse(QtCore.QPointF(63, 91), 7.5, 4.2)
+    g = QtGui.QLinearGradient(0, 24, 0, 92)                 # luz desde arriba
+    g.setColorAt(0, color.lighter(122))
+    g.setColorAt(1, color.darker(106))
     p.setBrush(QtGui.QBrush(g))
-    p.drawPath(cuerpo())
-    if personaje == "robot":
-        p.setBrush(QtGui.QColor(255, 255, 255, 60))          # pantalla de la cara
-        p.drawRoundedRect(QtCore.QRectF(24, 38, 52, 40), 10, 10)
-    if personaje == "buho":
-        p.setBrush(QtGui.QColor(255, 255, 255, 235))         # ojos grandes
-        for x in (ojos[0], ojos[1]):
-            p.drawEllipse(QtCore.QPointF(x, ojos[2]), 11, 11)
-    if mejillas:
-        p.setBrush(MEJILLA)
-        y = ojos[2] + ojos[3] * 1.15
-        p.drawEllipse(QtCore.QPointF(ojos[0] - 9, y), 5.5, 3.6)
-        p.drawEllipse(QtCore.QPointF(ojos[1] + 9, y), 5.5, 3.6)
-    if boca_abierta:
-        _boca_abierta(p, boca, color)
-    else:
-        _boca(p, boca, color)
-    for x in (ojos[0], ojos[1]):
-        _ojo(p, x, ojos[2], ojos[3], expresion)
+    p.drawPath(_cuerpo())
+    p.setBrush(QtGui.QColor(255, 255, 255, 70))             # brillo
+    p.drawEllipse(QtCore.QRectF(26, 34, 18, 10))
+
+    _trazo(p, oscuro, 5.5)                                  # diadema
+    diadema = QtGui.QPainterPath()
+    diadema.moveTo(16, 56); diadema.cubicTo(14, 12, 86, 12, 84, 56)
+    p.drawPath(diadema)
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(oscuro)                                      # orejeras
+    p.drawRoundedRect(QtCore.QRectF(6, 48, 15, 22), 7, 7)
+    p.drawRoundedRect(QtCore.QRectF(79, 48, 15, 22), 7, 7)
+    p.setBrush(color.lighter(135))
+    p.drawRoundedRect(QtCore.QRectF(9, 53, 6, 12), 3, 3)
+    p.drawRoundedRect(QtCore.QRectF(85, 53, 6, 12), 3, 3)
+    _trazo(p, oscuro, 2.6)                                  # microfono
+    brazo = QtGui.QPainterPath()
+    brazo.moveTo(84, 66); brazo.quadTo(80, 82, 64, 80)
+    p.drawPath(brazo)
+    p.setPen(QtCore.Qt.NoPen)
+    p.setBrush(oscuro)
+    p.drawEllipse(QtCore.QPointF(62, 80), 3.4, 3.0)
+
+    p.setBrush(MEJILLA)
+    p.drawEllipse(QtCore.QPointF(29, 71), 6, 3.8)
+    p.drawEllipse(QtCore.QPointF(71, 71), 6, 3.8)
+    _boca(p, boca_abierta)
+    for x in _OJOS:
+        _ojo(p, x, _OJO_Y, expresion)
     p.restore()
 
 
-def pixmap(personaje, color, px, expresion=ABIERTOS):
-    """QPixmap del personaje a px logicos, nitido a la escala de la pantalla."""
+def pixmap(color, px, expresion=ABIERTOS):
+    """QPixmap de la mascota a px logicos, nitido a la escala de la pantalla."""
     app = QtGui.QGuiApplication.instance()
     scr = app.primaryScreen() if app is not None else None
     dpr = max(1.0, float(scr.devicePixelRatio())) if scr is not None else 2.0
@@ -302,29 +182,27 @@ def pixmap(personaje, color, px, expresion=ABIERTOS):
     pm.setDevicePixelRatio(dpr)
     pm.fill(QtCore.Qt.transparent)
     p = QtGui.QPainter(pm)
-    pintar(p, QtCore.QRectF(0, 0, px, px), personaje, color, expresion)
+    pintar(p, QtCore.QRectF(0, 0, px, px), color, expresion)
     p.end()
     return pm
 
 
 def de_agente(agente):
-    """(personaje, color) validos de un agente."""
-    personaje = agente.get("personaje")
+    """El color valido de un agente."""
     color = agente.get("color")
-    return (personaje if personaje in PERSONAJES else PERSONAJE_POR_DEFECTO,
-            color if color in HEX else COLOR_POR_DEFECTO)
+    return color if color in HEX else COLOR_POR_DEFECTO
 
 
 class Avatar(QtWidgets.QWidget):
-    """El personaje como widget. Con 'vivo' respira, parpadea y reacciona a su
+    """La mascota como widget. Con 'vivo' respira, parpadea y reacciona a su
     estado (set_estado) y al nivel de audio (set_nivel); sin 'vivo' es una
     imagen fija con la expresion de set_expresion."""
     clicked = QtCore.Signal()
     _FPS_MS = 33               # ~30 fotogramas por segundo mientras se ve
 
-    def __init__(self, personaje, color, lado=64, vivo=False, alegre_al_pasar=False):
+    def __init__(self, color, lado=64, vivo=False, alegre_al_pasar=False):
         super().__init__()
-        self.personaje, self.color = personaje, color
+        self.color = color
         self.expresion = ABIERTOS
         self.vivo = vivo
         self.alegre_al_pasar = alegre_al_pasar
@@ -342,8 +220,8 @@ class Avatar(QtWidgets.QWidget):
         self._ultimo = None
 
     # ---------------------------------------------------------- estado
-    def set_personaje(self, personaje, color):
-        self.personaje, self.color = personaje, color
+    def set_color(self, color):
+        self.color = color
         self.update()
 
     def set_expresion(self, expresion):
@@ -420,7 +298,7 @@ class Avatar(QtWidgets.QWidget):
         # Margen para el bote y los puntitos, que se salen del cuerpo.
         m = self.width() * (0.08 if self.vivo else 0.0)
         pintar(p, QtCore.QRectF(self.rect()).adjusted(m, m, -m, -m),
-               self.personaje, self.color, **self.pose())
+               self.color, **self.pose())
         p.end()
 
     def enterEvent(self, e):

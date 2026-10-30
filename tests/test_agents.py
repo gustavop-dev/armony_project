@@ -199,24 +199,23 @@ def test_notetaker_has_no_screens_and_always_notes(agente, capturas, notas):
     assert (agents.usa_capturas(agente), agents.toma_notas(agente)) == (capturas, notas)
 
 
-def test_every_preset_has_its_own_face():
-    caras = [(agents.preset(p)["personaje"], agents.preset(p)["color"]) for p in agents.PRESETS]
+def test_every_preset_has_its_own_colour():
+    colores = [agents.preset(p)["color"] for p in agents.PRESETS]
 
-    assert len(set(caras)) == len(caras)
+    assert len(set(colores)) == len(colores)
 
 
-def test_new_agents_rotate_faces():
+def test_new_agents_rotate_colours():
     lista = agents.list_agents()
     uno = agents.nuevo(lista)
     dos = agents.nuevo(lista + [uno])
 
-    assert (uno["personaje"], uno["color"]) != (dos["personaje"], dos["color"])
+    assert uno["color"] != dos["color"]
 
 
-def test_face_survives_a_round_trip():
+def test_colour_survives_a_round_trip():
     lista = agents.list_agents()
-    lista[0].update(personaje="oso", color="lavanda")
+    lista[0]["color"] = "lavanda"
     agents.write_all(lista)
 
-    c = agents.get("coach")
-    assert (c["personaje"], c["color"]) == ("oso", "lavanda")
+    assert agents.get("coach")["color"] == "lavanda"

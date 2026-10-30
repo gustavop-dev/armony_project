@@ -323,12 +323,12 @@ agente y, como título, lo primero que preguntaron.
 ## Agentes: quién te sopla
 
 Un agente es una personalidad del coach con su system prompt **entero y editable**,
-y con su **personaje**: una cara minimalista (Gota, Gato, Robot, Fantasma, Búho,
-Zorro, Nube u Oso) en uno de ocho colores. Sale en la barra lateral y en grande en su
-página, donde respira, parpadea y se alegra si le pasas el ratón. Se cambia
-pulsando el personaje.
+y con la **mascota de Armony** en su color: un bichito tipo mochi con auriculares
+de reunión (uno de ocho colores por agente). Sale en la barra lateral y en grande en
+su página, donde respira, parpadea y se alegra si le pasas el ratón. El color se
+cambia pulsando la mascota.
 
-En la reunión es tu **compañero**, en la cabecera del panel hablado (en lugar de
+En la reunión la mascota es tu **compañera**, en la cabecera del panel hablado (en lugar de
 las barras de audio): **bota con la voz** del entrevistador, **piensa** (mira arriba
 con tres puntitos) mientras se prepara la respuesta, **mueve la boca** mientras se
 escribe y pone **ojitos felices** con un saltito al terminarla.

@@ -709,43 +709,38 @@ def test_failed_notes_are_explained(make_home):
         "No se pudieron generar las notas")
 
 
-# ------------------------------------------------------------------ characters
-def test_agent_page_shows_its_character(make_home):
+# ------------------------------------------------------------------ mascot colour
+def test_agent_page_shows_its_mascot(make_home):
     win = make_home(agent="grok")
 
-    cara = _find(win, avatares.Avatar, "cara")
-
-    assert (cara.personaje, cara.color) == ("zorro", "coral")
+    assert _find(win, avatares.Avatar, "cara").color == "coral"
 
 
-def test_picking_a_character_and_colour_is_saved(make_home, monkeypatch):
+def test_picking_a_colour_is_saved(make_home, monkeypatch):
     win = make_home(agent="grok")
-    monkeypatch.setattr(win, "_elegir_personaje", lambda p, c, n: ("oso", "lavanda"))
+    monkeypatch.setattr(win, "_elegir_color", lambda c, n: "lavanda")
 
-    win.cambiar_personaje("grok")
+    win.cambiar_color("grok")
     win.guardar_ya()
 
-    g = agents.get("grok")
-    assert (g["personaje"], g["color"]) == ("oso", "lavanda")
-    assert win._filas_agente["grok"]._cara == ("oso", "lavanda")
+    assert agents.get("grok")["color"] == "lavanda"
+    assert win._filas_agente["grok"]._cara == "lavanda"
 
 
 def test_cancelled_picker_changes_nothing(make_home, monkeypatch):
     win = make_home(agent="grok")
-    monkeypatch.setattr(win, "_elegir_personaje", lambda p, c, n: None)
+    monkeypatch.setattr(win, "_elegir_color", lambda c, n: None)
 
-    win.cambiar_personaje("grok")
+    win.cambiar_color("grok")
 
     assert win._dirty is False
 
 
-def test_picker_previews_the_choice(qtbot):
-    dialogo = hw.ElegirPersonaje("gota", "pervinca", "Coach")
+def test_picker_previews_the_colour(qtbot):
+    dialogo = hw.ElegirColor("pervinca", "Coach")
     qtbot.addWidget(dialogo)
 
-    qtbot.mouseClick(dialogo.findChild(QtWidgets.QAbstractButton, "personaje-robot"), LEFT)
     qtbot.mouseClick(dialogo.findChild(QtWidgets.QAbstractButton, "color-menta"), LEFT)
 
-    assert (dialogo.personaje, dialogo.color) == ("robot", "menta")
-    assert (dialogo.vista.personaje, dialogo.vista.color) == ("robot", "menta")
-    assert dialogo._personajes["robot"].isChecked() and not dialogo._personajes["gota"].isChecked()
+    assert (dialogo.color, dialogo.vista.color) == ("menta", "menta")
+    assert dialogo._colores["menta"].isChecked() and not dialogo._colores["pervinca"].isChecked()
