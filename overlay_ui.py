@@ -609,30 +609,40 @@ class CodeBlock(QtWidgets.QFrame):
 
         cuerpo = QtWidgets.QLabel()
         coloreado = None if self.prosa else richtext.resaltar(codigo, lenguaje, numerar=True)
-        if self.prosa:
-            # Sin numeros de linea y con espacios normales: se parte por el ancho.
-            cuerpo.setTextFormat(QtCore.Qt.RichText)
-            cuerpo.setText(f'<div style="font-family:{T.MONO_STACK}; font-size:12.5px; '
-                           f'line-height:150%;">{richtext.resaltar_markdown(codigo)}</div>')
-        elif coloreado:
-            # &nbsp; y <br> conservan sangria y saltos, que es lo unico que hace
-            # legible el codigo, y ademas cada token va con su color.
-            cuerpo.setTextFormat(QtCore.Qt.RichText)
-            cuerpo.setText(f'<div style="font-family:{T.MONO_STACK}; '
-                           f'font-size:12.5px; line-height:145%;">{coloreado}</div>')
-        else:
-            cuerpo.setTextFormat(QtCore.Qt.PlainText)   # respeta saltos y espacios
-            cuerpo.setText(codigo)
-            cuerpo.setStyleSheet(f"font-family: {T.MONO_STACK}; font-size: 12.5px; "
-                                 f"color: {T.TEXT_BRIGHT};")
+        # white-space:pre-wrap respeta sangria y espacios pero parte las lineas
+        # largas por el ancho del panel: nunca hace falta desplazarse en
+        # horizontal (el comentario de cada linea va encima, asi que son cortas).
+        self.cuerpo = cuerpo
+        self._lenguaje = lenguaje
+        cuerpo.setTextFormat(QtCore.Qt.RichText)
+        self._pintar(codigo, coloreado)
         cuerpo.setWordWrap(True)
-        cuerpo.setStyleSheet(cuerpo.styleSheet() +
-                             "background: transparent; padding: 9px 11px;")
+        cuerpo.setStyleSheet("background: transparent; padding: 9px 11px;")
         # Seleccionable solo si el panel lo pide (Burbuja), para preguntar por
         # un trozo; siempre con la flecha: el cursor de texto se veria al
         # compartir pantalla aunque la ventana no. Copiar entero: el boton.
-        self.cuerpo = cuerpo
         lay.addWidget(cuerpo)
+
+    def _pintar(self, codigo, coloreado=None):
+        if self.prosa:
+            # Sin numeros de linea: un prompt se lee como texto.
+            html_ = richtext.resaltar_markdown(codigo)
+            alto = "150%"
+        else:
+            if coloreado is None:
+                coloreado = richtext.resaltar(codigo, self._lenguaje, numerar=True)
+            html_ = coloreado or (f'<span style="color:{T.TEXT_BRIGHT};">'
+                                  f'{html.escape(codigo)}</span>')
+            alto = "145%"
+        self.cuerpo.setText(f'<div style="font-family:{T.MONO_STACK}; font-size:12.5px; '
+                            f'line-height:{alto}; white-space:pre-wrap;">{html_}</div>')
+
+    def set_codigo(self, codigo):
+        """El codigo que sigue llegando: se repinta en el mismo bloque, sin
+        rehacerlo (rehacerlo lo dejaba en blanco un instante en cada trozo)."""
+        if codigo != self._codigo:
+            self._codigo = codigo
+            self._pintar(codigo)
 
     def _copiar(self):
         QtWidgets.QApplication.clipboard().setText(self._codigo)
@@ -724,6 +734,7 @@ class Burbuja(QtWidgets.QFrame):
         self._raw = ""
         self._label = None                       # etiqueta reutilizada del texto
         self.copy_buttons = []
+        self._items, self._ws = [], []           # lo pintado de la respuesta
         mio = quien in ("tu", "respuesta")
         self.setStyleSheet(f"""
             Burbuja {{
@@ -773,6 +784,7 @@ class Burbuja(QtWidgets.QFrame):
     def _vaciar(self):
         self.copy_buttons = []
         self._label = None
+        self._items, self._ws = [], []
         while self.cuerpo.count():
             it = self.cuerpo.takeAt(0)
             w = it.widget()
@@ -802,32 +814,89 @@ class Burbuja(QtWidgets.QFrame):
     def set_markdown(self, raw, pintor):
         """Respuesta del modelo: secciones, codigo, listas, tablas...
 
+        Mientras llega se llama en cada trozo. Antes se rehacia todo cada vez:
+        durante un instante el globo quedaba vacio y con respuestas largas (y el
+        codigo coloreado de nuevo en cada trozo) se volvia ilegible. Ahora lo
+        ya pintado se queda: solo se actualiza el bloque que crece y se anaden
+        los nuevos.
+
         pintor (el panel) da los widgets de cada tipo de bloque: _parrafo,
         _lista, _subtitulo, _tabla, _cita y _regla."""
         self._raw = raw
-        self._vaciar()
+        if self._label is not None:              # venia de texto llano
+            self._vaciar()
+        nuevos = []
         for etiqueta, bloques in richtext.parse_answer(raw):
-            self.cuerpo.addWidget(_tracked(etiqueta, 10, QtGui.QFont.Bold,
-                                           T.ACCENT_LABEL, 0.9, upper=True))
-            for bloque in bloques:
-                tipo = bloque[0]
-                if tipo == richtext.CODE:
-                    cb = CodeBlock(bloque[1], bloque[2], titulo=etiqueta)
-                    self.copy_buttons.append(cb.btn_copy)
-                    self._seleccionable(cb.cuerpo)
-                    self.cuerpo.addWidget(cb)
-                elif tipo == richtext.LIST:
-                    self.cuerpo.addWidget(self._seleccionable(pintor._lista(bloque[1])))
-                elif tipo == richtext.SUBHEAD:
-                    self.cuerpo.addWidget(self._seleccionable(pintor._subtitulo(bloque[1])))
-                elif tipo == richtext.TABLE:
-                    self.cuerpo.addWidget(self._seleccionable(pintor._tabla(bloque[1], bloque[2])))
-                elif tipo == richtext.QUOTE:
-                    self.cuerpo.addWidget(self._seleccionable(pintor._cita(bloque[1])))
-                elif tipo == richtext.RULE:
-                    self.cuerpo.addWidget(pintor._regla())
-                else:
-                    self.cuerpo.addWidget(self._seleccionable(pintor._parrafo(bloque[1])))
+            nuevos.append(("etiqueta", etiqueta, None))
+            nuevos.extend(("bloque", b, etiqueta) for b in bloques)
+        previos = self._items
+        comun = 0
+        while (comun < min(len(previos), len(nuevos))
+               and previos[comun] == nuevos[comun]):
+            comun += 1
+        desde = comun
+        if (comun < len(previos) and comun < len(nuevos)
+                and self._actualizar(comun, nuevos[comun], pintor)):
+            desde = comun + 1
+        for w in self._ws[desde:]:
+            self.cuerpo.removeWidget(w)
+            w.hide()
+            w.deleteLater()
+        self._ws = self._ws[:desde]
+        for item in nuevos[desde:]:
+            w = self._crear(item, pintor)
+            self.cuerpo.addWidget(w)
+            w.show()          # ya: esperar al show en cola dejaba un hueco
+            self._ws.append(w)
+        self._items = nuevos
+        self.copy_buttons = [w.btn_copy for w in self._ws if isinstance(w, CodeBlock)]
+
+    def _crear(self, item, pintor):
+        clase, valor, etiqueta = item
+        if clase == "etiqueta":
+            return _tracked(valor, 10, QtGui.QFont.Bold, T.ACCENT_LABEL, 0.9, upper=True)
+        tipo = valor[0]
+        if tipo == richtext.CODE:
+            cb = CodeBlock(valor[1], valor[2], titulo=etiqueta)
+            self._seleccionable(cb.cuerpo)
+            return cb
+        if tipo == richtext.RULE:
+            return pintor._regla()
+        return self._seleccionable(self._etiqueta_de(valor, pintor))
+
+    @staticmethod
+    def _etiqueta_de(bloque, pintor):
+        tipo = bloque[0]
+        if tipo == richtext.LIST:
+            return pintor._lista(bloque[1])
+        if tipo == richtext.SUBHEAD:
+            return pintor._subtitulo(bloque[1])
+        if tipo == richtext.TABLE:
+            return pintor._tabla(bloque[1], bloque[2])
+        if tipo == richtext.QUOTE:
+            return pintor._cita(bloque[1])
+        return pintor._parrafo(bloque[1])
+
+    def _actualizar(self, i, item, pintor):
+        """Pone el contenido nuevo en el widget que ya esta, si es del mismo
+        tipo. False si hay que cambiarlo por otro."""
+        previo, w = self._items[i], self._ws[i]
+        if previo[0] != "bloque" or item[0] != "bloque":
+            return False
+        antes, ahora = previo[1], item[1]
+        if antes[0] != ahora[0] or not isValid(w):
+            return False
+        if ahora[0] == richtext.CODE:
+            if (antes[1], previo[2]) != (ahora[1], item[2]):
+                return False                     # otro lenguaje u otra seccion
+            w.set_codigo(ahora[2])
+            return True
+        if ahora[0] == richtext.RULE:
+            return True
+        nueva = self._etiqueta_de(ahora, pintor)
+        w.setText(nueva.text())
+        nueva.deleteLater()
+        return True
 
     def _seleccionable(self, label):
         if self.seleccionable is not None:
@@ -1553,7 +1622,6 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         cont.setMinimumWidth(0)
         cont.setMaximumWidth(16777215)
         cont.resize(self.scroll.viewport().width(), cont.height())
-        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
 
     def interactive_widgets(self):
         """Zonas que responden al mouse: cabecera (mover), scroll, agarre y copiar.
@@ -1698,7 +1766,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         # con su comentario al final no cabe en un panel estrecho, y sin barra
         # ese trozo no habria forma de leerlo. Se apaga durante el arrastre (ver
         # _congelar_ancho), que ahi el ancho sobrante es un efecto pasajero.
-        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        # Nunca barra horizontal: el panel tiene su ancho y todo se parte a el
+        # (el codigo con pre-wrap y los comentarios encima de cada linea).
+        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         cont = QtWidgets.QWidget()
         cont.setStyleSheet("background: transparent;")
         self._cont = cont

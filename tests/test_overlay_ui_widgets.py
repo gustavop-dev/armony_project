@@ -348,8 +348,8 @@ def test_code_block_falls_back_to_plain_text(code_block, monkeypatch):
     cb = code_block("python", "a = 1\n    b = 2")
 
     body = cb.findChildren(QtWidgets.QLabel)[-1]
-    assert (body.textFormat(), body.text()) == (QtCore.Qt.PlainText,
-                                                "a = 1\n    b = 2")
+    assert "a = 1\n    b = 2" in body.text()
+    assert "white-space:pre-wrap" in body.text()
 
 
 @pytest.mark.parametrize("lang, color", [

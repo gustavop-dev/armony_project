@@ -60,6 +60,7 @@ DEFAULT_ID = "coach"
 _REGLAS_ANTERIORES = {
     "b678f93072d63b7a9024f700f6eb866fcecb6ebacba1db2a2178cd3ca834a2b3",   # hasta 5da77f9
     "3f972cb668a37c3abde39af7687a4411329258d870f9d30b856efbb90b992b21",   # a58a46b
+    "91b58b83d3a3e2b09a0194e77bc6b7c0870d032fe265404a24aad1620284a248",   # 9d2069c-153bbe1
 }
 
 

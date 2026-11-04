@@ -76,8 +76,7 @@ def shown_panel(qtbot, panel):
     panel.show()
     qtbot.waitExposed(panel)
     # Showing is itself a width change: let that resize settle first.
-    qtbot.waitUntil(lambda: panel.scroll.horizontalScrollBarPolicy()
-                    == QtCore.Qt.ScrollBarAsNeeded, timeout=2000)
+    qtbot.waitUntil(lambda: not panel._descongelar.isActive(), timeout=2000)
     return panel
 
 
@@ -284,33 +283,22 @@ def test_resize_grip_sits_in_bottom_right_corner(shown_panel):
         card.width() - 8, card.height() - 8)
 
 
-def test_width_change_hides_horizontal_scrollbar_while_dragging(shown_panel):
+def test_there_is_never_a_horizontal_scrollbar(qtbot, shown_panel):
+    """Content wraps to the panel width (code with pre-wrap), so the panel
+    never needs to be scrolled sideways, not even after resizing."""
     shown_panel.resize(700, 340)
+    qtbot.waitUntil(lambda: not shown_panel._descongelar.isActive(), timeout=2000)
 
     assert (shown_panel.scroll.horizontalScrollBarPolicy()
             == QtCore.Qt.ScrollBarAlwaysOff)
 
 
-def test_width_change_restores_horizontal_scrollbar_after_pause(qtbot, shown_panel):
-    shown_panel.resize(700, 340)
-
-    qtbot.waitUntil(lambda: shown_panel.scroll.horizontalScrollBarPolicy()
-                    == QtCore.Qt.ScrollBarAsNeeded, timeout=2000)
-
-
 def test_width_change_unfreezes_to_viewport_width(qtbot, shown_panel):
     shown_panel.resize(760, 340)
-    qtbot.waitUntil(lambda: shown_panel.scroll.horizontalScrollBarPolicy()
-                    == QtCore.Qt.ScrollBarAsNeeded, timeout=2000)
+    qtbot.waitUntil(lambda: not shown_panel._descongelar.isActive(), timeout=2000)
 
     assert shown_panel._cont.maximumWidth() == 16777215
-
-
-def test_height_change_keeps_horizontal_scrollbar_policy(shown_panel):
-    shown_panel.resize(640, 400)
-
-    assert (shown_panel.scroll.horizontalScrollBarPolicy()
-            == QtCore.Qt.ScrollBarAsNeeded)
+    assert shown_panel._cont.width() == shown_panel.scroll.viewport().width()
 
 
 def test_resize_grip_drag_grows_window(shown_panel):

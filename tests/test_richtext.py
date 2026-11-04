@@ -365,9 +365,9 @@ def test_resaltar_colours_python_tokens():
     # Assert
     assert salida == (
         '<span style="color:#efe7d5;">x</span>'
-        '<span style="color:#efe7d5;">&nbsp;</span>'
+        '<span style="color:#efe7d5;"> </span>'
         '<span style="color:#e2d9c2;">=</span>'
-        '<span style="color:#efe7d5;">&nbsp;</span>'
+        '<span style="color:#efe7d5;"> </span>'
         '<span style="color:#f2a06a;">1</span>'
     )
 
@@ -377,7 +377,7 @@ def test_resaltar_comment_is_italic():
     salida = resaltar("# hi", "python")
 
     # Assert
-    assert salida == '<span style="color:#7f7a6c;font-style:italic;">#&nbsp;hi</span>'
+    assert salida == '<span style="color:#7f7a6c;font-style:italic;"># hi</span>'
 
 
 def test_resaltar_escapes_html_in_code():
@@ -387,9 +387,9 @@ def test_resaltar_escapes_html_in_code():
     # Assert
     assert salida == (
         '<span style="color:#efe7d5;">a</span>'
-        '<span style="color:#efe7d5;">&nbsp;</span>'
+        '<span style="color:#efe7d5;"> </span>'
         '<span style="color:#e2d9c2;">&lt;</span>'
-        '<span style="color:#efe7d5;">&nbsp;</span>'
+        '<span style="color:#efe7d5;"> </span>'
         '<span style="color:#efe7d5;">b</span>'
     )
 
@@ -418,11 +418,11 @@ def test_resaltar_with_line_numbers_prefixes_number():
 
     # Assert
     assert salida == (
-        '<span style="color:#5c564a;">1&nbsp;&nbsp;&nbsp;</span>'
+        '<span style="color:#5c564a;">1   </span>'
         '<span style="color:#efe7d5;">x</span>'
-        '<span style="color:#efe7d5;">&nbsp;</span>'
+        '<span style="color:#efe7d5;"> </span>'
         '<span style="color:#e2d9c2;">=</span>'
-        '<span style="color:#efe7d5;">&nbsp;</span>'
+        '<span style="color:#efe7d5;"> </span>'
         '<span style="color:#f2a06a;">1</span>'
     )
 
@@ -436,7 +436,7 @@ def test_resaltar_line_numbers_are_right_aligned_to_widest():
 
     # Assert
     assert primera == (
-        '<span style="color:#5c564a;">&nbsp;1&nbsp;&nbsp;&nbsp;</span>'
+        '<span style="color:#5c564a;"> 1   </span>'
         '<span style="color:#efe7d5;">a</span>'
     )
 
@@ -450,7 +450,7 @@ def test_resaltar_widest_line_number_has_no_padding():
 
     # Assert
     assert ultima == (
-        '<span style="color:#5c564a;">10&nbsp;&nbsp;&nbsp;</span>'
+        '<span style="color:#5c564a;">10   </span>'
         '<span style="color:#efe7d5;">j</span>'
     )
 
@@ -464,7 +464,7 @@ def test_resaltar_guesses_lexer_when_language_missing_or_unknown(lenguaje):
     salida = resaltar(codigo, lenguaje)
 
     # Assert
-    assert salida == '<span style="color:#efe7d5;">x&nbsp;=&nbsp;1</span>'
+    assert salida == '<span style="color:#efe7d5;">x = 1</span>'
 
 
 @pytest.mark.parametrize("codigo", ["", "\n\n"])
@@ -676,7 +676,7 @@ def test_markdown_highlight_colours_headings_lists_bold_and_code():
     assert f'<b style="color:{COLORES_MD["marca"]};">-</b>' in html_
     assert f'<b style="color:{COLORES_MD["negrita"]};">**Stack**</b>' in html_
     assert f'<span style="color:{COLORES_MD["codigo"]};">`Django`</span>' in html_
-    assert "&nbsp;&nbsp;<b" in html_                      # nested item keeps indent
+    assert "<br>  <b" in html_                            # nested item keeps indent
     assert f'<i style="color:{COLORES_MD["cita"]};">nota</i>' in html_
 
 
@@ -686,7 +686,7 @@ def test_markdown_highlight_wraps_prose_but_not_inner_code():
     html_ = resaltar_markdown("texto con espacios\n```py\na = 1\n```")
 
     assert "texto con espacios" in html_                  # normal spaces: it wraps
-    assert "a&nbsp;=&nbsp;1" in html_                     # code inside keeps spacing
+    assert "a = 1" in html_                               # pre-wrap keeps spacing
 
 
 def test_markdown_highlight_escapes_html():

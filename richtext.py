@@ -296,8 +296,10 @@ def resaltar(codigo, lenguaje="", numerar=False):
                 if i:
                     lineas.append([])
                 if trozo:
-                    escapado = html.escape(trozo).replace(" ", "&nbsp;")
-                    lineas[-1].append(f'<span style="{estilo}">{escapado}</span>')
+                    # Espacios tal cual: el bloque va con white-space:pre-wrap,
+                    # que respeta la sangria y aun asi parte las lineas largas
+                    # por el ancho del panel (sin barra horizontal).
+                    lineas[-1].append(f'<span style="{estilo}">{html.escape(trozo)}</span>')
         while lineas and not lineas[-1]:      # el salto final sobra
             lineas.pop()
         if not lineas:
@@ -320,9 +322,9 @@ def _con_numeros(lineas):
     ancho = len(str(len(lineas)))
     salida = []
     for n, partes in enumerate(lineas, 1):
-        numero = str(n).rjust(ancho).replace(" ", "&nbsp;")
-        salida.append(f'<span style="color:{COLOR_NUMERO};">{numero}'
-                      f'&nbsp;&nbsp;&nbsp;</span>{"".join(partes)}')
+        numero = str(n).rjust(ancho)
+        salida.append(f'<span style="color:{COLOR_NUMERO};">{numero}   </span>'
+                      f'{"".join(partes)}')
     return "<br>".join(salida)
 
 
@@ -365,8 +367,10 @@ def _md_inline(texto):
 
 
 def _sangria(linea):
+    """(sangria, resto). La sangria va en espacios: el bloque se pinta con
+    white-space:pre-wrap, que la respeta y parte las lineas largas."""
     hueco = len(linea) - len(linea.lstrip(" \t"))
-    return "&nbsp;" * len(linea[:hueco].replace("\t", "    ")), linea[hueco:]
+    return " " * len(linea[:hueco].replace("\t", "    ")), linea[hueco:]
 
 
 def resaltar_markdown(texto):
@@ -382,7 +386,7 @@ def resaltar_markdown(texto):
             continue
         if valla is not None:                  # codigo dentro del prompt
             salida.append(f'<span style="color:{COLORES_MD["codigo"]};">'
-                          f'{hueco}{html.escape(resto).replace(" ", "&nbsp;")}</span>')
+                          f'{hueco}{html.escape(resto)}</span>')
             continue
         h = _ENCABEZADO.match(linea)
         if h:

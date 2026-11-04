@@ -85,8 +85,11 @@ _FORMATO_CODIGO = (
     "## Enfoque — como entiendes el problema y que estrategia vas a seguir, "
     "antes de escribir nada. Que se note el razonamiento, no solo el resultado.\n"
     "## Solución — el codigo COMPLETO y ejecutable en un bloque cercado con su "
-    "lenguaje. CADA LINEA lleva su comentario explicando que hace o para que "
-    "sirve; ni una linea suelta. Nada de '...' ni de recortes.\n"
+    "lenguaje. CADA LINEA de codigo lleva ENCIMA, en su propia linea, un "
+    "comentario que explica que hace o para que sirve; ni una linea suelta. "
+    "Nunca el comentario al final de la linea: el panel es estrecho y las lineas "
+    "tienen que ser cortas (menos de 70 caracteres; parte las expresiones "
+    "largas). Nada de '...' ni de recortes.\n"
     "## Cómo funciona — explicacion seguida, de tu a tu, de como consigue el "
     "resultado: por que ese orden, que invariante se mantiene, que casos borde "
     "cubre. Extiendete lo que haga falta; aqui quedarse corto es el error.\n"
@@ -187,7 +190,8 @@ _PERMITIR_SILENCIO = (
 MODO_MANUAL = (
     "MODO MANUAL: esto lo resuelvo yo a mano, sin IA. Si hay codigo que "
     "escribir, dame la solucion completa con la estructura de codigo: Enfoque, "
-    "Solución comentada linea a linea, Cómo funciona y Coste.")
+    "Solución con el comentario de cada linea ENCIMA de ella (lineas cortas), "
+    "Cómo funciona y Coste.")
 
 # IA: el reto se hace con un agente de codigo (Claude Code, Codex...). Lo que
 # sirve no es el codigo resuelto sino entender el problema, decidir, dirigir a
@@ -253,7 +257,8 @@ ESTILO_APARTE = {
     "manual": (
         "Modo manual: lo resuelvo yo a mano. Si es sobre codigo, senala el trozo "
         "exacto y explicalo linea a linea; si hay que cambiarlo, dame el codigo "
-        "corregido completo. Concreto y estructurado."),
+        "corregido completo, con el comentario de cada linea encima de ella. "
+        "Concreto y estructurado."),
     "ia": (
         "Modo IA: explicamelo como un mentor en un chat. Palabras llanas, el "
         "porque de cada decision, un ejemplo concreto (una tabla o un trozo de "
