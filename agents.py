@@ -320,10 +320,36 @@ def system_prompt(agente):
     if tono:
         texto += ("\n\n# Tono y estilo\nHabla como se describe aqui: es como "
                   "habla de verdad la persona a la que le soplas.\n\n" + tono)
+    autoria = _autoria_repos(agente)
+    if autoria:
+        texto += "\n\n" + autoria
     contexto = texto_conocimiento(agente)
     if contexto:
         texto += "\n\n# Contexto de esta reunion\n" + contexto
     return texto
+
+
+def _autoria_repos(agente):
+    """Los repos conectados son la implementacion de la persona: sin decirlo,
+    el modelo podia hablar de ellos como de un proyecto ajeno, o confundir
+    "tu solucion" con lo que hay en pantalla."""
+    nombres = [f"{d['repo'].get('owner', '')}/{d['repo'].get('nombre', '')}".strip("/")
+               for d in agente.get("conocimiento", [])
+               if isinstance(d.get("repo"), dict) and d.get("body", "").strip()]
+    if not nombres:
+        return ""
+    return (
+        "# Mi implementacion\n"
+        f"Los repositorios de mas abajo ({', '.join(nombres)}) son MI implementacion: "
+        "los hice yo. Cuando en la reunion pregunten por 'tu solucion', 'tu codigo', "
+        "'tu proyecto', 'por que implementaste X' o 'como hiciste Y', se refieren a "
+        "ellos, salvo que hablen claramente de lo que tengo en pantalla (lo que te "
+        "paso como 'Mi pantalla'). Responde como su autor, en primera persona: la "
+        "decision, su porque y la alternativa que descarte, con lo que dice la "
+        "memoria del repositorio. Si la memoria no lo cubre, no inventes: di lo que "
+        "se ve en el codigo y como lo comprobarias. Si no esta claro si preguntan por "
+        "el repositorio o por la pantalla, responde por lo mas reciente de la "
+        "conversacion y deja ver a cual te refieres.")
 
 
 def nuevo_documento(agente, nombre="Nuevo documento"):

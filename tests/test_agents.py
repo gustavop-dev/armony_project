@@ -263,3 +263,27 @@ def test_untouched_old_default_rules_follow_the_app(isolated_data_dir, monkeypat
 
 def test_rules_know_the_solving_modes():
     assert "MODO IA" in REGLAS and "PREGUNTA APARTE" in REGLAS
+
+
+# ------------------------------------------------- connected repos are mine
+def _con_repo(body="# Repositorio gus/acme\\nmemoria"):
+    agente = agents.preset("coach")
+    agente["conocimiento"] = [
+        {"id": "doc-1", "name": "Repo · gus/acme", "body": body,
+         "repo": {"id": "gus__acme__main", "owner": "gus", "nombre": "acme"}},
+        {"id": "doc-2", "name": "CV", "body": "Backend"}]
+    return agente
+
+
+def test_repos_are_presented_as_my_implementation_before_the_knowledge():
+    texto = agents.system_prompt(_con_repo())
+
+    autoria = texto.index("# Mi implementacion")
+    assert autoria < texto.index("# Contexto de esta reunion")
+    assert "(gus/acme) son MI implementacion" in texto
+    assert "'por que implementaste X'" in texto and "'Mi pantalla'" in texto
+
+
+def test_no_authorship_note_without_a_synced_repo():
+    assert "# Mi implementacion" not in agents.system_prompt(_con_repo(body=""))
+    assert "# Mi implementacion" not in agents.system_prompt(agents.preset("coach"))
