@@ -40,8 +40,9 @@ def set_click_through(hwnd, enabled: bool) -> bool:
         return False
 
 
-def set_no_activate(hwnd) -> bool:
-    """Impide que la ventana tome el foco al pulsarla.
+def set_no_activate(hwnd, activo=True) -> bool:
+    """Impide (activo=False lo vuelve a permitir) que la ventana tome el foco
+    al pulsarla.
 
     Comportamiento estandar de cualquier overlay (Discord, Steam, OBS): pulsar un
     boton del overlay no debe sacar el foco de la aplicacion en la que estas
@@ -51,8 +52,8 @@ def set_no_activate(hwnd) -> bool:
         u32 = ctypes.windll.user32
         u32.GetWindowLongW.restype = ctypes.c_long
         actual = u32.GetWindowLongW(int(hwnd), GWL_EXSTYLE)
-        return bool(u32.SetWindowLongW(int(hwnd), GWL_EXSTYLE,
-                                       actual | WS_EX_NOACTIVATE))
+        nuevo = (actual | WS_EX_NOACTIVATE) if activo else (actual & ~WS_EX_NOACTIVATE)
+        return bool(u32.SetWindowLongW(int(hwnd), GWL_EXSTYLE, nuevo))
     except Exception:
         return False
 

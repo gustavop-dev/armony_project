@@ -141,7 +141,7 @@ def test_explain_stays_inside_the_panel(screen, qtbot):
 
 # ------------------------------------------------------------------ the ask box
 def test_quoting_starts_the_question_with_the_fragment(qtbot):
-    ask = overlay_ui.AskPanel()
+    ask = overlay_ui.TranscriptPanel()
     qtbot.addWidget(ask)
 
     ask.citar("select_for_update")
@@ -152,7 +152,7 @@ def test_quoting_starts_the_question_with_the_fragment(qtbot):
 
 
 def test_quoting_never_overwrites_what_you_were_typing(qtbot):
-    ask = overlay_ui.AskPanel()
+    ask = overlay_ui.TranscriptPanel()
     qtbot.addWidget(ask)
     ask.entrada.setPlainText("mi pregunta a medias")
 
@@ -163,7 +163,7 @@ def test_quoting_never_overwrites_what_you_were_typing(qtbot):
 
 
 def test_overlay_controls_keep_the_arrow_cursor(qtbot):
-    ask = overlay_ui.AskPanel()
+    ask = overlay_ui.TranscriptPanel()
     qtbot.addWidget(ask)
 
     assert ask.entrada.viewport().cursor().shape() == QtCore.Qt.ArrowCursor

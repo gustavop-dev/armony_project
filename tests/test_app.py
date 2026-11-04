@@ -56,7 +56,19 @@ class FakeEngine(QtCore.QObject):
     def set_resolucion(self, modo):
         self.resoluciones.append(modo)
         self.resolucion = modo
+        return True
+
+    @property
+    def hay_solucion(self):
         return self.redo
+
+    def rehacer_pantalla(self):
+        self.redos = getattr(self, "redos", 0) + 1
+        return self.redo
+
+    def resolver_hablado(self):
+        self.spoken = getattr(self, "spoken", 0) + 1
+        return getattr(self, "spoken_text", "")
 
     def preguntar(self, texto):
         self.questions.append(texto)
@@ -102,6 +114,39 @@ class FakeWheel:
         self.zones = zones
 
 
+class FakeRaton(QtCore.QObject):
+    """The blue mouse without its low-level hook."""
+    cambiado = QtCore.Signal(bool)
+
+    def __init__(self, ventanas, al_rodar=None):
+        super().__init__()
+        self.ventanas = ventanas
+        self.al_rodar = al_rodar
+        self.cursor = QtWidgets.QWidget()
+        self.activo = False
+        self.installed = False
+
+    def instalar(self):
+        self.installed = True
+
+    def desinstalar(self):
+        self.installed = False
+
+    def activar(self):
+        if not self.activo:
+            self.activo = True
+            self.cambiado.emit(True)
+
+    def desactivar(self):
+        if self.activo:
+            self.activo = False
+            self.cambiado.emit(False)
+
+    def alternar(self):
+        self.desactivar() if self.activo else self.activar()
+        return self.activo
+
+
 class FakeScreen:
     def __init__(self, pixmap):
         self.pixmap = pixmap
@@ -128,10 +173,13 @@ def cfg():
 def native(monkeypatch):
     calls = {"capture": [], "activate": [], "click": []}
     monkeypatch.setattr(app, "WheelForwarder", FakeWheel)
+    monkeypatch.setattr(app, "SegundoRaton", FakeRaton)
     monkeypatch.setattr(app, "set_capture_protection",
                         lambda handle, active: calls["capture"].append((int(handle), active)))
+    calls["deactivate"] = []
     monkeypatch.setattr(app, "set_no_activate",
-                        lambda handle: calls["activate"].append(int(handle)))
+                        lambda handle, on=True: (calls["activate"] if on
+                                                 else calls["deactivate"]).append(int(handle)))
     monkeypatch.setattr(app, "set_click_through",
                         lambda handle, active: calls["click"].append((int(handle), active)))
     calls["front"], calls["back"] = [], []
@@ -155,7 +203,7 @@ def ui(qtbot, monkeypatch, cfg, native, tmp_path):
     monkeypatch.setattr(app.cfg_mod, "load_config", lambda: dict(cfg))
     controller = app.OverlayApp()
     for widget in (controller.top, controller.panel, controller.screen,
-                   controller.collapsed, controller.home, controller.ask):
+                   controller.collapsed, controller.home, controller.raton.cursor):
         qtbot.addWidget(widget)
     controller._ct_timer.stop()
     yield controller
@@ -352,7 +400,8 @@ class TestActions:
 
         ui.generate()
 
-        assert ui.panel.skip_pill.text() == "Take a screenshot first (Caps+S)"
+        assert ui.panel.skip_pill.text() == ("Take a screenshot first (Caps+S) — or "
+                                             "Caps+R to solve what they said")
         assert ui.engine.screenshots == []
 
     def test_generate_transfers_snapshot(self, ui):
@@ -646,11 +695,10 @@ class TestWindows:
 
     def test_constructor_protects_all_windows(self, ui, native):
         """Catch a new overlay window missing capture protection or no-activate styling."""
-        ventanas = [int(w.winId()) for w in (ui.top, ui.panel, ui.screen, ui.collapsed)]
-        caja = int(ui.ask.winId())
-        assert native["capture"] == ([(w, True) for w in ventanas] + [(caja, True)]
+        ventanas = [int(w.winId()) for w in (ui.top, ui.panel, ui.screen, ui.collapsed,
+                                             ui.raton.cursor)]
+        assert native["capture"] == ([(w, True) for w in ventanas]
                                      + [(int(ui.home.winId()), True)])
-        # The ask box is the one overlay window you type in: it may take focus.
         assert native["activate"] == ventanas
         assert ui.wheel.installed is True
 
@@ -751,9 +799,12 @@ class TestDualOverlay:
 
         voz, pant = self._columns(ui)
         assert ui._modo_pantalla is True and ui.screen.isVisible() is True
+        # Both fill the screen side to side: no empty column in the middle.
+        hueco = 1920 - 3 * T.SIDE_MARGIN
         assert voz.left() == T.SIDE_MARGIN
+        assert voz.width() == round(hueco * app.PROPORCION_VOZ)
+        assert pant.left() == voz.right() + 1 + T.SIDE_MARGIN
         assert pant.right() == 1920 - T.SIDE_MARGIN - 1
-        assert pant.width() == T.SCREEN_WIDTH
         assert voz.top() == pant.top() and voz.height() == pant.height()
         # The thumbnail goes to the screen panel, not to the conversation.
         assert ui.screen.feed.count() == rows_pant + 1
@@ -791,9 +842,11 @@ class TestDualOverlay:
         ui.set_screen_mode(True)
 
         ui.engine.screenSuggest.emit("Hay un error en el bucle.")
-        chip = ui.screen.relanzar_chip
-        assert chip.isVisible() and "Hay un error en el bucle." in chip.text()
-        assert chip in ui.screen.interactive_widgets()
+        # Offered in the spoken panel, where you look while they talk.
+        chip = ui.panel.relanzar_chip
+        assert chip.isVisible() and chip.texto == "Hay un error en el bucle."
+        assert chip in ui.panel.interactive_widgets()
+        assert ui.screen.relanzar_chip.isVisible() is False
 
         chip.click()
 
@@ -815,7 +868,7 @@ class TestDualOverlay:
 
         ui.engine.screenSuggest.emit("")
 
-        assert ui.screen.relanzar_chip.isVisible() is False
+        assert ui.panel.relanzar_chip.isVisible() is False
 
     def test_closing_the_screen_panel_returns_the_spoken_panel_right(self, ui, screen_1080p):
         ui.start_meeting()
@@ -876,12 +929,12 @@ class TestDualOverlay:
         ui.engine.screenSuggest.emit("Hay un error en el bucle; " * 20)
         QtWidgets.QApplication.processEvents()
 
-        _voz, pant = self._columns(ui)
+        voz, pant = self._columns(ui)
 
-        assert pant.width() == T.SCREEN_WIDTH
+        assert voz.width() == round((1920 - 3 * T.SIDE_MARGIN) * app.PROPORCION_VOZ)
         assert pant.right() <= 1920 - T.SIDE_MARGIN - 1
-        assert "…" in ui.screen.relanzar_chip.text()
-        assert ui.screen.relanzar_chip.toolTip().startswith("Hay un error en el bucle;")
+        assert "…" in ui.panel.relanzar_chip.text()
+        assert ui.panel.relanzar_chip.toolTip().startswith("Hay un error en el bucle;")
 
 
 class TestAgents:
@@ -950,7 +1003,7 @@ class TestGlass:
 
         ui._apply_opacity()
 
-        assert llamadas == [round(0.15 + 0.65 * 0.75, 4)] * 5
+        assert llamadas == [round(0.15 + 0.65 * 0.75, 4)] * 4
         assert ui.panel.windowOpacity() == 1.0
 
     def test_without_glass_opacity_dims_the_whole_window(self, ui):
@@ -1054,200 +1107,168 @@ class TestShortcutsOnlyInMeetings:
 
         ui.start_meeting()
 
-        assert ui.panel.skip_pill.text() == "Caps Lock shortcuts unavailable — use Alt+1…7 (in use: Alt+2)"
+        assert ui.panel.skip_pill.text() == "Caps Lock shortcuts unavailable — use Alt+1…9 (in use: Alt+2)"
 
 
-class TestAskBox:
-    """Caps+E: a typed question under the spoken panel, a quarter of the screen."""
-
-    @pytest.fixture
-    def screen_1080p(self, monkeypatch):
-        pixmap = QtGui.QPixmap(800, 400)
-        pixmap.fill(QtGui.QColor("white"))
-        fake = FakeScreen(pixmap)
-        monkeypatch.setattr(QtWidgets.QApplication, "primaryScreen",
-                            staticmethod(lambda: fake))
-        return fake
+class TestTypedQuestions:
+    """Caps+E: the question field lives in the spoken panel; the answer opens
+    on the big panel, under the question."""
 
     @pytest.fixture
-    def meeting(self, ui, screen_1080p):
+    def meeting(self, ui):
         ui.start_meeting()
-        ui._place_columns()
         yield ui
         QtWidgets.QApplication.processEvents()
+
+    @pytest.fixture
+    def activations(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(app, "set_no_activate",
+                            lambda handle, on=True: calls.append((int(handle), on)))
+        return calls
 
     def test_does_nothing_outside_a_meeting(self, ui, native):
         ui.toggle_ask()
 
-        assert ui.ask.isVisible() is False and native["front"] == []
+        assert native["front"] == [] and ui._escribiendo is False
 
-    def test_opens_under_the_spoken_panel_with_a_quarter_of_the_screen(self, meeting, native):
+    def test_caps_e_gives_the_spoken_panel_the_keyboard(self, meeting, native, activations):
         ui = meeting
-        antes = ui.panel.geometry()
 
         ui.toggle_ask()
 
-        voz, caja = ui.panel.geometry(), ui.ask.geometry()
-        assert ui.ask.isVisible() is True
-        assert (caja.left(), caja.width()) == (antes.left(), antes.width())
-        assert voz.top() == antes.top()
-        assert caja.height() == 1080 // 4
-        assert caja.top() == voz.bottom() + 1 + T.COLUMN_GAP
-        assert caja.bottom() == antes.bottom()          # the column keeps its length
-        assert native["front"] == [int(ui.ask.winId())]  # it takes the keyboard
+        assert ui._escribiendo is True
+        assert activations == [(int(ui.panel.winId()), False)]   # may take focus now
+        assert native["front"] == [int(ui.panel.winId())]
 
-    def test_closing_gives_the_height_back_and_the_keyboard_too(self, meeting, native, monkeypatch):
+    def test_esc_gives_the_keyboard_back_and_stops_stealing_focus(self, meeting, native,
+                                                                 activations, monkeypatch):
         ui = meeting
-        antes = ui.panel.geometry()
         ui.toggle_ask()
-        monkeypatch.setattr(ui.ask, "tiene_foco", lambda: True)
+        monkeypatch.setattr(ui.panel, "isActiveWindow", lambda: True)
 
-        ui.toggle_ask()
+        ui.panel.entradaSalir.emit()
 
-        assert ui.ask.isVisible() is False
-        assert ui.panel.geometry() == antes
+        assert ui._escribiendo is False
         assert native["back"] == [4242]
+        assert activations[-1] == (int(ui.panel.winId()), True)
 
-    def test_caps_e_on_an_open_box_without_focus_focuses_it(self, meeting, native, monkeypatch):
+    def test_caps_e_again_while_typing_gives_the_keyboard_back(self, meeting, native,
+                                                               monkeypatch):
         ui = meeting
         ui.toggle_ask()
-        monkeypatch.setattr(ui.ask, "tiene_foco", lambda: False)
+        monkeypatch.setattr(ui.panel, "tiene_foco", lambda: True)
+        monkeypatch.setattr(ui.panel, "isActiveWindow", lambda: True)
 
         ui.toggle_ask()
 
-        assert ui.ask.isVisible() is True
-        assert native["front"] == [int(ui.ask.winId())] * 2
-        assert native["back"] == []
+        assert ui._escribiendo is False and native["back"] == [4242]
 
-    def test_close_button_closes_without_stealing_focus_back(self, meeting, native):
-        ui = meeting
-        antes = ui.panel.geometry()
-        ui.toggle_ask()
-
-        ui.ask.closeClicked.emit()
-
-        assert ui.ask.isVisible() is False and ui.panel.geometry() == antes
-        assert native["back"] == []          # the box did not have the keyboard
-
-    def test_box_follows_the_spoken_panel_when_a_screenshot_moves_it(self, meeting):
-        ui = meeting
-        ui.toggle_ask()
-
-        ui.take_shot()
-
-        voz, caja = ui.panel.geometry(), ui.ask.geometry()
-        assert voz.left() == T.SIDE_MARGIN and caja.left() == T.SIDE_MARGIN
-        assert caja.top() == voz.bottom() + 1 + T.COLUMN_GAP
-        assert caja.height() == 1080 // 4
-
-    def test_ending_the_meeting_closes_the_box_and_restores_the_column(self, meeting, native):
-        ui = meeting
-        antes = ui.panel.geometry()
-        ui.toggle_ask()
-
-        ui.stop_meeting()
-
-        assert ui.ask.isVisible() is False
-        assert ui.panel.geometry().height() == antes.height()
-        assert native["back"] == []
-
-    def test_hiding_the_overlay_hides_the_box_and_brings_it_back(self, meeting):
-        ui = meeting
-        ui.toggle_ask()
-
-        ui.toggle_overlay()
-        assert ui.ask.isVisible() is False
-
-        ui.toggle_overlay()
-        assert ui.ask.isVisible() is True
-
-    def test_question_goes_to_the_engine_and_shows_in_the_box(self, meeting):
+    def test_clicking_the_field_takes_the_keyboard(self, meeting, native):
         ui = meeting
 
-        ui.ask.submitted.emit("¿Por qué O(n)?")
+        ui.panel.entradaPulsada.emit()
 
-        assert ui.engine.questions == ["¿Por qué O(n)?"]
-        assert [b.quien for b in ui.ask._burbujas] == ["pregunta"]
-        assert ui.ask.badge._lbl.text() == "Thinking…"
-        assert ui.ask._state == "generating"
+        assert ui._escribiendo is True and native["front"] == [int(ui.panel.winId())]
 
-    def test_answer_streams_into_the_box(self, meeting, qtbot):
+    def test_question_shows_on_the_big_panel_and_goes_to_the_engine(self, meeting):
         ui = meeting
-        ui.ask.submitted.emit("¿Por qué O(n)?")
+
+        ui.panel.submitted.emit("¿Y si lo hago recursivo?")
+
+        assert ui.engine.questions == ["¿Y si lo hago recursivo?"]
+        assert ui._modo_pantalla is True and ui.screen.isVisible()
+        assert [b.quien for b in ui.screen._burbujas] == ["pregunta"]
+        assert ui.panel._burbujas == []
+        assert ui.screen.badge._lbl.text() == "Thinking…"
+
+    def test_answer_streams_into_the_big_panel(self, meeting, qtbot):
+        ui = meeting
+        ui.panel.submitted.emit("¿Y si lo hago recursivo?")
 
         ui.engine.askStart.emit()
-        ui.engine.askDelta.emit("## Respuesta\nUna pasada.")
+        ui.engine.askDelta.emit("## Respuesta\nAsí.")
         ui.engine.askDone.emit()
 
-        assert [b.quien for b in ui.ask._burbujas] == ["pregunta", "respuesta"]
-        assert ui.ask._burbujas[-1]._raw == "## Respuesta\nUna pasada."
-        assert ui.ask.badge._lbl.text() == "Ready"
-        qtbot.wait(5)
-
-    def test_box_grows_to_half_the_column_when_an_answer_arrives(self, meeting, native,
-                                                                  monkeypatch, qtbot):
-        ui = meeting
-        columna = ui.panel.geometry()
-        ui.toggle_ask()
-        ui.ask.submitted.emit("¿Por qué O(n)?")
-
-        ui.engine.askStart.emit()
-
-        caja = ui.ask.geometry()
-        assert caja.height() == columna.height() // 2
-        assert caja.bottom() == columna.bottom()
-        assert ui.panel.geometry().bottom() + 1 + T.COLUMN_GAP == caja.top()
-
-        monkeypatch.setattr(ui.ask, "tiene_foco", lambda: True)
-        ui.close_ask()
-        ui.toggle_ask()                         # opens small again
-        assert ui.ask.geometry().height() == 1080 // 4
-        assert ui.panel.geometry().height() + T.COLUMN_GAP + 1080 // 4 == columna.height()
+        assert [b.quien for b in ui.screen._burbujas] == ["pregunta", "respuesta"]
+        assert ui.screen._burbujas[-1]._raw == "## Respuesta\nAsí."
+        assert ui.screen.badge._lbl.text() == "Ready"
         qtbot.wait(5)
 
     def test_questions_wait_their_turn(self, meeting, qtbot):
         ui = meeting
-        ui.ask.submitted.emit("primera")
+        ui.panel.submitted.emit("primera")
 
-        ui.ask.submitted.emit("segunda")
+        ui.panel.submitted.emit("segunda")
 
         assert ui.engine.questions == ["primera"]
-        assert ui.ask.skip_pill.text() == "1 question queued — after this answer"
-
+        assert ui.panel.skip_pill.text() == "1 question queued — after this answer"
         ui.engine.askStart.emit()
         ui.engine.askDelta.emit("uno")
         ui.engine.askDone.emit()
-
         assert ui.engine.questions == ["primera", "segunda"]
-        assert [b.quien for b in ui.ask._burbujas] == ["pregunta", "respuesta", "pregunta"]
         qtbot.wait(5)
 
-    def test_error_shows_in_the_box_not_in_the_spoken_panel(self, meeting):
+    def test_error_is_reported_without_an_empty_answer(self, meeting):
         ui = meeting
-        ui.ask.submitted.emit("hola")
-        voz = badge(ui)
+        ui.panel.submitted.emit("hola")
 
         ui.engine.askError.emit("503 overloaded")
 
-        assert ui.ask.badge._lbl.text() == "Error"
-        assert ui.ask.skip_pill.text() == "Error: 503 overloaded"
-        assert badge(ui) == voz
-        assert [b.quien for b in ui.ask._burbujas] == ["pregunta"]   # no empty answer
+        assert ui.screen.badge._lbl.text() == "Error"
+        assert ui.panel.skip_pill.text() == "Error: 503 overloaded"
+        assert [b.quien for b in ui.screen._burbujas] == ["pregunta"]
 
-    def test_new_meeting_starts_with_an_empty_closed_box(self, meeting):
+    def test_hiding_the_panels_gives_the_keyboard_back(self, meeting, native, monkeypatch):
         ui = meeting
         ui.toggle_ask()
-        ui.ask.submitted.emit("hola")
+        monkeypatch.setattr(ui.panel, "isActiveWindow", lambda: True)
+
+        ui.toggle_overlay()
+
+        assert ui._escribiendo is False and native["back"] == [4242]
+
+    def test_new_meeting_starts_with_an_empty_field(self, meeting):
+        ui = meeting
+        ui.panel.entrada.setPlainText("a medias")
         ui.stop_meeting()
 
         ui.start_meeting()
 
-        assert ui.ask.isVisible() is False
-        assert ui.ask._burbujas == [] and ui._preguntando is False
+        assert ui.panel.entrada.toPlainText() == "" and ui._preguntando is False
+
+
+class TestSolveSpoken:
+    """Caps+R: what they said, solved big on the big panel (no screenshot)."""
+
+    def test_solves_on_the_big_panel(self, ui):
+        ui.start_meeting()
+        ui.engine.spoken_text = "Implementa una cola con dos pilas"
+
+        ui.resolve_spoken()
+
+        assert ui.engine.spoken == 1
+        assert ui._modo_pantalla is True and ui.screen.badge._lbl.text() == "Solving…"
+
+    def test_nothing_said_yet_is_explained(self, ui):
+        ui.start_meeting()
+
+        ui.resolve_spoken()
+
+        assert ui.panel.skip_pill.text() == "Nothing said yet to solve"
+        assert ui._modo_pantalla is False
+
+    def test_notetaker_does_not_solve(self, ui):
+        ui.start_meeting()
+        ui.engine.modo = "notetaker"
+
+        ui.resolve_spoken()
+
+        assert getattr(ui.engine, "spoken", 0) == 0
 
 
 class TestResolution:
-    """Manual | AI: one mode for the screen panel and the ask box."""
+    """Manual | AI: one mode for both panels; switching never redoes on its own."""
 
     def test_meeting_starts_in_the_agents_mode(self, ui, isolated_data_dir):
         lista = agents_mod.list_agents()
@@ -1256,24 +1277,37 @@ class TestResolution:
 
         ui.start_meeting("coach")
 
-        assert ui.screen.modo_chip.modo == "ia" and ui.ask.modo_chip.modo == "ia"
+        assert ui.panel.modo_chip.modo == "ia" and ui.screen.modo_chip.modo == "ia"
 
-    def test_switching_on_one_panel_switches_both(self, ui, qtbot):
+    def test_switching_on_one_panel_switches_both_and_redoes_nothing(self, ui, qtbot):
         ui.start_meeting()
 
-        qtbot.mouseClick(ui.screen.modo_chip.botones["ia"], QtCore.Qt.LeftButton)
+        qtbot.mouseClick(ui.panel.modo_chip.botones["ia"], QtCore.Qt.LeftButton)
 
         assert ui.engine.resoluciones == ["ia"]
-        assert ui.ask.modo_chip.modo == "ia" and ui.ask.modo_chip.botones["ia"].isChecked()
-        assert ui.screen.skip_pill.text() == "AI mode"
+        assert ui.screen.modo_chip.modo == "ia"
+        assert getattr(ui.engine, "redos", 0) == 0
+        assert ui.panel.skip_pill.text() == "AI mode"
 
-    def test_switch_with_a_solution_says_it_is_redone(self, ui):
+    def test_with_a_solution_it_says_how_to_redo(self, ui):
         ui.start_meeting()
         ui.engine.redo = True
+        ui.set_screen_mode(True)
 
-        ui.ask.modo_chip.changed.emit("ia")
+        ui.screen.modo_chip.changed.emit("ia")
 
-        assert ui.screen.skip_pill.text() == "AI mode — redoing the solution"
+        assert ui.screen.skip_pill.text() == "AI mode — Caps+D redoes the solution in this mode"
+        assert getattr(ui.engine, "redos", 0) == 0
+
+    def test_caps_d_without_new_shots_redoes_in_the_current_mode(self, ui):
+        ui.start_meeting()
+        ui.engine.redo = True
+        ui.engine.resolucion = "ia"
+
+        ui.generate()
+
+        assert ui.engine.redos == 1 and ui.engine.screenshots == []
+        assert ui.screen.skip_pill.text() == "Redoing the solution in AI mode"
 
     def test_switch_outside_a_meeting_only_moves_the_chips(self, ui):
         ui.set_resolucion("ia")
@@ -1283,7 +1317,7 @@ class TestResolution:
 
 
 class TestExplainSelection:
-    """Underline text in any panel, Explain -> the ask box answers it."""
+    """Underline text in any panel, Explain -> answered on the big panel."""
 
     @pytest.fixture
     def meeting(self, ui):
@@ -1291,33 +1325,24 @@ class TestExplainSelection:
         yield ui
         QtWidgets.QApplication.processEvents()
 
-    def test_explain_opens_the_box_without_taking_the_keyboard(self, meeting, native):
+    def test_explain_answers_on_the_big_panel_without_taking_the_keyboard(self, meeting,
+                                                                         native):
         ui = meeting
-
-        ui.screen.explainRequested.emit("select_for_update", "pantalla:tu")
-
-        assert ui.ask.isVisible() is True
-        assert native["front"] == []
-        assert ui.engine.questions == [
-            "Explícame esto de tu solución en pantalla: «select_for_update»"]
-
-    def test_explain_while_an_answer_arrives_waits_its_turn(self, meeting):
-        ui = meeting
-        ui.ask.submitted.emit("primera")
 
         ui.panel.explainRequested.emit("idempotencia", "voz:tu")
 
-        assert ui.engine.questions == ["primera"]
-        assert ui._preguntas_en_cola == [
+        assert native["front"] == []
+        assert ui.engine.questions == [
             "Explícame esto de lo que me sugeriste decir en voz alta: «idempotencia»"]
+        assert ui._modo_pantalla is True
 
     def test_explain_outside_a_meeting_does_nothing(self, ui):
         ui.screen.explainRequested.emit("x", "pantalla:tu")
 
-        assert ui.ask.isVisible() is False and ui.engine.questions == []
+        assert ui.engine.questions == []
 
-    def test_caps_e_with_a_selection_quotes_it_and_focuses_the_box(self, meeting, native,
-                                                                    monkeypatch):
+    def test_caps_e_with_a_selection_quotes_it_in_the_field(self, meeting, native,
+                                                           monkeypatch):
         ui = meeting
         monkeypatch.setattr(ui.screen, "seleccion", lambda: ("ledger", "pantalla:tu"))
         limpiadas = []
@@ -1325,25 +1350,74 @@ class TestExplainSelection:
 
         ui.toggle_ask()
 
-        assert ui.ask.entrada.toPlainText() == "«ledger» "
-        assert native["front"] == [int(ui.ask.winId())]
-        assert limpiadas == [1]
+        assert ui.panel.entrada.toPlainText() == "«ledger» "
+        assert native["front"] == [int(ui.panel.winId())] and limpiadas == [1]
 
-    def test_caps_e_with_a_selection_on_a_focused_box_quotes_instead_of_closing(
-            self, meeting, monkeypatch):
-        ui = meeting
-        ui.toggle_ask()
-        monkeypatch.setattr(ui.ask, "tiene_foco", lambda: True)
-        monkeypatch.setattr(ui.panel, "seleccion", lambda: ("hash", "voz:tu"))
 
-        ui.toggle_ask()
+class TestBlueMouse:
+    """Caps+Q: the blue mouse, only while the panels are on screen."""
 
-        assert ui.ask.isVisible() is True
-        assert ui.ask.entrada.toPlainText() == "«hash» "
+    def test_toggles_only_in_a_meeting_with_the_panels_visible(self, ui):
+        ui.toggle_mouse()
+        assert ui.raton.activo is False
+
+        ui.start_meeting()
+        ui.toggle_mouse()
+        assert ui.raton.activo is True
+        assert ui.panel.skip_pill.text().startswith("Blue mouse on")
+
+        ui.toggle_mouse()
+        assert ui.raton.activo is False
+
+    def test_hiding_the_panels_switches_it_off(self, ui):
+        ui.start_meeting()
+        ui.toggle_mouse()
+
+        ui.toggle_overlay()
+
+        assert ui.raton.activo is False
+        ui.toggle_mouse()                   # minimized: nothing to touch
+        assert ui.raton.activo is False
+
+    def test_ending_the_meeting_switches_it_off(self, ui):
+        ui.start_meeting()
+        ui.toggle_mouse()
+
+        ui.stop_meeting()
+
+        assert ui.raton.activo is False
+
+    def test_with_it_on_the_real_mouse_never_touches_the_overlay(self, ui, native):
+        ui.start_meeting()
+        ui.toggle_mouse()
+        native["click"].clear()
+
+        ui._update_click_through()
+
+        assert all(on for _h, on in native["click"])
+        assert ui.wheel.zones == []
+
+    def test_its_wheel_scrolls_the_panel_under_it(self, ui, monkeypatch):
+        ui.start_meeting()
+        ui.set_screen_mode(True)
+        movidas = []
+        monkeypatch.setattr(ui, "_scroll_zone", lambda nombre, m: movidas.append((nombre, m)))
+        monkeypatch.setattr(ui.screen, "wheel_zones",
+                            lambda: [((100, 100, 200, 200), "pantalla:feed")])
+        monkeypatch.setattr(ui.panel, "wheel_zones", lambda: [])
+
+        ui._rodar_virtual(QtCore.QPoint(150, 150), 2)
+        ui._rodar_virtual(QtCore.QPoint(10, 10), 1)
+
+        assert movidas == [("pantalla:feed", 2)]
+
+    def test_it_can_touch_every_overlay_window(self, ui):
+        assert ui._ventanas_overlay() == [ui.top, ui.panel, ui.screen, ui.collapsed]
 
 
 @pytest.mark.parametrize("texto, origen, esperado", [
     ("a   b\nc", "voz:ellos", "Explícame esto de lo que dijeron en la reunión: «a b c»"),
+    ("x", "pantalla:respuesta", "Explícame esto de tu respuesta en el panel grande: «x»"),
     ("x", "raro:otro", "Explícame esto: «x»"),
 ])
 def test_explain_question_text(texto, origen, esperado):

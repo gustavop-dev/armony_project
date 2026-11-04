@@ -162,33 +162,57 @@ respuesta hablada. Por eso las capturas tienen su propio límite, 4000 (el de vo
 Mantén **Bloq Mayús** y pulsa la tecla: todo queda junto a la mano izquierda en
 reposo. Funcionan aunque el foco esté en Zoom, Meet o Excel, y no chocan con sus
 atajos (Zoom usa Alt+A, Alt+S, Alt+Q…). **Solo existen durante la reunión**: en la
-Home, Bloq Mayús y Alt+1…7 funcionan como siempre en todas las apps. En la reunión,
+Home, Bloq Mayús y Alt+1…9 funcionan como siempre en todas las apps. En la reunión,
 Bloq Mayús ya no bloquea mayúsculas ni le llega a la aplicación de debajo;
 **`Shift+Bloq Mayús`** sí las activa, como siempre.
 
 | Atajo | Respaldo | Qué hace |
 |---|---|---|
 | `Bloq Mayús+A` | `Alt+5` | Responder ahora a lo último que dijeron |
+| `Bloq Mayús+R` | `Alt+9` | Resolver en grande, en el panel grande, lo que plantearon hablando (un ejercicio dictado, algo que pide más que una respuesta para decir) |
 | `Bloq Mayús+S` | `Alt+2` | Captura de pantalla (se pueden encadenar varias) |
-| `Bloq Mayús+D` | `Alt+3` | Generar respuesta con las capturas tomadas |
-| `Bloq Mayús+F` | `Alt+6` | Actualizar la solución en pantalla con lo que acaban de decir |
-| `Bloq Mayús+E` | `Alt+7` | Escribir una pregunta: abre la caja de preguntas, la enfoca o la cierra |
-| `Bloq Mayús+Q` | `Alt+1` | Mostrar / ocultar el overlay |
+| `Bloq Mayús+D` | `Alt+3` | Resolver las capturas tomadas; sin capturas nuevas, rehacer la última solución en el modo actual (Manual / AI) |
+| `Bloq Mayús+F` | `Alt+6` | Actualizar la solución con lo que acaban de decir (cuando se ofrece) |
+| `Bloq Mayús+E` | `Alt+7` | Escribir una pregunta (el campo del panel hablado); otra vez, devuelve el teclado |
+| `Bloq Mayús+Q` | `Alt+8` | Encender / apagar el **ratón azul** |
+| `Bloq Mayús+W` | `Alt+1` | Minimizar / restaurar los paneles |
 | `Bloq Mayús+Esc` | `Alt+4` | Terminar la reunión (a propósito, difícil de pulsar sin querer) |
 
-Todos menos `Bloq Mayús+F` tienen su botón en la barra superior con el atajo
-escrito al lado (`Caps`); `Bloq Mayús+F` aparece como sugerencia en el panel de la
-pantalla cuando aplica. Los `Alt+número` de antes siguen como respaldo, por si
-Bloq Mayús está remapeada a otra tecla o Windows no deja instalar el hook.
+La barra superior lleva un botón por atajo con su letra; `Caps +` va una vez al
+principio. Los `Alt+número` siguen como respaldo, por si Bloq Mayús está
+remapeada a otra tecla o Windows no deja instalar el hook.
+
+### El ratón azul (`Bloq Mayús+Q`)
+
+El overlay es invisible al compartir pantalla, pero tu cursor no: si lo llevas
+encima para hacer scroll, subrayar o redimensionar, quien te ve lo ve moverse y
+seleccionar sobre la nada. Con el ratón azul encendido:
+
+- **Tu cursor real se queda quieto** donde estaba. El ratón físico mueve un
+  cursor azul fuerte, invisible al compartir pantalla como el resto del overlay.
+- Con él haces de todo en el overlay: clic en los botones, subrayar texto
+  (✦ Explain), scroll con la rueda, arrastrar y **redimensionar** los paneles.
+  Fuera del overlay no hace nada (ningún clic a ciegas en otras apps).
+- `Bloq Mayús+Q` lo apaga y el ratón vuelve a mover el cursor real, desde donde
+  se quedó. Minimizar los paneles (`Bloq Mayús+W`) o terminar la reunión también
+  lo apaga.
+- Si la app dejara de responder, en menos de dos segundos el ratón real vuelve a
+  funcionar solo.
 
 ### Dos paneles: hablado y pantalla
 
-- **Sin pantallazos** hay un solo panel, el de la conversación hablada, en columna
-  a la derecha: lo que dice el entrevistador y la sugerencia. Lo que dices tú no se
-  pinta; va solo como contexto.
-- **La primera captura** abre el panel de la pantalla a la derecha y pasa el hablado
-  a la izquierda; el centro (la llamada, el editor) queda libre. Cada tanda de
-  capturas se apila con su solución. El panel se cierra con su `×`.
+- **Al empezar** hay un solo panel, el de la conversación hablada, en columna a
+  la derecha: lo que dice el entrevistador, la sugerencia y, abajo, el campo
+  para escribir preguntas. Lo que dices tú no se pinta; va solo como contexto.
+- **El panel grande** se abre con la primera captura, con `Bloq Mayús+R` o con la
+  primera pregunta escrita. Entonces los dos **llenan la pantalla** de lado a lado:
+  el hablado a la izquierda y el grande, para el código y lo que se lee, a la
+  derecha. Se cierra con su `×`.
+- **Nada se desplaza en horizontal**: el código se parte por el ancho del panel y
+  el comentario de cada línea va encima de ella, así que las líneas son cortas.
+- **Mientras llega una respuesta larga se va pintando hacia abajo** sin
+  parpadear; la vista se queda en el principio para leer, y puedes desplazarte
+  mientras sigue llegando.
 - **Cada panel tiene su conversación con el modelo** (mismo modelo, caché compartida
   del principio): una solución de código larga no retrasa una respuesta hablada.
 - **Manual | AI**, en la cabecera de la pantalla (y en la caja de preguntas): cómo
@@ -198,7 +222,8 @@ Bloq Mayús está remapeada a otra tecla o Windows no deja instalar el hook.
   que trae qué hay que construir, las decisiones con su porqué, el **prompt
   inicial listo para pegar** y los conceptos para defenderlo. Cada agente trae el
   suyo por defecto (Permisos); si lo cambias con una solución ya en pantalla, se
-  rehace en el otro modo debajo de la anterior.
+  queda para lo siguiente: no se rehace nada solo. Para rehacer la solución en el
+  modo nuevo, `Bloq Mayús+D` (sin capturas nuevas).
 - **Las respuestas se pintan como en ChatGPT o Claude**: secciones, subtítulos,
   listas numeradas con sublistas, tablas, citas, separadores y bloques de código
   coloreados con su botón de copiar. En modo AI el prompt sale en su propio
@@ -207,40 +232,34 @@ Bloq Mayús está remapeada a otra tecla o Windows no deja instalar el hook.
   código dentro sin cortarse (va cercado con cuatro acentos).
 - **La solución en pantalla no se relanza sola.** Si el entrevistador pide
   cambiarla ("hay un error, hazlo así", "ahora que también soporte X"), Jev lo
-  detecta y el panel ofrece `↻ Update with: «…» — Caps+F`. Lo decides tú; al
+  detecta y el **panel hablado** (donde miras mientras hablan) ofrece, bien
+  visible, `↻ Update the solution with: «…» — Caps+F`. Lo decides tú; al
   aceptarlo, la solución se reescribe en su sitio, marcada como actualizada.
 - **Si solo pregunta por ella** ("¿por qué elegiste un monolito?", "¿qué hace esa
   parte?"), la respuesta sale sola en el **panel hablado**, para decirla en voz
   alta defendiendo la decisión: la conversación hablada recibe cada solución de la
   pantalla al terminarse (y la de la pantalla, lo que se sugirió decir).
 
-### La caja de preguntas (`Bloq Mayús+E`)
+### Preguntas escritas (`Bloq Mayús+E`)
 
-Como `/btw` en Claude Code: escribes una pregunta sobre lo que está pasando ("¿por
-qué ese `select_for_update`?", "explícame la línea 12", "¿qué es un ledger de doble
-partida?") y la respuesta sale en la caja, sin tocar lo que hay en los otros paneles.
+Como `/btw` en Claude Code: escribes una pregunta sobre lo que está pasando ("¿y si
+lo hago recursivo?", "explícame la línea 12", "¿qué es un ledger de doble
+partida?") en el **campo de abajo del panel hablado**, y la respuesta sale en el
+**panel grande**, debajo de tu pregunta: a menudo es un cambio sobre el ejercicio
+que ya tienes ahí, y en grande se lee bien.
 
-- **Es dinámica**: no ocupa sitio hasta que la abres. Aparece debajo del panel
-  hablado con **un cuarto del alto de la pantalla**, y cuando llega una respuesta
-  crece hasta la **mitad de la columna** para que se pueda leer. Al cerrarla, el
-  hablado recupera su alto.
-- **Se lleva el teclado** al abrirla (es la única ventana del overlay que lo hace)
-  y **lo devuelve** a la app en la que estabas al cerrarla. `Enter` manda,
-  `Shift+Enter` salta de línea (para pegar código), `Esc` cierra.
-- **Ve todo**: las capturas, las soluciones y lo que se ha hablado (con la caché
-  de la conversación de la pantalla), pero **no entra** en esa conversación.
-  Las preguntas anteriores de la caja sí cuentan, como en un chat.
-- **Sigue el modo**: en *Manual*, el trozo exacto y su explicación línea a línea;
-  en *AI*, explicado como un mentor (el porqué, un ejemplo, cuándo aplica y la
-  alternativa).
-- Las preguntas van de una en una: si escribes otra mientras llega una respuesta,
-  espera su turno. Preguntas y respuestas quedan en el acta de la reunión.
-- **Subraya para preguntar**: arrastra el ratón sobre un trozo de cualquier panel
-  (la solución, una sugerencia, lo que dijeron, una respuesta de la caja) y pulsa
-  **✦ Explain**: la caja se abre (sin quitarte el teclado) y lo explica según el
-  modo. Si en vez de Explain pulsas `Bloq Mayús+E`, la pregunta empieza citando
-  el trozo (`«…» `) para que escribas la tuya. El cursor sigue siendo la flecha
-  al subrayar: el de texto se vería al compartir pantalla.
+- `Bloq Mayús+E` (o pulsar el campo) le da el teclado al panel; `Enter` manda,
+  `Shift+Enter` salta de línea, `Esc` (o `Bloq Mayús+E` otra vez) devuelve el
+  teclado a la app en la que estabas. El resto del tiempo el overlay no roba el
+  foco nunca.
+- Ve todo (las capturas, las soluciones y lo hablado) y sigue el modo: en
+  *Manual*, el trozo exacto explicado línea a línea; en *AI*, como un mentor.
+- Van de una en una, en orden con las soluciones del panel grande, y quedan en el
+  acta de la reunión.
+- **Subraya para preguntar**: arrastra el ratón (o el ratón azul) sobre un trozo
+  de cualquier panel y pulsa **✦ Explain**: la explicación sale en el panel
+  grande sin quitarte el teclado. Con un trozo subrayado, `Bloq Mayús+E` empieza
+  la pregunta citándolo (`«…» `). El cursor sigue siendo la flecha al subrayar.
 
 **Para desplazar el hilo basta con poner el cursor encima**, con la rueda del ratón
 o con dos dedos en el panel táctil. Sigue el final según entra conversación, pero si

@@ -23,27 +23,26 @@ from engine import CoachEngine
 from overlay import (devolver_foco, set_acrylic, set_capture_protection,
                      set_click_through, set_no_activate, traer_al_frente,
                      vidrio_disponible)
+from raton2 import SegundoRaton
 from wheelscroll import WheelForwarder
-from overlay_ui import AskPanel, TopBar, TranscriptPanel, CollapsedButton
+from overlay_ui import TopBar, TranscriptPanel, CollapsedButton
 from home_window import HomeWindow
 import hotkeys as HK
 
 log = logging.getLogger("armony.app")
 
-# La caja de preguntas se abre con un cuarto del alto de la pantalla (lo justo
-# para escribir) y, cuando llega una respuesta, crece hasta la mitad de la
-# columna: en un cuarto solo caben cuatro lineas. Con pantallas muy bajas, ni
-# ella ni el hablado bajan de esto.
-ALTO_MIN_PREGUNTA = 150
-ALTO_MIN_VOZ = 260
+# Con los dos paneles a la vista llenan la pantalla de lado a lado: el hablado
+# a la izquierda con esta parte del ancho y el grande con el resto.
+PROPORCION_VOZ = 0.38
+ANCHO_MIN_VOZ = 380
 
 # Subrayar un trozo y pulsar Explain: de donde sale, para decirselo al modelo.
 ORIGEN_SUBRAYADO = {
     "voz:tu": "lo que me sugeriste decir en voz alta",
     "voz:ellos": "lo que dijeron en la reunión",
     "pantalla:tu": "tu solución en pantalla",
-    "pregunta:respuesta": "tu respuesta en la caja de preguntas",
-    "pregunta:pregunta": "mi pregunta en la caja",
+    "pantalla:respuesta": "tu respuesta en el panel grande",
+    "pantalla:pregunta": "mi pregunta",
 }
 MAX_SUBRAYADO = 2000          # caracteres del trozo que se mandan
 
@@ -70,26 +69,26 @@ class OverlayApp(QtCore.QObject):
             T.activar_vidrio()
 
         self.top = TopBar()
-        # Dos paneles: la conversacion hablada (siempre) y la pantalla (solo
-        # cuando se usan pantallazos; entonces el hablado se pasa a la izquierda).
+        # Dos paneles: la conversacion hablada (siempre, con el campo de
+        # preguntas abajo) y el grande (capturas, lo hablado resuelto en grande y
+        # las respuestas a lo que escribes). Con los dos, llenan la pantalla.
         self.panel = TranscriptPanel()
         self.screen = TranscriptPanel(modo="pantalla")
-        # La caja de preguntas escritas (Bloq Mayus+E): solo mientras se usa,
-        # debajo del hablado, que le cede un cuarto del alto de la pantalla.
-        self.ask = AskPanel()
-        self._alto_voz = None        # alto del hablado antes de partir la columna
         self._foco_previo = 0        # la ventana a la que se le devuelve el teclado
-        self._ask_oculta = False     # estaba abierta al ocultar el overlay
-        self._preguntando = False    # hay una respuesta en camino en la caja
+        self._escribiendo = False    # el campo de preguntas tiene el teclado
+        self._preguntando = False    # hay una respuesta escrita en camino
         self._preguntas_en_cola = []  # las escritas mientras tanto, en orden
-        self._caja_grande = False    # hay respuesta que leer: media columna
         self.collapsed = CollapsedButton()
         self._modo_pantalla = False
+        # El segundo raton (Bloq Mayus+Q): azul, invisible al compartir, para
+        # usar el overlay sin mover el cursor real.
+        self.raton = SegundoRaton(self._ventanas_overlay, al_rodar=self._rodar_virtual)
+        self.raton.cambiado.connect(self._on_raton)
 
         self._visible = True
         self._running = False
         # Atajos globales (hotkeys.GlobalHotkeys), solo activos en la reunion:
-        # fuera de ella Bloq Mayus y Alt+1..7 son de las demas apps.
+        # fuera de ella Bloq Mayus y Alt+1..9 son de las demas apps.
         self.atajos = None
         self._elapsed = 0
         self._responding = False
@@ -138,6 +137,7 @@ class OverlayApp(QtCore.QObject):
         # ventana no recibe raton, ni siquiera la rueda.
         self.wheel = WheelForwarder(self._scroll_zone)
         self.wheel.install()
+        self.raton.instalar()
 
     # ------------------------------------------------ colocacion en pantalla
     def _place(self):
@@ -152,48 +152,22 @@ class OverlayApp(QtCore.QObject):
                             geo.y() + T.TOP_OFFSET)
 
     def _place_columns(self):
-        """Columnas a los lados; el centro (la llamada, el editor) queda libre.
-
-        Solo el hablado: a la derecha. Con la pantalla activa: el hablado a la
-        izquierda y la pantalla, mas ancha para el codigo, a la derecha.
-        """
+        """Solo el hablado: columna a la derecha. Con el panel grande: los dos
+        llenan la pantalla, el hablado a la izquierda (PROPORCION_VOZ del ancho)
+        y el grande, para el codigo y lo que se lee, con el resto."""
         geo = QtWidgets.QApplication.primaryScreen().availableGeometry()
         arriba = geo.y() + T.TOP_OFFSET + self.top.height() + T.COLUMN_GAP
         alto = geo.y() + geo.height() - T.BOTTOM_OFFSET - arriba
         hueco = geo.width() - 3 * T.SIDE_MARGIN
-        ancho_voz = min(T.COLUMN_WIDTH, hueco // 2)
-        ancho_pant = min(T.SCREEN_WIDTH, hueco - ancho_voz)
         derecha = geo.x() + geo.width() - T.SIDE_MARGIN
         if self._modo_pantalla:
-            self.panel.setGeometry(geo.x() + T.SIDE_MARGIN, arriba, ancho_voz, alto)
-            self._pegar_derecha(self.screen, derecha, arriba, ancho_pant, alto)
+            ancho_voz = max(min(ANCHO_MIN_VOZ, hueco // 2), round(hueco * PROPORCION_VOZ))
+            izquierda = geo.x() + T.SIDE_MARGIN
+            self.panel.setGeometry(izquierda, arriba, ancho_voz, alto)
+            self._pegar_derecha(self.screen, derecha, arriba, hueco - ancho_voz, alto)
         else:
+            ancho_voz = min(T.COLUMN_WIDTH, hueco // 2)
             self._pegar_derecha(self.panel, derecha, arriba, ancho_voz, alto)
-        if self.ask.isVisible() or self._ask_oculta:
-            self._alto_voz = None             # la columna se acaba de recolocar
-            self._partir_columna()
-
-    def _partir_columna(self):
-        """La caja de preguntas, debajo del hablado y con su mismo ancho: un
-        cuarto del alto de la pantalla, que el hablado cede mientras esta
-        abierta (ver _cerrar_columna)."""
-        geo = QtWidgets.QApplication.primaryScreen().availableGeometry()
-        g = self.panel.geometry()
-        completo = self._alto_voz or g.height()
-        self._alto_voz = completo
-        alto_caja = max(ALTO_MIN_PREGUNTA, geo.height() // 4)
-        if self._caja_grande:
-            alto_caja = max(alto_caja, completo // 2)
-        self.panel.resize(g.width(), max(ALTO_MIN_VOZ, completo - alto_caja - T.COLUMN_GAP))
-        arriba = g.y() + self.panel.height() + T.COLUMN_GAP
-        self.ask.setGeometry(g.x(), arriba, g.width(),
-                             max(ALTO_MIN_PREGUNTA, g.y() + completo - arriba))
-
-    def _cerrar_columna(self):
-        """El hablado recupera el alto que le cedio a la caja."""
-        if self._alto_voz:
-            self.panel.resize(self.panel.width(), self._alto_voz)
-        self._alto_voz = None
 
     @staticmethod
     def _pegar_derecha(panel, derecha, arriba, ancho, alto):
@@ -216,29 +190,23 @@ class OverlayApp(QtCore.QObject):
 
     def _scroll_zone(self, nombre, muescas):
         """La rueda va al panel cuya zona esta bajo el cursor ("modo:zona")."""
-        if nombre.startswith("pantalla:"):
-            panel = self.screen
-        elif nombre.startswith("pregunta:"):
-            panel = self.ask
-        else:
-            panel = self.panel
+        panel = self.screen if nombre.startswith("pantalla:") else self.panel
         panel.scroll_zone(nombre, muescas)
 
     def _protect(self):
         """Excluye las ventanas de la captura de pantalla y evita que tomen el foco."""
         activo = bool(self.cfg.get("invisible_on_share", True))
-        for w in (self.top, self.panel, self.screen, self.collapsed, self.ask):
+        for w in (self.top, self.panel, self.screen, self.collapsed, self.raton.cursor):
             set_capture_protection(w.winId(), activo)
             # El overlay nunca roba el foco: al pulsar un boton sigues "dentro"
-            # de la aplicacion en la que estabas trabajando. Salvo la caja de
-            # preguntas, que es para escribir en ella.
-            if w is not self.ask:
-                set_no_activate(w.winId())
+            # de la aplicacion en la que estabas trabajando. El campo de
+            # preguntas lo quita solo mientras escribes (_enfocar_pregunta).
+            set_no_activate(w.winId())
 
     def _apply_opacity(self):
         op = float(self.cfg.get("window_opacity", 0.30))
         op = max(0.15, min(1.0, op))
-        for w in (self.top, self.panel, self.screen, self.collapsed, self.ask):
+        for w in (self.top, self.panel, self.screen, self.collapsed):
             if T.VIDRIO:
                 # La opacidad pasa al tinte del acrilico: el texto no se atenua.
                 w.setWindowOpacity(1.0)
@@ -261,20 +229,30 @@ class OverlayApp(QtCore.QObject):
         # cortar el movimiento a medio camino.
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
             return
-        zonas_rueda = ((self.panel.wheel_zones() + self.screen.wheel_zones()
-                        + self.ask.wheel_zones()) if self._running else [])
+        if self._escribiendo and not self.panel.isActiveWindow():
+            self._soltar_pregunta(devolver=False)     # se fue a otra app
+        if self.raton.activo:
+            # Con el raton azul, el real no toca el overlay: todo de cristal y
+            # la rueda la lleva el raton azul.
+            for win in (self.top, self.panel, self.screen, self.collapsed):
+                if win.isVisible() and self._ct_state.get(win) is not True:
+                    set_click_through(win.winId(), True)
+                    self._ct_state[win] = True
+            self.wheel.set_zones([])
+            return
+        zonas_rueda = ((self.panel.wheel_zones() + self.screen.wheel_zones())
+                       if self._running else [])
         objetivos = [
             (self.top, self.top.interactive_widgets()),
             (self.panel, self.panel.interactive_widgets()),
             (self.screen, self.screen.interactive_widgets()),
-            (self.ask, self.ask.interactive_widgets()),
             (self.collapsed, [self.collapsed]),   # el boton de restaurar, entero
         ]
         for win, zonas in objetivos:
             if not win.isVisible():
                 continue
             interactivo = self._cursor_over(zonas)
-            if win in (self.panel, self.screen, self.ask) and interactivo:
+            if win in (self.panel, self.screen) and interactivo:
                 # Con el panel activo, Qt ya recibe la rueda por su cuenta: si
                 # ademas la desviara el hook, cada muesca contaria dos veces.
                 zonas_rueda = []
@@ -293,12 +271,15 @@ class OverlayApp(QtCore.QObject):
         self.top.generateClicked.connect(self.generate)
         self.top.answerNowClicked.connect(self.answer_now)
         self.top.askClicked.connect(self.toggle_ask)
+        self.top.spokenClicked.connect(self.resolve_spoken)
+        self.top.mouseClicked.connect(self.toggle_mouse)
         self.collapsed.clicked.connect(self.toggle_overlay)
-        self.ask.submitted.connect(self.ask_question)
-        self.ask.closeClicked.connect(self.close_ask)
-        for chip in (self.screen.modo_chip, self.ask.modo_chip):
+        self.panel.submitted.connect(self.ask_question)
+        self.panel.entradaPulsada.connect(self._enfocar_pregunta)
+        self.panel.entradaSalir.connect(self.close_ask)
+        for chip in (self.panel.modo_chip, self.screen.modo_chip):
             chip.changed.connect(self.set_resolucion)
-        for p in (self.panel, self.screen, self.ask):
+        for p in (self.panel, self.screen):
             p.explainRequested.connect(self.explicar)
 
         e = self.engine
@@ -319,7 +300,7 @@ class OverlayApp(QtCore.QObject):
         e.shotDone.connect(self.on_shot_done)
         e.screenSuggest.connect(self.on_screen_suggest)
         e.askStart.connect(self.on_ask_start)
-        e.askDelta.connect(self.ask.append_answer)
+        e.askDelta.connect(self.screen.append_answer)
         e.askDone.connect(self.on_ask_done)
         e.askError.connect(self.on_ask_error)
         # Las notas se generan cuando la Home ya esta a la vista.
@@ -327,7 +308,7 @@ class OverlayApp(QtCore.QObject):
         e.notesReady.connect(lambda sid, ok: self.home.notas_listas(sid, ok))
         e.status.connect(self.on_status)
         e.error.connect(self.on_error)
-        self.screen.relaunchClicked.connect(self.relaunch_screen)
+        self.panel.relaunchClicked.connect(self.relaunch_screen)
         self.screen.closeClicked.connect(lambda: self.set_screen_mode(False))
         self.panel.agentChosen.connect(self.choose_agent)
         # El menu de agentes es otra ventana: tan invisible al compartir como
@@ -409,14 +390,10 @@ class OverlayApp(QtCore.QObject):
         self.panel.limpiar_hilo()       # reunion nueva, conversacion nueva
         self.panel.hide_skip()
         self.screen.limpiar_hilo()
-        self.screen.show_suggestion("")
-        self.ask.hide()
-        self.ask.limpiar_hilo()
-        self._alto_voz = None
-        self._ask_oculta = False
+        self.panel.show_suggestion("")
+        self.panel.entrada.clear()
         self._preguntando = False
         self._preguntas_en_cola = []
-        self._caja_grande = False
         self._capturas_reunion = 0
         self.screen.set_shots(0)
         self.set_screen_mode(False)     # vuelve a haber solo el hablado
@@ -449,8 +426,8 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_status("Idle")
         self.panel.clear_latency()
         self.panel.hide_skip()
-        self.close_ask(devolver=False)   # el hablado recupera su alto
-        self._ask_oculta = False
+        self.raton.desactivar()          # el raton real vuelve a ser el raton
+        self._soltar_pregunta(devolver=False)
         self.engine.stop()          # deja la reunion en el historial
         # Fin de la reunion: fuera el overlay y de vuelta a la Home, con la
         # reunion recien terminada abierta.
@@ -464,8 +441,8 @@ class OverlayApp(QtCore.QObject):
             return
         ocupados = self.atajos.set_activo(on)
         if on and not self.atajos.hook_instalado:
-            # Sin el hook no hay Bloq Mayus: quedan los Alt+1..7 de respaldo.
-            aviso = "Caps Lock shortcuts unavailable — use Alt+1…7"
+            # Sin el hook no hay Bloq Mayus: quedan los Alt+1..9 de respaldo.
+            aviso = "Caps Lock shortcuts unavailable — use Alt+1…9"
             if ocupados:
                 aviso += f" (in use: {', '.join(ocupados)})"
             self.panel.aviso(aviso)
@@ -480,6 +457,8 @@ class OverlayApp(QtCore.QObject):
         self.top.set_timer(f"{self._elapsed // 60:02d}:{self._elapsed % 60:02d}")
 
     def toggle_overlay(self):
+        """Bloq Mayus+W: minimiza los paneles (queda la pildora para volver) o
+        los restaura. Minimizado no hay raton azul."""
         if not self._running:
             return                       # fuera de la reunion no hay overlay
         self._visible = not self._visible
@@ -489,15 +468,12 @@ class OverlayApp(QtCore.QObject):
             self.panel.show()
             if self._modo_pantalla:
                 self.screen.show()
-            if self._ask_oculta:
-                self.ask.show()
-            self._ask_oculta = False
         else:
-            self._ask_oculta = self.ask.isVisible()
+            self.raton.desactivar()
+            self._soltar_pregunta()
             self.top.hide()
             self.panel.hide()
             self.screen.hide()
-            self.ask.hide()
             self.collapsed.show()
 
     def take_shot(self):
@@ -539,11 +515,19 @@ class OverlayApp(QtCore.QObject):
         self.screen.aviso(f"{n} screenshot{'s' if n != 1 else ''} ready — Caps+D to solve")
 
     def generate(self, _=""):
-        """Envia las capturas acumuladas y pide la respuesta."""
+        """Bloq Mayus+D: envia las capturas acumuladas. Sin capturas nuevas,
+        rehace la ultima solucion del panel grande en el modo actual (para
+        cuando cambias de Manual a AI o al reves)."""
         if not self._running:
             return
         if not self._shots:
-            self.panel.aviso("Take a screenshot first (Caps+S)")
+            if self.engine.rehacer_pantalla():
+                nombre = "AI" if self.engine.resolucion == "ia" else "Manual"
+                self.screen.set_status("Redoing…", "drafting")
+                self.screen.aviso(f"Redoing the solution in {nombre} mode")
+            else:
+                self.panel.aviso("Take a screenshot first (Caps+S) — or Caps+R to "
+                                 "solve what they said")
             return
         self.engine.request_screenshots(list(self._shots))
         self._shots.clear()
@@ -556,7 +540,7 @@ class OverlayApp(QtCore.QObject):
         """Bloq Mayus+F: actualiza la solucion en pantalla con lo que acaban de decir."""
         if not self._running:
             return
-        self.screen.show_suggestion("")
+        self.panel.show_suggestion("")
         self.engine.relaunch_screen()
 
     def answer_now(self):
@@ -574,96 +558,95 @@ class OverlayApp(QtCore.QObject):
         self.panel.set_status("Answering…")
         self.engine.answer_now()
 
-    # ------------------------------------------------ la caja de preguntas
+    # ------------------------------------------------ preguntas escritas
     def toggle_ask(self):
-        """Bloq Mayus+E: abre la caja (con el teclado), la enfoca si ya estaba
-        abierta y escribias en otra app, o la cierra si ya estabas en ella."""
+        """Bloq Mayus+E: el teclado al campo de preguntas del hablado (o de
+        vuelta a la app de antes si ya estabas en el). Con un trozo subrayado,
+        la pregunta empieza citandolo."""
         if not self._running:
             return
         if not self._visible:
             self.toggle_overlay()
         texto, _origen = self._subrayado()
         if texto:
-            # Con un trozo subrayado, la pregunta empieza citandolo.
             self._limpiar_subrayados()
-            self.ask.citar(texto)
-        if not self.ask.isVisible():
-            self._partir_columna()
-            self.ask.show()
-            self._enfocar_pregunta()
-        elif self.ask.tiene_foco() and not texto:
+            self.panel.citar(texto)
+        if self._escribiendo and self.panel.tiene_foco() and not texto:
             self.close_ask()
         else:
             self._enfocar_pregunta()
 
     def _subrayado(self):
         """(texto, origen) subrayado en algun panel, o ("", "")."""
-        for p in (self.ask, self.screen, self.panel):
+        for p in (self.screen, self.panel):
             texto, origen = p.seleccion()
             if texto:
                 return texto, origen
         return "", ""
 
     def _limpiar_subrayados(self):
-        for p in (self.panel, self.screen, self.ask):
+        for p in (self.panel, self.screen):
             p.limpiar_seleccion()
 
     def explicar(self, texto, origen):
-        """Explain sobre un trozo subrayado: se pregunta en la caja. Se abre si
-        estaba cerrada, pero sin quitarte el teclado (solo hay que leer); para
-        seguir preguntando, Bloq Mayus+E."""
+        """Explain sobre un trozo subrayado: la respuesta sale en el panel
+        grande, sin quitarte el teclado (solo hay que leer)."""
         if not self._running or not texto.strip():
             return
-        if not self.ask.isVisible():
-            if not self._visible:
-                self.toggle_overlay()
-            if not self.ask.isVisible():
-                self._partir_columna()
-                self.ask.show()
+        if not self._visible:
+            self.toggle_overlay()
         self.ask_question(pregunta_subrayado(texto, origen))
 
     def _enfocar_pregunta(self):
-        previo = traer_al_frente(self.ask.winId())
-        if previo:
-            self._foco_previo = previo
-        self.ask.raise_()
-        self.ask.activateWindow()
-        self.ask.enfocar()
-
-    def close_ask(self, devolver=True):
-        """Cierra la caja: el hablado recupera su alto y, si estabas
-        escribiendo en ella, el teclado vuelve a la app de antes."""
-        if not self.ask.isVisible() and not self._ask_oculta:
+        """El panel hablado no se activa nunca (no roba el foco), salvo para
+        escribir: se le quita esa marca y se pone delante con el teclado."""
+        if not self._running:
             return
-        # El teclado se devuelve ANTES de ocultarla: mientras es la ventana
-        # activa, Windows deja que la app le pase el foco a otra.
-        if devolver and self.ask.tiene_foco() and self._foco_previo:
+        set_no_activate(self.panel.winId(), False)
+        previo = traer_al_frente(self.panel.winId())
+        if previo and not self._escribiendo:
+            self._foco_previo = previo
+        self._escribiendo = True
+        self.panel.raise_()
+        self.panel.activateWindow()
+        self.panel.enfocar()
+
+    def _soltar_pregunta(self, devolver=True):
+        """Deja de escribir: el teclado vuelve a la app de antes (si se pide y
+        aun lo tenia el panel) y el panel vuelve a no robar el foco."""
+        if not self._escribiendo:
+            return
+        if devolver and self.panel.isActiveWindow() and self._foco_previo:
             devolver_foco(self._foco_previo)
         self._foco_previo = 0
-        self.ask.hide()
-        self._ask_oculta = False
-        self._cerrar_columna()
-        self._caja_grande = False          # se vuelve a abrir pequena
+        self._escribiendo = False
+        self.panel.entrada.clearFocus()
+        set_no_activate(self.panel.winId(), True)
+
+    def close_ask(self, devolver=True):
+        """Esc en el campo, o Bloq Mayus+E otra vez: el teclado vuelve."""
+        self._soltar_pregunta(devolver)
 
     def ask_question(self, texto):
-        """Una pregunta escrita. De una en una: si aun llega la respuesta de la
-        anterior, espera su turno (asi cada respuesta va bajo su pregunta)."""
+        """Una pregunta escrita. Su respuesta sale en el panel grande, debajo de
+        la pregunta. De una en una: si aun llega la anterior, espera su turno."""
         if not self._running:
             return
         if self._preguntando:
             self._preguntas_en_cola.append(texto)
             n = len(self._preguntas_en_cola)
-            self.ask.aviso(f"{n} question{'s' if n != 1 else ''} queued — "
-                           f"after this answer")
+            self.panel.aviso(f"{n} question{'s' if n != 1 else ''} queued — "
+                             f"after this answer")
             return
         self._mandar_pregunta(texto)
 
     def _mandar_pregunta(self, texto):
-        self.ask.add_question(texto)
+        self.set_screen_mode(True)
+        self.screen.add_question(texto)
         if self.engine.preguntar(texto):
             self._preguntando = True
-            self.ask.set_state("generating")
-            self.ask.set_status("Thinking…", "drafting")
+            self.screen.set_state("generating")
+            self.screen.set_status("Thinking…", "drafting")
 
     def _siguiente_pregunta(self):
         self._preguntando = False
@@ -673,49 +656,89 @@ class OverlayApp(QtCore.QObject):
     def on_ask_start(self):
         if not self._running:
             return
-        self.ask.clear_answer()
-        self.ask.set_status("Answering…", "drafting")
-        if not self._caja_grande and (self.ask.isVisible() or self._ask_oculta):
-            self._caja_grande = True           # hay algo que leer: mas sitio
-            self._partir_columna()
+        self.set_screen_mode(True)
+        self.screen.clear_answer("respuesta")
+        self.screen.set_status("Answering…", "drafting")
 
     def on_ask_done(self):
-        if self.ask._burbuja_resp is not None or self.ask._repintado_pendiente:
-            self.ask.cerrar_respuesta()
+        if self.screen._burbuja_resp is not None or self.screen._repintado_pendiente:
+            self.screen.cerrar_respuesta()
         if not self._running:
             return
-        self.ask.set_state("idle")
-        self.ask.set_status("Ready", "idle")
+        self.screen.set_state("idle")
+        self.screen.set_status("Ready", "idle")
         self._siguiente_pregunta()
 
     def on_ask_error(self, msg):
-        if self.ask._burbuja_resp is not None or self.ask._repintado_pendiente:
-            self.ask.cerrar_respuesta()        # lo que llego a escribirse se queda
+        if self.screen._burbuja_resp is not None or self.screen._repintado_pendiente:
+            self.screen.cerrar_respuesta()      # lo que llego a escribirse se queda
         if not self._running:
             return
-        self.ask.set_state("idle")
-        self.ask.set_status("Error")
-        self.ask.show_skip(f"Error: {msg[:80]}")
+        self.screen.set_state("idle")
+        self.screen.set_status("Error")
+        self.panel.show_skip(f"Error: {msg[:80]}")
         self._siguiente_pregunta()
+
+    # ------------------------------------------------ lo hablado, en grande
+    def resolve_spoken(self):
+        """Bloq Mayus+R: lo ultimo que plantearon hablando (un ejercicio
+        dictado, algo que pide mas que una respuesta para decir) se resuelve en
+        el panel grande, en el modo actual. Para cuando no hay captura."""
+        if not self._running:
+            return
+        if self.engine.modo == agents_mod.NOTETAKER:
+            self.panel.aviso("This agent only takes notes")
+            return
+        texto = self.engine.resolver_hablado()
+        if not texto:
+            self.panel.aviso("Nothing said yet to solve")
+            return
+        self.set_screen_mode(True)
+        self.screen.set_state("generating")
+        self.screen.set_status("Solving…", "drafting")
+
+    # ------------------------------------------------ el raton azul
+    def _ventanas_overlay(self):
+        """Lo que el raton azul puede tocar, de arriba a abajo."""
+        return [self.top, self.panel, self.screen, self.collapsed]
+
+    def toggle_mouse(self):
+        """Bloq Mayus+Q: enciende o apaga el raton azul (solo con los paneles a
+        la vista: minimizados no hay nada que tocar)."""
+        if not self._running or not self._visible:
+            return
+        self.raton.alternar()
+
+    def _on_raton(self, activo):
+        self._ct_state.clear()              # que el click-through se recalcule
+        self.top.set_raton(activo)
+        if activo:
+            self.panel.aviso("Blue mouse on — your real mouse stays put. Caps+Q to switch off")
+
+    def _rodar_virtual(self, pos, muescas):
+        """La rueda del raton azul: al panel cuya zona de scroll esta debajo."""
+        for (x, y, ancho, alto), nombre in (self.panel.wheel_zones()
+                                            + self.screen.wheel_zones()):
+            if QtCore.QRect(x, y, ancho, alto).contains(pos):
+                self._scroll_zone(nombre, muescas)
+                return
 
     # ------------------------------------------------ manual / IA
     def _mostrar_resolucion(self, modo):
-        for chip in (self.screen.modo_chip, self.ask.modo_chip):
+        for chip in (self.panel.modo_chip, self.screen.modo_chip):
             chip.set_modo(modo)
 
     def set_resolucion(self, modo):
-        """Manual | AI desde cualquiera de los dos paneles: los dos lo
-        muestran y, si ya hay una solucion en pantalla, se rehace en ese modo."""
+        """Manual | AI desde cualquiera de los dos paneles: solo cambia el modo
+        de lo siguiente. No rehace nada solo; para rehacer la solucion del
+        panel grande en este modo, Bloq Mayus+D."""
         self._mostrar_resolucion(modo)
         if not self._running:
             return
-        rehace = self.engine.set_resolucion(modo)
+        self.engine.set_resolucion(modo)
         nombre = "AI" if modo == "ia" else "Manual"
-        if rehace:
-            self.screen.aviso(f"{nombre} mode — redoing the solution")
-        else:
-            panel = self.ask if self.ask.isVisible() else self.screen
-            panel.aviso(f"{nombre} mode")
+        extra = " — Caps+D redoes the solution in this mode" if self.engine.hay_solucion else ""
+        (self.screen if self._modo_pantalla else self.panel).aviso(f"{nombre} mode{extra}")
 
     def _quit_app(self):
         # Boton X de la Home: cierra el programa entero.
@@ -810,9 +833,11 @@ class OverlayApp(QtCore.QObject):
         self.screen.set_status("Ready")
 
     def on_screen_suggest(self, texto):
+        """Lo que dijeron parece pedir un cambio en la solucion: se ofrece en el
+        hablado, que es donde estas mirando mientras hablan."""
         if not self._running:
             return
-        self.screen.show_suggestion(texto)
+        self.panel.show_suggestion(texto)
 
     def on_resp_done(self):
         self._responding = False
@@ -852,6 +877,7 @@ class OverlayApp(QtCore.QObject):
         self._timer.stop()
         self._ct_timer.stop()
         self.wheel.uninstall()
+        self.raton.desinstalar()
         try:
             self.engine.sysLevel.disconnect()
             self.engine.micLevel.disconnect()
@@ -904,6 +930,8 @@ def main():
         HK.ACTION_ANSWER: ui.answer_now,
         HK.ACTION_RELAUNCH: ui.relaunch_screen,
         HK.ACTION_ASK: ui.toggle_ask,
+        HK.ACTION_MOUSE: ui.toggle_mouse,
+        HK.ACTION_SPOKEN: ui.resolve_spoken,
     })
     app.installNativeEventFilter(hk)
     # Instalados pero apagados: se encienden al iniciar la reunion.

@@ -9,8 +9,10 @@ Atajos (Bloq Mayus mantenido + tecla, todo junto a la mano izquierda en reposo):
     Bloq Mayus+S    captura de pantalla (se pueden encadenar varias)
     Bloq Mayus+D    generar respuesta con las capturas tomadas
     Bloq Mayus+F    actualizar la solucion en pantalla con lo que acaban de decir
-    Bloq Mayus+E    escribir una pregunta (abre / cierra la caja de preguntas)
-    Bloq Mayus+Q    mostrar / ocultar overlay
+    Bloq Mayus+E    escribir una pregunta (el campo del panel hablado)
+    Bloq Mayus+R    resolver en grande lo que plantearon hablando
+    Bloq Mayus+Q    segundo raton (azul, invisible al compartir): encender / apagar
+    Bloq Mayus+W    minimizar / restaurar los paneles
     Bloq Mayus+Esc  iniciar / detener la reunion (a proposito, dificil sin querer)
 
 Por que Bloq Mayus y no Alt + numero: los numeros quedan lejos de la mano y
@@ -18,7 +20,7 @@ Alt + letra choca con las apps de reunion (en Zoom, Alt+A silencia, Alt+S
 comparte pantalla y Alt+Q termina la reunion). Bloq Mayus no lo usa ninguna, y
 como modificador propio no hace falta tragar ni reinyectar teclas del sistema.
 
-Solo durante la reunion: fuera de ella (en la Home) Bloq Mayus y Alt+1..7 son
+Solo durante la reunion: fuera de ella (en la Home) Bloq Mayus y Alt+1..9 son
 de las demas apps, como si Armony no estuviera (ver GlobalHotkeys.set_activo).
 En la reunion, Bloq Mayus deja de bloquear mayusculas: el hook se traga la
 tecla, asi que nadie la ve. Shift+Bloq Mayus pasa intacto y lo activa de
@@ -29,7 +31,8 @@ Win como modificadores, no Bloq Mayus. Un hook WH_KEYBOARD_LL se ejecuta antes
 que cualquier otra aplicacion: si devuelve 1, el evento se descarta y NADIE lo
 recibe.
 
-Respaldo: Alt+1..7 (los atajos de antes, y Alt+7 para preguntar) siguen registrados con RegisterHotKey.
+Respaldo: Alt+1..9 (los atajos de antes; Alt+7 preguntar, Alt+8 el segundo
+raton y Alt+9 resolver lo hablado) siguen registrados con RegisterHotKey.
 Sirven si el hook no se puede instalar o si Bloq Mayus esta remapeada a otra
 tecla; en ese caso el Alt suelto si llega a la app de abajo.
 """
@@ -51,15 +54,18 @@ MOD_ALT = 0x0001
 MOD_NOREPEAT = 0x4000        # evita repeticion al mantener pulsado
 
 VK_1, VK_2, VK_3, VK_4, VK_5 = 0x31, 0x32, 0x33, 0x34, 0x35   # fila superior '1'..'5'
-VK_6, VK_7 = 0x36, 0x37
+VK_6, VK_7, VK_8, VK_9 = 0x36, 0x37, 0x38, 0x39
 VK_A, VK_S, VK_D, VK_F, VK_Q, VK_E = 0x41, 0x53, 0x44, 0x46, 0x51, 0x45
+VK_W, VK_R = 0x57, 0x52
 VK_ESCAPE = 0x1B
 VK_CAPITAL = 0x14            # Bloq Mayus
 
 ACTION_TOGGLE, ACTION_SHOT, ACTION_GENERATE, ACTION_MEETING = 1, 2, 3, 4
 ACTION_ANSWER = 5
 ACTION_RELAUNCH = 6       # relanzar la solucion en pantalla con lo que dijeron
-ACTION_ASK = 7            # la caja de preguntas escritas
+ACTION_ASK = 7            # escribir una pregunta
+ACTION_MOUSE = 8          # el segundo raton (azul)
+ACTION_SPOKEN = 9         # resolver en grande lo planteado hablando
 
 # Capa de Bloq Mayus (via principal): accion -> (tecla, nombre legible)
 CAPS_BINDINGS = {
@@ -68,7 +74,9 @@ CAPS_BINDINGS = {
     ACTION_GENERATE: (VK_D, "Caps+D"),
     ACTION_RELAUNCH: (VK_F, "Caps+F"),
     ACTION_ASK: (VK_E, "Caps+E"),
-    ACTION_TOGGLE: (VK_Q, "Caps+Q"),
+    ACTION_SPOKEN: (VK_R, "Caps+R"),
+    ACTION_MOUSE: (VK_Q, "Caps+Q"),
+    ACTION_TOGGLE: (VK_W, "Caps+W"),
     ACTION_MEETING: (VK_ESCAPE, "Caps+Esc"),
 }
 
@@ -82,6 +90,8 @@ BINDINGS = {
     5: (MOD_ALT, VK_5, "Alt+5"),
     6: (MOD_ALT, VK_6, "Alt+6"),
     7: (MOD_ALT, VK_7, "Alt+7"),
+    8: (MOD_ALT, VK_8, "Alt+8"),
+    9: (MOD_ALT, VK_9, "Alt+9"),
 }
 
 # --- constantes del hook de bajo nivel -------------------------------------
@@ -204,7 +214,7 @@ class CapsLayer:
         self._ready.set()
         if not self._hook:
             log.warning("SetWindowsHookExW(WH_KEYBOARD_LL) failed; Caps Lock shortcuts "
-                        "unavailable, Alt+1..7 still work")
+                        "unavailable, Alt+1..9 still work")
             return
         try:
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -306,7 +316,7 @@ class CapsLayer:
 
 
 class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
-    """Atajos globales: capa de Bloq Mayus como via principal, Alt+1..7 de respaldo."""
+    """Atajos globales: capa de Bloq Mayus como via principal, Alt+1..9 de respaldo."""
 
     def __init__(self, callbacks):
         """callbacks: dict {ACTION_*: funcion}."""
@@ -327,25 +337,25 @@ class GlobalHotkeys(QtCore.QAbstractNativeEventFilter):
 
     @property
     def hook_instalado(self):
-        """True si Windows dejo instalar el hook (sin el, solo hay Alt+1..7)."""
+        """True si Windows dejo instalar el hook (sin el, solo hay Alt+1..9)."""
         return bool(self._caps._hook)
 
     def register(self):
         """Instala hook + atajos de respaldo, ya activos. Devuelve (registrados,
-        fallidos) de los de respaldo (Alt+1..7)."""
+        fallidos) de los de respaldo (Alt+1..9)."""
         self._caps.install()
         self._registrar_respaldo()
         return [BINDINGS[i][2] for i in self._registered], self._failed
 
     def instalar(self):
         """Instala el hook sin activar nada: hasta set_activo(True) deja pasar
-        todas las teclas y no hay Alt+1..7 registrados."""
+        todas las teclas y no hay Alt+1..9 registrados."""
         self._caps.set_enabled(False)
         self._caps.install()
 
     def set_activo(self, on):
         """Atajos solo durante la reunion. Activa (o apaga) la capa de Bloq
-        Mayus y registra (o libera) los Alt+1..7 de respaldo. Devuelve los de
+        Mayus y registra (o libera) los Alt+1..9 de respaldo. Devuelve los de
         respaldo que no se pudieron registrar (otra app los tiene)."""
         self._caps.set_enabled(on)
         if on:

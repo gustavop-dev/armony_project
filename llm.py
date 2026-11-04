@@ -243,6 +243,16 @@ REHACER_PANTALLA = (
     "Rehaz tu ultima respuesta a mis capturas siguiendo el modo que te indico "
     "abajo: la misma tarea, la respuesta completa (sustituye a la anterior).")
 
+# Bloq Mayus+R: lo planteado hablando, resuelto en grande en el panel de la
+# pantalla (un ejercicio dictado, una pregunta que pide mas que una respuesta
+# para decir en voz alta). Sigue el modo (manual / IA) que va debajo.
+PEDIDO_HABLADO = (
+    "Me han planteado esto HABLANDO, sin captura: \"{texto}\" (y lo que se dijo "
+    "antes, en la conversacion). Resuelvelo en grande, completo, para leerlo en "
+    "pantalla: no es para decirlo en voz alta. Si es un ejercicio de "
+    "programacion, con la solucion completa; si falta un dato, supon lo razonable "
+    "y dilo. Sigue el modo que te indico abajo.")
+
 # La caja de preguntas (como /btw en Claude Code): una pregunta escrita, en
 # privado, sobre lo que llevamos. Ve toda la conversacion pero no entra en
 # ella, asi que no cambia lo que se responde en los paneles.

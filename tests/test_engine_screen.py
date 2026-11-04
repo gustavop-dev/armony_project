@@ -249,13 +249,14 @@ def _ask_session(monkeypatch):
     return s
 
 
-def test_typed_question_goes_to_its_own_lane(monkeypatch):
+def test_typed_question_goes_to_the_screen_lane(monkeypatch):
+    """Its answer shows on the big panel, in order with the solutions."""
     s = _ask_session(monkeypatch)
 
     assert s.engine.preguntar("  ¿Por qué O(n)?  ") is True
 
-    assert s.drain(s.engine._queue_pregunta) == [("pregunta", "¿Por qué O(n)?")]
-    assert s.voice() == [] and s.screen() == []
+    assert s.screen() == [("pregunta", "¿Por qué O(n)?")]
+    assert s.voice() == []
 
 
 @pytest.mark.parametrize("texto", ["", "   "])
@@ -263,7 +264,7 @@ def test_empty_question_is_ignored(monkeypatch, texto):
     s = _ask_session(monkeypatch)
 
     assert s.engine.preguntar(texto) is False
-    assert s.drain(s.engine._queue_pregunta) == []
+    assert s.screen() == []
 
 
 def test_no_question_outside_a_meeting(monkeypatch):
@@ -339,31 +340,60 @@ def test_spoken_answer_has_no_resolution(monkeypatch):
     assert "resolucion" not in s.engine._coach.calls[-1]
 
 
-def test_switching_mode_redoes_a_solution_made_in_the_other_mode(monkeypatch):
+def test_switching_mode_never_redoes_on_its_own(monkeypatch):
     s = Session(monkeypatch).solve_screen(SOLUTION)
     s.engine._solucion_modo = "manual"
 
     assert s.engine.set_resolucion("ia") is True
 
-    assert s.engine.resolucion == "ia"
+    assert s.engine.resolucion == "ia" and s.screen() == []
+    assert s.engine.set_resolucion("ia") is False          # already in that mode
+
+
+def test_redo_puts_the_last_solution_through_again(monkeypatch):
+    s = Session(monkeypatch).solve_screen(SOLUTION)
+
+    assert s.engine.rehacer_pantalla() is True
+
     assert s.screen() == [("rehacer", None)]
 
 
-def test_switching_back_to_the_mode_of_the_solution_does_not_redo(monkeypatch):
-    s = Session(monkeypatch).solve_screen(SOLUTION)
-    s.engine._solucion_modo = "manual"
-    s.engine._resolucion = "ia"
-
-    assert s.engine.set_resolucion("manual") is False
-    assert s.screen() == []
-
-
-def test_switching_mode_without_a_solution_only_changes_the_mode(monkeypatch):
+def test_redo_without_a_solution_does_nothing(monkeypatch):
     s = Session(monkeypatch)
 
-    assert s.engine.set_resolucion("ia") is False
+    assert s.engine.rehacer_pantalla() is False and s.screen() == []
 
-    assert s.engine.resolucion == "ia" and s.screen() == []
+
+def test_spoken_question_can_be_solved_big_on_the_screen_lane(monkeypatch):
+    s = Session(monkeypatch)
+    s.engine._last_heard = "Implementa una cola con dos pilas"
+
+    assert s.engine.resolver_hablado() == "Implementa una cola con dos pilas"
+
+    assert s.screen() == [("hablado", "Implementa una cola con dos pilas")]
+
+
+def test_nothing_heard_nothing_to_solve(monkeypatch):
+    s = Session(monkeypatch)
+
+    assert s.engine.resolver_hablado() == "" and s.screen() == []
+
+
+def test_solving_what_was_said_asks_for_it_in_the_current_mode(monkeypatch):
+    from llm import PEDIDO_HABLADO
+    s = Session(monkeypatch)
+    s.engine._resolucion = "ia"
+    item = {"type": "hablado", "text": "Diseña un acortador de URLs"}
+    import queue as q
+    cola = q.Queue()
+    cola.put(item)
+    cola.put(None)
+
+    s.engine._process_loop(cola, __import__("threading").Event())
+
+    kw = s.engine._coach_pantalla.calls[-1]
+    assert kw["pedido"] == PEDIDO_HABLADO.format(texto="Diseña un acortador de URLs")
+    assert kw["resolucion"] == "ia" and kw["max_tokens"] == engine_mod.TOKENS_MODO_IA
 
 
 def test_unknown_mode_is_rejected(monkeypatch):
