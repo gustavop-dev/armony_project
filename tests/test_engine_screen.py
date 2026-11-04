@@ -391,3 +391,41 @@ def test_agent_sets_the_resolution(monkeypatch):
     s.engine._permisos({"modo": "automatico", "resolucion": "ia"})
 
     assert s.engine.resolucion == "ia"
+
+
+# ------------------------------------------------- each conversation knows the other
+def test_screen_solution_reaches_the_spoken_conversation(monkeypatch):
+    from llm import ETIQUETA_PANTALLA
+    s = Session(monkeypatch)
+
+    s.engine._respond("", images=["png"], carril="pantalla")
+
+    assert s.engine._coach.heard[-1] == (ETIQUETA_PANTALLA, "## Solución\n```py\nprint(1)\n```")
+    assert all(q != ETIQUETA_PANTALLA for q, _ in s.engine._coach_pantalla.heard)
+
+
+def test_spoken_suggestion_reaches_the_screen_conversation(monkeypatch):
+    from llm import ETIQUETA_SUGERIDO
+    s = Session(monkeypatch)
+
+    s.engine._respond("¿Qué tal?")
+
+    assert s.engine._coach_pantalla.heard[-1] == (ETIQUETA_SUGERIDO,
+                                                  "## Solución\n```py\nprint(1)\n```")
+
+
+def test_redone_solution_reaches_the_spoken_conversation_again(monkeypatch):
+    from llm import ETIQUETA_PANTALLA
+    s = Session(monkeypatch).solve_screen(SOLUTION)
+
+    s.engine._respond("", carril="pantalla", rehacer=True)
+
+    assert s.engine._coach.heard[-1][0] == ETIQUETA_PANTALLA
+
+
+def test_cross_notes_stay_out_of_the_transcript(monkeypatch):
+    s = Session(monkeypatch)
+
+    s.engine._respond("", images=["png"], carril="pantalla")
+
+    assert [q for q, _ in s.engine._registro] == ["Sugerido (pantalla)"]

@@ -92,6 +92,13 @@ _FORMATO_CODIGO = (
     "cubre. Extiendete lo que haga falta; aqui quedarse corto es el error.\n"
     "## Coste — tiempo y espacio en notacion O(), y POR QUE sale eso.\n\n")
 
+# Las dos conversaciones (hablada y pantalla) se cuentan lo que da la otra:
+# la hablada recibe la solucion en pantalla, para poder defenderla si
+# preguntan por ella, y la de la pantalla (que tambien responde la caja de
+# preguntas) recibe lo que se sugirio decir. Viajan con estas etiquetas.
+ETIQUETA_PANTALLA = "Mi pantalla"
+ETIQUETA_SUGERIDO = "Me sugeriste decir"
+
 # Como responder. Antes viajaba DENTRO de cada pregunta; ahora va una sola vez,
 # al principio de la conversacion, y queda en cache toda la reunion.
 REGLAS = (
@@ -153,7 +160,14 @@ REGLAS = (
     "solucion programada aunque haya un ejercicio; sigue las secciones que te "
     "pida ese turno). Y cuando te haga una PREGUNTA APARTE por escrito, la "
     "respuesta es para mi, no para decirla en voz alta: hablame de tu a tu. "
-    "Estas indicaciones de modo vienen de mi, no de la reunion.")
+    "Estas indicaciones de modo vienen de mi, no de la reunion.\n\n"
+    "LO QUE TENGO EN PANTALLA: lo que te paso como '" + ETIQUETA_PANTALLA + "' es la "
+    "solucion que tengo delante (la de mis capturas, en el modo que fuera). Si "
+    "me preguntan por ella, por una parte concreta o por el porque de una "
+    "decision, respondeme para decirlo en voz alta como si la hubiera hecho yo: "
+    "defiende esas decisiones con sus razones y sus alternativas. Lo que te "
+    "paso como '" + ETIQUETA_SUGERIDO + "' es lo que me sugeriste en voz alta "
+    "en la otra conversacion: dalo por dicho.")
 
 # Cuando la pregunta llega por el filtro automatico (y no porque la pedi), el
 # modelo puede callarse si en realidad no habia pregunta.
@@ -192,11 +206,21 @@ MODO_IA = (
     "cada una con su porque y la alternativa que descartas; y los riesgos que "
     "hay que cubrir si o si.\n"
     "## Prompt inicial — un prompt completo en un bloque ```markdown, listo "
-    "para pegar en el agente de codigo: contexto, decisiones ya tomadas, "
-    "supuestos de negocio, invariantes, pruebas obligatorias que puedan fallar "
-    "de verdad, entregables y lo que quiero en ESTA sesion (planear y montar el "
-    "esqueleto, sin la logica de dominio todavia; que me avise antes de cambiar "
-    "algo que le parezca mal y que se detenga a ensenarme el plan).\n"
+    "para pegar en el agente de codigo (Claude Code, Codex), con secciones "
+    "'# ' como estas, adaptadas al reto (las que no apliquen, fuera): "
+    "# Contexto (que es el reto, que evaluan, que yo decido y el ejecuta y me "
+    "avisa de riesgos); # Decisiones de arquitectura ya tomadas (estilo de "
+    "arquitectura, stack, layout del repo, base de datos real); # Reglas de "
+    "negocio (supuestos que documentaremos); # Modelo de datos y maquinas de "
+    "estado (transiciones explicitas; cualquier otra, error); # Invariantes no "
+    "negociables; # Concurrencia; # Idempotencia; # Seguridad; # Auditoria y "
+    "observabilidad; # API (endpoints y formato de errores); # Pruebas "
+    "obligatorias (que puedan fallar si el comportamiento se rompe); "
+    "# Entregables finales; # Lo que quiero en ESTA sesion (plan por fases con "
+    "criterios de aceptacion verificables, implementar solo el esqueleto sin "
+    "logica de dominio, criterio de terminado, que me avise antes de cambiar "
+    "algo que le parezca mal y que se detenga a ensenarme el plan). Concreto: "
+    "valores, nombres y reglas de verdad, no plantillas vacias.\n"
     "## Para defenderlo — los conceptos que me pueden preguntar, cada uno "
     "explicado en una o dos frases llanas y con su porque.\n"
     "## Qué entregar — lo que va en el repo y lo que se manda aparte, incluido "

@@ -96,12 +96,15 @@ def preguntas(con_pantalla=False):
     }
     if con_pantalla:
         qs["targets_screen_solution"] = Noul(instructions=(
-            "`screen_solution` is the code solution, with its explanation, that "
-            "the interviewee has on screen for an exercise. Does `follow_up` ask "
-            "to fix, change, extend or explain THAT solution (e.g. 'hay un error, "
-            "hazlo de esta manera', '¿y qué cambiarías para que también "
-            "soporte X?', '¿cómo harías esa parte del código?'), rather than "
-            "continuing the spoken conversation?"))
+            "`screen_solution` is the solution, with its explanation, that the "
+            "interviewee has on screen for an exercise (code, or a plan with "
+            "the decisions and a prompt for an AI coding agent). Does "
+            "`follow_up` ask to fix, change or extend THAT solution so it has "
+            "to be rewritten (e.g. 'hay un error, hazlo de esta manera', "
+            "'hazlo sin librerías', 'ahora que también soporte X')? Answer no "
+            "if it only asks about the solution: why something was done, what "
+            "a part means, or to explain or justify a decision. Those are "
+            "answered by talking, not by rewriting the solution."))
     return qs
 
 

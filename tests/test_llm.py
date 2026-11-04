@@ -551,3 +551,15 @@ def test_side_question_retries_once_then_reports(coach):
     assert len(coach.client.calls) == 2
     assert out["errors"] == ["503 overloaded"] and out["done"] == 0
     assert coach._aparte == []
+
+
+def test_rules_explain_the_cross_notes():
+    assert f"'{llm.ETIQUETA_PANTALLA}'" in llm.REGLAS
+    assert f"'{llm.ETIQUETA_SUGERIDO}'" in llm.REGLAS
+
+
+def test_ai_prompt_follows_the_build_prompt_template():
+    for seccion in ("# Contexto", "# Decisiones de arquitectura ya tomadas",
+                    "# Invariantes no negociables", "# Pruebas obligatorias",
+                    "# Entregables finales", "# Lo que quiero en ESTA sesion"):
+        assert seccion in llm.MODO_IA

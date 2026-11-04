@@ -56,6 +56,7 @@ DEFAULT_ID = "coach"
 # mecanica nueva (p. ej. los modos manual / IA). Las editadas se respetan.
 _REGLAS_ANTERIORES = {
     "b678f93072d63b7a9024f700f6eb866fcecb6ebacba1db2a2178cd3ca834a2b3",   # hasta 5da77f9
+    "3f972cb668a37c3abde39af7687a4411329258d870f9d30b856efbb90b992b21",   # a58a46b
 }
 
 

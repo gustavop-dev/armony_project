@@ -199,10 +199,14 @@ Bloq Mayús está remapeada a otra tecla o Windows no deja instalar el hook.
   inicial listo para pegar** y los conceptos para defenderlo. Cada agente trae el
   suyo por defecto (Permisos); si lo cambias con una solución ya en pantalla, se
   rehace en el otro modo debajo de la anterior.
-- **La solución en pantalla no se relanza sola.** Si el entrevistador dice algo que
-  va para ella ("hay un error, hazlo así", "¿y qué cambiarías para…?"), Jev lo
+- **La solución en pantalla no se relanza sola.** Si el entrevistador pide
+  cambiarla ("hay un error, hazlo así", "ahora que también soporte X"), Jev lo
   detecta y el panel ofrece `↻ Update with: «…» — Caps+F`. Lo decides tú; al
   aceptarlo, la solución se reescribe en su sitio, marcada como actualizada.
+- **Si solo pregunta por ella** ("¿por qué elegiste un monolito?", "¿qué hace esa
+  parte?"), la respuesta sale sola en el **panel hablado**, para decirla en voz
+  alta defendiendo la decisión: la conversación hablada recibe cada solución de la
+  pantalla al terminarse (y la de la pantalla, lo que se sugirió decir).
 
 ### La caja de preguntas (`Bloq Mayús+E`)
 
@@ -225,6 +229,12 @@ partida?") y la respuesta sale en la caja, sin tocar lo que hay en los otros pan
   alternativa).
 - Las preguntas van de una en una: si escribes otra mientras llega una respuesta,
   espera su turno. Preguntas y respuestas quedan en el acta de la reunión.
+- **Subraya para preguntar**: arrastra el ratón sobre un trozo de cualquier panel
+  (la solución, una sugerencia, lo que dijeron, una respuesta de la caja) y pulsa
+  **✦ Explain**: la caja se abre (sin quitarte el teclado) y lo explica según el
+  modo. Si en vez de Explain pulsas `Bloq Mayús+E`, la pregunta empieza citando
+  el trozo (`«…» `) para que escribas la tuya. El cursor sigue siendo la flecha
+  al subrayar: el de texto se vería al compartir pantalla.
 
 **Para desplazar el hilo basta con poner el cursor encima**, con la rueda del ratón
 o con dos dedos en el panel táctil. Sigue el final según entra conversación, pero si

@@ -1280,3 +1280,77 @@ class TestResolution:
 
         assert ui.engine.resoluciones == []
         assert ui.screen.modo_chip.modo == "ia"
+
+
+class TestExplainSelection:
+    """Underline text in any panel, Explain -> the ask box answers it."""
+
+    @pytest.fixture
+    def meeting(self, ui):
+        ui.start_meeting()
+        yield ui
+        QtWidgets.QApplication.processEvents()
+
+    def test_explain_opens_the_box_without_taking_the_keyboard(self, meeting, native):
+        ui = meeting
+
+        ui.screen.explainRequested.emit("select_for_update", "pantalla:tu")
+
+        assert ui.ask.isVisible() is True
+        assert native["front"] == []
+        assert ui.engine.questions == [
+            "Explícame esto de tu solución en pantalla: «select_for_update»"]
+
+    def test_explain_while_an_answer_arrives_waits_its_turn(self, meeting):
+        ui = meeting
+        ui.ask.submitted.emit("primera")
+
+        ui.panel.explainRequested.emit("idempotencia", "voz:tu")
+
+        assert ui.engine.questions == ["primera"]
+        assert ui._preguntas_en_cola == [
+            "Explícame esto de lo que me sugeriste decir en voz alta: «idempotencia»"]
+
+    def test_explain_outside_a_meeting_does_nothing(self, ui):
+        ui.screen.explainRequested.emit("x", "pantalla:tu")
+
+        assert ui.ask.isVisible() is False and ui.engine.questions == []
+
+    def test_caps_e_with_a_selection_quotes_it_and_focuses_the_box(self, meeting, native,
+                                                                    monkeypatch):
+        ui = meeting
+        monkeypatch.setattr(ui.screen, "seleccion", lambda: ("ledger", "pantalla:tu"))
+        limpiadas = []
+        monkeypatch.setattr(ui.screen, "limpiar_seleccion", lambda: limpiadas.append(1))
+
+        ui.toggle_ask()
+
+        assert ui.ask.entrada.toPlainText() == "«ledger» "
+        assert native["front"] == [int(ui.ask.winId())]
+        assert limpiadas == [1]
+
+    def test_caps_e_with_a_selection_on_a_focused_box_quotes_instead_of_closing(
+            self, meeting, monkeypatch):
+        ui = meeting
+        ui.toggle_ask()
+        monkeypatch.setattr(ui.ask, "tiene_foco", lambda: True)
+        monkeypatch.setattr(ui.panel, "seleccion", lambda: ("hash", "voz:tu"))
+
+        ui.toggle_ask()
+
+        assert ui.ask.isVisible() is True
+        assert ui.ask.entrada.toPlainText() == "«hash» "
+
+
+@pytest.mark.parametrize("texto, origen, esperado", [
+    ("a   b\nc", "voz:ellos", "Explícame esto de lo que dijeron en la reunión: «a b c»"),
+    ("x", "raro:otro", "Explícame esto: «x»"),
+])
+def test_explain_question_text(texto, origen, esperado):
+    assert app.pregunta_subrayado(texto, origen) == esperado
+
+
+def test_explain_question_is_capped():
+    pregunta = app.pregunta_subrayado("a" * 5000, "pantalla:tu")
+
+    assert pregunta.endswith("a…»") and len(pregunta) < app.MAX_SUBRAYADO + 80

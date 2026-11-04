@@ -177,3 +177,10 @@ def test_juzgar_reads_the_screen_probability():
 
     sin = followup.juzgar(client, "q", "a", [], "hay un error")
     assert sin.pantalla == 0.0 and not followup.apunta_a_pantalla(sin)
+
+
+def test_questions_about_the_screen_solution_are_answered_by_talking():
+    texto = followup.preguntas(con_pantalla=True)["targets_screen_solution"].instructions
+
+    assert "fix, change or extend" in texto
+    assert "Answer no if it only asks about the solution" in texto

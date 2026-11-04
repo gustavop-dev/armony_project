@@ -36,6 +36,26 @@ log = logging.getLogger("armony.app")
 ALTO_MIN_PREGUNTA = 150
 ALTO_MIN_VOZ = 260
 
+# Subrayar un trozo y pulsar Explain: de donde sale, para decirselo al modelo.
+ORIGEN_SUBRAYADO = {
+    "voz:tu": "lo que me sugeriste decir en voz alta",
+    "voz:ellos": "lo que dijeron en la reunión",
+    "pantalla:tu": "tu solución en pantalla",
+    "pregunta:respuesta": "tu respuesta en la caja de preguntas",
+    "pregunta:pregunta": "mi pregunta en la caja",
+}
+MAX_SUBRAYADO = 2000          # caracteres del trozo que se mandan
+
+
+def pregunta_subrayado(texto, origen):
+    """La pregunta que sale al pulsar Explain sobre un trozo subrayado."""
+    texto = " ".join(texto.split())
+    if len(texto) > MAX_SUBRAYADO:
+        texto = texto[:MAX_SUBRAYADO] + "…"
+    donde = ORIGEN_SUBRAYADO.get(origen)
+    return (f"Explícame esto de {donde}: «{texto}»" if donde
+            else f"Explícame esto: «{texto}»")
+
 
 class OverlayApp(QtCore.QObject):
     def __init__(self):
@@ -272,6 +292,8 @@ class OverlayApp(QtCore.QObject):
         self.ask.closeClicked.connect(self.close_ask)
         for chip in (self.screen.modo_chip, self.ask.modo_chip):
             chip.changed.connect(self.set_resolucion)
+        for p in (self.panel, self.screen, self.ask):
+            p.explainRequested.connect(self.explicar)
 
         e = self.engine
         e.sysLevel.connect(self.panel.set_level)
@@ -554,14 +576,45 @@ class OverlayApp(QtCore.QObject):
             return
         if not self._visible:
             self.toggle_overlay()
+        texto, _origen = self._subrayado()
+        if texto:
+            # Con un trozo subrayado, la pregunta empieza citandolo.
+            self._limpiar_subrayados()
+            self.ask.citar(texto)
         if not self.ask.isVisible():
             self._partir_columna()
             self.ask.show()
             self._enfocar_pregunta()
-        elif self.ask.tiene_foco():
+        elif self.ask.tiene_foco() and not texto:
             self.close_ask()
         else:
             self._enfocar_pregunta()
+
+    def _subrayado(self):
+        """(texto, origen) subrayado en algun panel, o ("", "")."""
+        for p in (self.ask, self.screen, self.panel):
+            texto, origen = p.seleccion()
+            if texto:
+                return texto, origen
+        return "", ""
+
+    def _limpiar_subrayados(self):
+        for p in (self.panel, self.screen, self.ask):
+            p.limpiar_seleccion()
+
+    def explicar(self, texto, origen):
+        """Explain sobre un trozo subrayado: se pregunta en la caja. Se abre si
+        estaba cerrada, pero sin quitarte el teclado (solo hay que leer); para
+        seguir preguntando, Bloq Mayus+E."""
+        if not self._running or not texto.strip():
+            return
+        if not self.ask.isVisible():
+            if not self._visible:
+                self.toggle_overlay()
+            if not self.ask.isVisible():
+                self._partir_columna()
+                self.ask.show()
+        self.ask_question(pregunta_subrayado(texto, origen))
 
     def _enfocar_pregunta(self):
         previo = traer_al_frente(self.ask.winId())

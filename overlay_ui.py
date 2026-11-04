@@ -614,10 +614,10 @@ class CodeBlock(QtWidgets.QFrame):
         cuerpo.setWordWrap(True)
         cuerpo.setStyleSheet(cuerpo.styleSheet() +
                              "background: transparent; padding: 9px 11px;")
-        # Nada de texto seleccionable: Qt pondria el cursor de texto encima, y el
-        # cursor si se ve al compartir pantalla aunque la ventana no. Ademas la
-        # seleccion no funcionaria (esta zona deja pasar los clics): para eso esta
-        # el boton de copiar.
+        # Seleccionable solo si el panel lo pide (Burbuja), para preguntar por
+        # un trozo; siempre con la flecha: el cursor de texto se veria al
+        # compartir pantalla aunque la ventana no. Copiar entero: el boton.
+        self.cuerpo = cuerpo
         lay.addWidget(cuerpo)
 
     def _copiar(self):
@@ -700,9 +700,12 @@ class Burbuja(QtWidgets.QFrame):
     ETIQUETAS = {"ellos": "Participant", "tu": "You", "pregunta": "Question",
                  "respuesta": "Answer"}
 
-    def __init__(self, quien, ancho_maximo=700):
+    def __init__(self, quien, ancho_maximo=700, seleccionable=None):
         super().__init__()
         self.quien = quien                       # 'ellos' | 'tu' | 'pregunta' | 'respuesta'
+        # Lo pone el panel: hace seleccionable cada texto que se pinta, para
+        # poder subrayar un trozo y pedir que lo expliquen.
+        self.seleccionable = seleccionable
         self._raw = ""
         self._label = None                       # etiqueta reutilizada del texto
         self.copy_buttons = []
@@ -777,6 +780,7 @@ class Burbuja(QtWidgets.QFrame):
             self._label = QtWidgets.QLabel()
             self._label.setWordWrap(True)
             self._label.setTextFormat(QtCore.Qt.RichText)
+            self._seleccionable(self._label)
             self.cuerpo.addWidget(self._label)
         self._label.setText(html_)
 
@@ -791,11 +795,17 @@ class Burbuja(QtWidgets.QFrame):
                 if bloque[0] == richtext.CODE:
                     cb = CodeBlock(bloque[1], bloque[2])
                     self.copy_buttons.append(cb.btn_copy)
+                    self._seleccionable(cb.cuerpo)
                     self.cuerpo.addWidget(cb)
                 elif bloque[0] == richtext.BULLETS:
-                    self.cuerpo.addWidget(vinetas(bloque[1]))
+                    self.cuerpo.addWidget(self._seleccionable(vinetas(bloque[1])))
                 else:
-                    self.cuerpo.addWidget(parrafo(bloque[1]))
+                    self.cuerpo.addWidget(self._seleccionable(parrafo(bloque[1])))
+
+    def _seleccionable(self, label):
+        if self.seleccionable is not None:
+            self.seleccionable(label)
+        return label
 
 
 class NewBelowChip(QtWidgets.QPushButton):
@@ -1000,6 +1010,48 @@ class SuggestionChip(QtWidgets.QPushButton):
             self._rotular()
 
 
+class ExplainChip(QtWidgets.QPushButton):
+    """'✦ Explain': aparece junto al texto que acabas de subrayar en un panel.
+    Al pulsarlo, ese trozo va a la caja de preguntas y se explica alli."""
+
+    VISIBLE_MS = 8000            # si no se usa, se va solo
+
+    def __init__(self, parent):
+        super().__init__("Explain", parent)
+        self.setObjectName("explicar")
+        f = self.font(); f.setPixelSize(11); f.setWeight(QtGui.QFont.DemiBold); self.setFont(f)
+        self.setIcon(QtGui.QIcon(icons.pixmap("sparkles", T.ACCENT_BTN_INK, 12)))
+        self.setIconSize(QtCore.QSize(12, 12))
+        self.setToolTip("Explain the selected text in the Ask box")
+        self.setStyleSheet(
+            "QPushButton#explicar { color: #ffffff; border: none; border-radius: 10px;"
+            "  padding: 3px 10px; background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"  stop:0 {T.ACCENT_BTN_TOP}, stop:1 {T.ACCENT_BTN_BOT}); }}"
+            "QPushButton#explicar:hover { background: #8ea6ff; }")
+        self.setVisible(False)
+        self._timer = QtCore.QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(self.VISIBLE_MS)
+        self._timer.timeout.connect(self.ocultar)
+
+    def mostrar_en(self, punto):
+        """Justo debajo de donde se solto el raton, sin salirse del panel."""
+        self.adjustSize()
+        padre = self.parentWidget()
+        x = max(8, min(punto.x() - self.width() // 2, padre.width() - self.width() - 8))
+        y = punto.y() + 10
+        if y + self.height() > padre.height() - 8:
+            y = punto.y() - self.height() - 10       # sin sitio debajo: encima
+        self.move(x, max(8, y))
+        self.setVisible(True)
+        self.raise_()
+        self._timer.start()
+
+    def ocultar(self):
+        self._timer.stop()
+        self.setVisible(False)
+
+
 class ModoChip(QtWidgets.QFrame):
     """'Manual | AI': como se resuelve lo que hay en pantalla y lo que preguntas
     por escrito. Manual: el reto lo haces tu a mano (codigo explicado linea a
@@ -1039,7 +1091,6 @@ class ModoChip(QtWidgets.QFrame):
             f = b.font(); f.setPixelSize(11); f.setWeight(QtGui.QFont.DemiBold); b.setFont(f)
             b.setObjectName(f"modo-{clave}")
             b.setCheckable(True)
-            b.setCursor(QtCore.Qt.PointingHandCursor)
             b.setToolTip(ayuda)
             b.clicked.connect(lambda _c=False, k=clave: self._elegir(k))
             grupo.addButton(b)
@@ -1365,6 +1416,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
     relaunchClicked = QtCore.Signal()
     closeClicked = QtCore.Signal()
     agentChosen = QtCore.Signal(str)
+    # Subrayaste un trozo y pulsaste Explain: (texto, "modo:quien"), p. ej.
+    # "pantalla:tu" para la solucion o "voz:ellos" para lo que dijeron.
+    explainRequested = QtCore.Signal(str, str)
 
     def __init__(self, modo="voz"):
         super().__init__()
@@ -1426,6 +1480,12 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.resize_grip.setParent(self.card)
         self.resize_grip.raise_()
 
+        # Subrayar un trozo de texto -> boton "Explain" al lado.
+        self._label_sel = None
+        self._seleccion = ("", "")
+        self.chip_explicar = ExplainChip(self.card)
+        self.chip_explicar.clicked.connect(self._pedir_explicacion)
+
     def resizeEvent(self, e):
         _round_mask(self, T.R_PANEL)
         # reposicionar el agarre a la esquina inferior derecha
@@ -1485,6 +1545,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
                   self.resize_grip] + self._copy_buttons)
         if self.nuevo_chip.isVisible():
             zonas.append(self.nuevo_chip)
+        if self.chip_explicar.isVisible():
+            zonas.append(self.chip_explicar)
         for extra in (self.relanzar_chip, self.btn_close, self.agent_chip,
                       self.modo_chip):
             if extra.isVisible():
@@ -1493,7 +1555,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         # puede arrastrar, el trozo que sobresale seguiria sin poder leerse.
         if self.scroll.horizontalScrollBar().isVisible():
             zonas.append(self.scroll.horizontalScrollBar())
-        if self.scroll.verticalScrollBar().maximum() > 0:
+        # Con texto en el hilo, el hilo recibe el raton: se puede subrayar un
+        # trozo para pedir que lo expliquen (y desplazarlo con el panel tactil).
+        if self.scroll.verticalScrollBar().maximum() > 0 or self._burbujas:
             zonas.append(self.scroll.viewport())
         return zonas
 
@@ -1725,10 +1789,73 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
             w.deleteLater()
 
     def _nueva_burbuja(self, quien):
-        b = Burbuja(quien, self._ancho_burbuja())
+        b = Burbuja(quien, self._ancho_burbuja(), seleccionable=self._hacer_seleccionable)
         self._burbujas.append(b)
         self._añadir(b)
         return b
+
+    # ---------------- subrayar para preguntar
+    def _hacer_seleccionable(self, label):
+        """Texto que se puede subrayar con el raton, con la flecha de siempre."""
+        label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        label.setCursor(QtCore.Qt.ArrowCursor)
+        # El subrayado en el pervinca del overlay, no en el azul de Windows.
+        pal = label.palette()
+        for grupo in (QtGui.QPalette.Active, QtGui.QPalette.Inactive):
+            pal.setColor(grupo, QtGui.QPalette.Highlight, QtGui.QColor(124, 149, 255, 120))
+            pal.setColor(grupo, QtGui.QPalette.HighlightedText, QtGui.QColor("#ffffff"))
+        label.setPalette(pal)
+        label.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        if isinstance(obj, QtWidgets.QLabel):
+            tipo = ev.type()
+            if tipo == QtCore.QEvent.MouseButtonPress:
+                # Una seleccion cada vez: la de otro texto se borra.
+                previa = self._label_sel
+                if previa is not None and previa is not obj and isValid(previa):
+                    previa.setSelection(0, 0)
+                self.chip_explicar.ocultar()
+            elif tipo == QtCore.QEvent.MouseButtonRelease:
+                punto = ev.position().toPoint()
+                # La etiqueta termina la seleccion al procesar este evento.
+                QtCore.QTimer.singleShot(0, self, lambda o=obj, p=punto: self._tras_soltar(o, p))
+        return super().eventFilter(obj, ev)
+
+    def _tras_soltar(self, label, punto):
+        if not isValid(label):
+            return
+        texto = label.selectedText().strip()
+        if not texto:
+            self.chip_explicar.ocultar()
+            return
+        burbuja = label.parentWidget()
+        while burbuja is not None and not isinstance(burbuja, Burbuja):
+            burbuja = burbuja.parentWidget()
+        quien = burbuja.quien if burbuja is not None else ""
+        self._label_sel = label
+        self._seleccion = (texto, f"{self.modo}:{quien}")
+        self.chip_explicar.mostrar_en(label.mapTo(self.card, punto))
+
+    def seleccion(self):
+        """(texto, origen) subrayado ahora mismo, o ("", "")."""
+        label = self._label_sel
+        if label is None or not isValid(label) or not label.hasSelectedText():
+            return ("", "")
+        return self._seleccion
+
+    def limpiar_seleccion(self):
+        if self._label_sel is not None and isValid(self._label_sel):
+            self._label_sel.setSelection(0, 0)
+        self._label_sel = None
+        self._seleccion = ("", "")
+        self.chip_explicar.ocultar()
+
+    def _pedir_explicacion(self):
+        texto, origen = self.seleccion()
+        self.limpiar_seleccion()
+        if texto:
+            self.explainRequested.emit(texto, origen)
 
     # ---------------- estado visual (borde + animacion)
     def _apply_border(self):
@@ -1934,6 +2061,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
 
     def limpiar_hilo(self):
         """Vacia la conversacion (al empezar una reunion nueva)."""
+        self.limpiar_seleccion()
         self._timer_repintado.stop()
         self._repintado_pendiente = False
         self._burbuja_viva = None
@@ -2094,6 +2222,8 @@ class AskPanel(TranscriptPanel):
         self.entrada.setObjectName("entrada")
         self.entrada.setPlaceholderText("Ask about the screen or the meeting…")
         self.entrada.setTabChangesFocus(True)
+        # Flecha tambien aqui: el cursor de texto se veria al compartir pantalla.
+        self.entrada.viewport().setCursor(QtCore.Qt.ArrowCursor)
         f = self.entrada.font(); f.setPixelSize(14); self.entrada.setFont(f)
         self.entrada.setStyleSheet(
             "QPlainTextEdit#entrada {"
@@ -2117,7 +2247,6 @@ class AskPanel(TranscriptPanel):
         self.btn_enviar.setObjectName("enviar")
         self.btn_enviar.setIcon(QtGui.QIcon(icons.pixmap("chevron_right", T.ACCENT_BTN_INK, 16)))
         self.btn_enviar.setFixedSize(34, 34)
-        self.btn_enviar.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_enviar.setToolTip("Send (Enter)")
         self.btn_enviar.setStyleSheet(
             "QPushButton#enviar { border: none; border-radius: 17px; background: "
@@ -2145,6 +2274,13 @@ class AskPanel(TranscriptPanel):
     def enfocar(self):
         """El cursor, en la caja de texto."""
         self.entrada.setFocus(QtCore.Qt.ActiveWindowFocusReason)
+
+    def citar(self, texto):
+        """Empieza la pregunta citando un trozo subrayado: «...» y tu pregunta."""
+        if self.entrada.toPlainText().strip():
+            return                        # no se pisa lo que ya escribias
+        self.entrada.setPlainText(f"«{texto}» ")
+        self.entrada.moveCursor(QtGui.QTextCursor.MoveOperation.End)
 
     def tiene_foco(self):
         return self.isVisible() and self.isActiveWindow()

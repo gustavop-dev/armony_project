@@ -426,9 +426,12 @@ class CoachEngine(QtCore.QObject):
     def _arbitrar(self, texto, es_pregunta, datos):
         """Jev juzga el anadido (~150 ms) y la regla de followup decide.
 
-        Si hay una solucion en pantalla, Jev mira tambien si lo dicho va para
-        ella ("hay un error, hazlo asi"). Entonces no se responde hablando: se
-        ofrece relanzar la solucion con ello, y el tester decide (Bloq Mayus+F).
+        Si hay una solucion en pantalla, Jev mira tambien si lo dicho pide
+        cambiarla ("hay un error, hazlo asi"). Entonces no se responde hablando:
+        se ofrece relanzar la solucion con ello, y el tester decide (Bloq
+        Mayus+F). Si solo preguntan por ella ("¿por que elegiste esto?"), sigue
+        el camino normal y se responde hablando: la conversacion hablada tiene
+        la solucion (se le pasa al terminarla).
         """
         hilo_actual, estado, pregunta, respuesta, dijo_tester = datos
         solucion = self._solucion_pantalla
@@ -879,6 +882,14 @@ class CoachEngine(QtCore.QObject):
             # La sugerencia ya queda en la conversacion del coach: el modelo la
             # da por dicha y continua desde ahi en vez de repetirse. Y en el
             # hilo, para que el arbitro sepa que se le sugirio.
+            # Cada conversacion sabe lo que dio la otra: si preguntan hablando
+            # por la solucion en pantalla (el porque de algo), la respuesta
+            # hablada la conoce; y la caja de preguntas sabe lo sugerido.
+            from llm import ETIQUETA_PANTALLA, ETIQUETA_SUGERIDO
+            otro = self._coach if pantalla else self._coach_pantalla
+            if otro is not None:
+                otro.anotar(ETIQUETA_PANTALLA if pantalla else ETIQUETA_SUGERIDO,
+                            estado["todo"])
             if pantalla:
                 self._solucion_pantalla = estado["todo"]
                 self._solucion_modo = resolucion
