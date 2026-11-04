@@ -318,6 +318,30 @@ class TestLifecycle:
             "effort_voice": "low", "effort_vision": "medium",
         }
 
+    def test_cache_key_is_the_agents_so_the_home_prewarm_counts(self, subject, cfg,
+                                                                  dependencies):
+        cfg["agent"] = "grok"
+
+        subject._init_and_run(cfg)
+
+        assert subject._coach.options["cache_key"] == "armony-grok"
+        assert subject._coach_pantalla.options["cache_key"] == "armony-grok"
+
+    def test_screen_lane_reads_the_agents_repos(self, subject, cfg, dependencies):
+        import agents
+        import repos
+        repos.guardar("gus__acme__main", {"owner": "gus", "nombre": "acme", "rama": "main",
+                                          "commit": "f" * 40}, [("a.py", "x")])
+        lista = agents.list_agents()
+        lista[0]["conocimiento"] = [{"id": "doc-1", "name": "Repo · gus/acme",
+                                     "body": "memoria", "repo": {"id": "gus__acme__main"}}]
+        agents.write_all(lista)
+
+        subject._init_and_run(cfg)
+
+        assert subject._coach_pantalla.options["herramientas"].nombres == ["acme"]
+        assert "herramientas" not in subject._coach.options
+
     def test_both_lanes_start_with_the_same_agent(self, subject, cfg, dependencies):
         import agents
         cfg["agent"] = "grok"

@@ -398,6 +398,31 @@ escribe y pone **ojitos felices** con un saltito al terminarla.
 - **Conocimiento**: sus documentos (tu CV, la oferta, el producto…), como los de un
   GPT o un proyecto. Se le dan enteros al empezar la reunión. Los contextos activos
   de versiones anteriores pasaron, una sola vez, al agente que estaba en uso.
+- **Repositorios de GitHub** (*Conectar repositorio*, en Conocimiento): para
+  reuniones en las que te preguntan por una implementación tuya. Todo lo pesado se
+  hace **antes**, al conectarlo o al pulsar *Actualizar*, nunca al empezar la
+  reunión:
+  1. Se descarga el código de un commit concreto a una copia local
+     (`repos/<repo>/archivos.zip`), sin dependencias, compilados, binarios ni
+     lockfiles.
+  2. El modelo lee lo principal (código central primero; documentación y
+     configuración de asistentes de IA con tope) y escribe la **memoria del
+     repo**: qué es, arquitectura, modelo de datos, flujos, decisiones y su
+     porqué, detalles delicados, puntos débiles y dónde está cada cosa. Tarda unos
+     minutos y se ve en el documento mientras avanza. Es un documento más: se lee
+     y se edita.
+  3. En la reunión la memoria ya está en el prompt. Si hace falta el código
+     exacto, la conversación de la pantalla y la caja de preguntas lo **leen de la
+     copia local** (`leer_archivos`, `buscar_en_repo`): al instante y solo lo que
+     piden. La hablada responde con la memoria, para no añadir latencia.
+
+  Repos privados: token de GitHub en Ajustes (lectura de contenido; se guarda
+  cifrado y solo viaja a la API de GitHub). Para escribir la memoria se manda a
+  OpenAI lo principal del código, una vez por sincronización.
+- **Precarga**: al abrir un agente en la Home, su conocimiento se calienta en la
+  caché del modelo en segundo plano (con una clave de caché por agente), así que
+  al iniciar la reunión la primera respuesta no paga el procesado de todo ese
+  contexto. No se repite mientras siga en caché.
 
 Vienen cuatro de ejemplo: **Coach** (el de siempre), **Directo**, **Grok**
 (ingenioso e irreverente, sin pasarse en una reunión) y **Senior técnico**. Uno

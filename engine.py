@@ -201,7 +201,7 @@ class CoachEngine(QtCore.QObject):
 
     def _init_and_run(self, cfg):
         # Importes tardios para que la ventana abra rapido.
-        from llm import Coach
+        import llm  # noqa: F401  (precarga crea los coaches; las pruebas lo sustituyen)
         from audio import AudioEngine
         from stt_stream import StreamingSTT
 
@@ -243,36 +243,18 @@ class CoachEngine(QtCore.QObject):
                 self._agente = (agente["id"], agente["name"])
                 self._permisos(agente)
                 self._clave_notas = (cfg["openai_api_key"], cfg["openai_model"])
-                sys_prompt = agents_mod.system_prompt(agente)
                 metricas.nota(f"agente: {agente['name']}")
-                # Un modelo y dos conversaciones: la hablada razona poco y la de
-                # la pantalla mas. Empiezan igual (prompt + contextos), asi que
-                # ese principio se cachea una vez y lo aprovechan las dos.
-                cache_key = f"armony-{time.strftime('%Y%m%d-%H%M%S')}"
-                self._coach = Coach(
-                    api_key=cfg["openai_api_key"],
-                    system_prompt=sys_prompt,
-                    model=cfg["openai_model"],
-                    tokens_voice=int(cfg["openai_tokens_voice"]),
-                    tokens_vision=int(cfg["openai_tokens_vision"]),
-                    effort_voice=cfg.get("openai_effort_voice", "low"),
-                    effort_vision=cfg.get("openai_effort_vision", "medium"),
-                    # Una clave por reunion: el gasto en cache se ve por sesion.
-                    cache_key=cache_key,
-                    reglas=agente["reglas"],
-                )
-                esfuerzo_pantalla = cfg.get("openai_effort_vision", "medium")
-                self._coach_pantalla = Coach(
-                    api_key=cfg["openai_api_key"],
-                    system_prompt=sys_prompt,
-                    model=cfg["openai_model"],
-                    tokens_voice=int(cfg["openai_tokens_vision"]),
-                    tokens_vision=int(cfg["openai_tokens_vision"]),
-                    effort_voice=esfuerzo_pantalla,
-                    effort_vision=esfuerzo_pantalla,
-                    cache_key=cache_key,
-                    reglas=agente["reglas"],
-                )
+                # Las dos conversaciones, igual que las calienta la Home al
+                # abrir el agente (precarga.py): con la misma clave de cache, lo
+                # ya calentado sirve. La de la pantalla puede leer el codigo de
+                # los repos conectados (copia local, repos.py).
+                import precarga
+                import repos
+                herramientas = repos.herramientas(agente)
+                if herramientas:
+                    metricas.nota(f"repos: {', '.join(herramientas.nombres)}")
+                self._coach, self._coach_pantalla = precarga.crear_coaches(
+                    cfg, agente, herramientas)
             except Exception as e:
                 self._init_failed(f"No se pudo iniciar el modelo de respuestas: {e}")
                 return

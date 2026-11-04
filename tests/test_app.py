@@ -1354,3 +1354,12 @@ def test_explain_question_is_capped():
     pregunta = app.pregunta_subrayado("a" * 5000, "pantalla:tu")
 
     assert pregunta.endswith("a…»") and len(pregunta) < app.MAX_SUBRAYADO + 80
+
+
+class TestPrewarm:
+    def test_starting_agent_is_prewarmed_and_opening_another_too(self, ui, no_prewarm):
+        assert no_prewarm[0] == ui.cfg.get("agent", "coach")
+
+        ui.home.abrir_agente("grok")
+
+        assert no_prewarm[-1] == "grok"

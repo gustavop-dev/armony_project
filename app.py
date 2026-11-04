@@ -17,6 +17,7 @@ import agents as agents_mod
 import applog
 import avatares
 import config as cfg_mod
+import precarga
 import theme as T
 from engine import CoachEngine
 from overlay import (devolver_foco, set_acrylic, set_capture_protection,
@@ -116,6 +117,11 @@ class OverlayApp(QtCore.QObject):
         self.home.saved.connect(self._on_home_saved)
         self.home.proteger_ventana = lambda ventana: set_capture_protection(
             ventana.winId(), bool(self.cfg.get("invisible_on_share", True)))
+        # Al abrir un agente en la Home se precarga su conocimiento en la cache
+        # del modelo: al iniciar la reunion la primera respuesta ya no lo paga.
+        self.home.al_ver_agente = lambda agente: agente is not None and \
+            precarga.precalentar(self.cfg, agente)
+        self.home.al_ver_agente(agents_mod.get(self.cfg.get("agent")))   # el de arranque
         set_capture_protection(self.home.winId(),
                                bool(self.cfg.get("invisible_on_share", True)))
         self.home.show()

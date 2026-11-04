@@ -42,7 +42,8 @@ CONFIG_PATH = os.path.join(data_dir(), "config.json")
 # secretstore). La clave de Anthropic ya no esta aqui: no se descifra ni se usa,
 # pero si sigue en config.json se conserva tal cual, cifrada. La integracion con
 # Claude se quito "por ahora" y volver no debe exigir escribirla de nuevo.
-CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key", "typesafe_api_key")
+CLAVES_SECRETAS = ("openai_api_key", "assemblyai_api_key", "typesafe_api_key",
+                   "github_token")
 
 # Prompt del agente Coach (agents.py): uno por idioma, cada instruccion en el suyo.
 DEFAULT_PROMPT_ES = (
@@ -110,6 +111,9 @@ DEFAULTS = {
     # otra o es ruido (followup.py). Sin clave se usa la regla fija de hilo.py:
     # todo anadido es contexto hasta que contestas.
     "typesafe_api_key": "",
+    # --- Repositorios de GitHub (repos.py) ---
+    # Solo para conectar repos privados; los publicos no lo necesitan.
+    "github_token": "",
     # --- Transcripcion ---
     # Por defecto se transcribe en la nube (AssemblyAI Universal Streaming): el
     # texto llega palabra a palabra mientras se habla, no al terminar la frase.

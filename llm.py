@@ -272,6 +272,38 @@ _RESERVA_RAZONAMIENTO = 1000
 LIMITE_TOKENS = 150_000
 TURNOS_TRAS_RECORTE = 30
 
+# Herramientas (repos.Herramientas): leer el codigo de un repo conectado. Cada
+# ronda es una ida y vuelta al modelo; despues de estas, responde con lo que ya
+# leyo (tool_choice "none").
+MAX_RONDAS_HERRAMIENTAS = 3
+_TIPOS_HERRAMIENTA = ("function_call", "function_call_output", "reasoning")
+
+
+# Lo que la API admite de vuelta de cada elemento de su salida. El SDK anade
+# campos propios (parsed_arguments, parsed...) que la API rechaza como entrada.
+_CAMPOS_ENTRADA = {
+    "function_call": ("type", "id", "call_id", "name", "arguments"),
+    "reasoning": ("type", "id", "summary", "encrypted_content"),
+    "message": ("type", "id", "role", "content"),
+}
+_CAMPOS_TEXTO = {"output_text": ("type", "text", "annotations"),
+                 "refusal": ("type", "refusal")}
+
+
+def _como_dict(item):
+    """Un elemento de la salida del modelo, listo para volver a mandarlo (o
+    None si no hace falta: otros tipos de salida)."""
+    d = item if isinstance(item, dict) else item.model_dump(exclude_none=True)
+    campos = _CAMPOS_ENTRADA.get(d.get("type"))
+    if campos is None:
+        return None
+    limpio = {k: d[k] for k in campos if k in d}
+    if limpio["type"] == "message":
+        limpio["content"] = [
+            {k: c[k] for k in _CAMPOS_TEXTO.get(c.get("type"), ()) if k in c}
+            for c in d.get("content") or [] if c.get("type") in _CAMPOS_TEXTO]
+    return limpio
+
 
 class Coach:
     """Cliente del coach. UN modelo para todo; lo que cambia es cuanto piensa.
@@ -288,7 +320,7 @@ class Coach:
     def __init__(self, api_key, system_prompt="", model="gpt-6.1-sol",
                  tokens_voice=400, tokens_vision=None,
                  effort_voice="low", effort_vision="medium", cache_key=None,
-                 reglas=REGLAS):
+                 reglas=REGLAS, herramientas=None):
         import openai
         self.client = openai.OpenAI(
             api_key=api_key, max_retries=_MAX_RETRIES_SDK,
@@ -298,6 +330,8 @@ class Coach:
         self.system_prompt = system_prompt
         # Las del agente (editables); por defecto, las de siempre.
         self.reglas = reglas
+        # Leer el codigo de los repos conectados (repos.Herramientas), o None.
+        self.herramientas = herramientas
         self.model = model
         self.tokens_voice = int(tokens_voice)
         self.tokens_vision = int(tokens_vision or tokens_voice)
@@ -392,6 +426,10 @@ class Coach:
         if chars / 4 <= LIMITE_TOKENS:
             return
         resto = [it for it in self._items[1:] if it.get("type") != "configuration_update"]
+        # Las lecturas de codigo se van enteras: una llamada sin su resultado, o
+        # sin el razonamiento que la produjo, haria que la API rechazara la
+        # conversacion. Lo que dijo el modelo despues se queda.
+        resto = [it for it in resto if it.get("type") not in _TIPOS_HERRAMIENTA]
         self._items = [self._items[0]] + resto[-TURNOS_TRAS_RECORTE:]
         self._esfuerzo_vigente = self.effort_voice
         metricas.contar("recortes_conversacion")
@@ -448,10 +486,10 @@ class Coach:
                     on_delta(txt)
 
             try:
-                self._stream_openai(base + nuevos, tokens, esfuerzo, delta)
+                leido = self._responder(base + nuevos, tokens, esfuerzo, delta)
                 metricas.medir(LLM_TOTAL, (time.monotonic() - t0) * 1000)
                 metricas.contar("respuestas")
-                self._guardar_turno(nuevos, esfuerzo, "".join(texto))
+                self._guardar_turno(nuevos + leido, esfuerzo, "".join(texto))
                 if on_done:
                     on_done()
                 return
@@ -535,12 +573,12 @@ class Coach:
                     on_delta(txt)
 
             try:
-                self._stream_openai(base + [mensaje], tokens, esfuerzo, delta,
-                                    cancelar=self._cancelar_aparte)
+                leido = self._responder(base + [mensaje], tokens, esfuerzo, delta,
+                                        cancelar=self._cancelar_aparte)
                 metricas.contar("preguntas_aparte")
                 with self._lock:
-                    self._aparte.extend([mensaje, {"role": "assistant",
-                                                   "content": "".join(texto) or "(vacia)"}])
+                    self._aparte.extend([mensaje] + leido + [
+                        {"role": "assistant", "content": "".join(texto) or "(vacia)"}])
                 if on_done:
                     on_done()
                 return
@@ -575,14 +613,14 @@ class Coach:
                 self.client.responses.create(
                     model=self.model, input=[self._items[0]],
                     reasoning={"effort": self.effort_voice},
-                    **self._cache_kwargs(prewarm=True))
+                    **self._tools_kwargs(), **self._cache_kwargs(prewarm=True))
             except Exception:
                 # Sin prewarm: una peticion minima, que al menos abre la conexion
                 # y pasa el prompt una primera vez.
                 self.client.responses.create(
                     model=self.model, input=[self._items[0]],
                     reasoning={"effort": self.effort_voice}, max_output_tokens=16,
-                    **self._cache_kwargs())
+                    **self._tools_kwargs(), **self._cache_kwargs())
             return (time.monotonic() - t0) * 1000
         except Exception as e:
             log.warning("LLM warm-up failed: %s", _describe_error(e, self._secret))
@@ -604,7 +642,52 @@ class Coach:
             kw["prompt_cache_key"] = self.cache_key
         return kw
 
-    def _stream_openai(self, items, tokens, esfuerzo, on_delta, cancelar=None):
+    def _tools_kwargs(self, sin_mas_llamadas=False):
+        """Las herramientas van en todas las peticiones de este coach (y en el
+        calentamiento): forman parte del principio que se cachea."""
+        if not self.herramientas:
+            return {}
+        kw = {"tools": self.herramientas.definiciones()}
+        if sin_mas_llamadas:
+            kw["tool_choice"] = "none"
+        return kw
+
+    def _responder(self, items, tokens, esfuerzo, on_delta, cancelar=None):
+        """Una respuesta, leyendo codigo si el modelo lo pide.
+
+        Si en vez de responder pide leer archivos o buscar en el repo, se hace
+        aqui (de la copia local, al instante) y se le devuelve el resultado; lo
+        que ya hubiera escrito se queda. Devuelve los elementos de esas lecturas,
+        que pasan a la conversacion: lo leido sirve para las siguientes.
+        """
+        leido = []
+        corte = self._cancelar if cancelar is None else cancelar
+        for ronda in range(MAX_RONDAS_HERRAMIENTAS + 1):
+            ultima = ronda == MAX_RONDAS_HERRAMIENTAS
+            final = self._stream_openai(items + leido, tokens, esfuerzo, on_delta,
+                                        cancelar=cancelar, sin_mas_llamadas=ultima)
+            if final is None or not self.herramientas or corte.is_set():
+                return leido
+            salida = list(getattr(final, "output", None) or [])
+            llamadas = [it for it in salida if getattr(it, "type", None) == "function_call"
+                        or (isinstance(it, dict) and it.get("type") == "function_call")]
+            if not llamadas:
+                return leido
+            leido.extend(x for x in (_como_dict(it) for it in salida) if x is not None)
+            for llamada in llamadas:
+                c = _como_dict(llamada)
+                metricas.contar("lecturas_repo")
+                log.info("Model reads the repo: %s %s", c.get("name"),
+                         (c.get("arguments") or "")[:200])
+                leido.append({"type": "function_call_output", "call_id": c["call_id"],
+                              "output": self.herramientas.ejecutar(c.get("name"),
+                                                                   c.get("arguments"))})
+        return leido
+
+    def _stream_openai(self, items, tokens, esfuerzo, on_delta, cancelar=None,
+                       sin_mas_llamadas=False):
+        """Pide la respuesta en streaming. Devuelve la respuesta final (con lo
+        que pidio hacer, si pidio leer codigo), o None si se corto."""
         # El razonamiento general es siempre el de voz; si el modelo no admite
         # configuration_update, se manda el de este turno (y se pierde cache).
         general = self.effort_voice if self._config_update_ok else esfuerzo
@@ -613,13 +696,14 @@ class Coach:
             input=items,
             max_output_tokens=tokens + _RESERVA_RAZONAMIENTO,
             reasoning={"effort": general},
+            **self._tools_kwargs(sin_mas_llamadas),
             **self._cache_kwargs(),
         ) as stream:
             corte = self._cancelar if cancelar is None else cancelar
             for ev in stream:
                 if corte.is_set():
                     metricas.contar("respuestas_cortadas")
-                    return               # al salir del with se cierra la conexion
+                    return None          # al salir del with se cierra la conexion
                 if ev.type == "response.output_text.delta" and on_delta:
                     on_delta(ev.delta)
             final = stream.get_final_response()
@@ -630,3 +714,4 @@ class Coach:
             self.ultimo_uso = (uso.input_tokens, cacheados)
             metricas.contar("tokens_entrada", uso.input_tokens)
             metricas.contar("tokens_cacheados", cacheados)
+        return final

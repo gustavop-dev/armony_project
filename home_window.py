@@ -37,6 +37,7 @@ import contexts as ctx_mod
 import estilo
 import icons
 import neu as N
+import repos
 import sesiones
 import theme as T
 
@@ -54,8 +55,9 @@ GUARDADO_MS = 600
 CONFIRMAR_MS = 3000
 # Reuniones que se ensenan bajo cada agente en la barra lateral.
 REUNIONES_POR_AGENTE = 5
-# Por encima de esto el conocimiento encarece y retrasa la primera respuesta.
-AVISO_TOKENS = 4000
+# Por encima de esto el conocimiento encarece cada respuesta (aunque vaya en
+# cache) y tarda en procesarse la primera vez; se precarga al abrir el agente.
+AVISO_TOKENS = 30000
 
 
 # ------------------------------------------------------------------ piezas
@@ -395,6 +397,7 @@ class _Trabajo(QtCore.QObject):
     """Lleva el resultado de un hilo de fondo al hilo de Qt (conexion en cola)."""
     listo = QtCore.Signal(object)
     fallo = QtCore.Signal(str)
+    progreso = QtCore.Signal(str)
 
 
 class _BotonColor(QtWidgets.QAbstractButton):
@@ -602,6 +605,66 @@ def _resumen(texto, largo=160):
     return ""
 
 
+class ConectarRepo(QtWidgets.QDialog):
+    """URL del repositorio de GitHub (y rama, si no es la principal)."""
+
+    def __init__(self, parent=None, url="", rama=""):
+        super().__init__(parent)
+        self.setWindowTitle("Conectar repositorio")
+        self.setStyleSheet(f"QDialog {{ background: {N.BG}; }} QLabel {{ background: transparent; }}"
+                           + N.qss_campo())
+        self.setMinimumWidth(500)
+        v = QtWidgets.QVBoxLayout(self); v.setContentsMargins(26, 22, 26, 18); v.setSpacing(10)
+        t = QtWidgets.QLabel("Conectar un repositorio de GitHub")
+        tf = t.font(); tf.setPixelSize(17); tf.setWeight(QtGui.QFont.DemiBold); t.setFont(tf)
+        t.setStyleSheet(f"color: {N.TITULO};")
+        v.addWidget(t)
+        self.url = QtWidgets.QLineEdit(url)
+        self.url.setObjectName("url-repo")
+        self.url.setPlaceholderText("https://github.com/usuario/repo")
+        v.addWidget(N.campo(self.url))
+        self.rama = QtWidgets.QLineEdit(rama)
+        self.rama.setObjectName("rama-repo")
+        self.rama.setPlaceholderText("Rama (vacío = la principal)")
+        v.addWidget(N.campo(self.rama))
+        info = QtWidgets.QLabel(
+            "Se descarga el código a este equipo y el modelo escribe la memoria del "
+            "repositorio: qué es, cómo está hecho, las decisiones y dónde está cada "
+            "cosa. Para eso se manda a OpenAI lo principal del código, una vez. En la "
+            "reunión la memoria ya está cargada; el código exacto se lee de la copia "
+            "local solo cuando hace falta. Repos privados: token de GitHub en Ajustes.")
+        info.setObjectName("info")
+        info.setWordWrap(True)
+        info.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px;")
+        v.addWidget(info)
+        self.error = QtWidgets.QLabel("")
+        self.error.setObjectName("error")
+        self.error.setWordWrap(True)
+        self.error.setStyleSheet(f"color: {N.PELIGRO}; font-size: 12px;")
+        self.error.setVisible(False)
+        v.addWidget(self.error)
+        botones = QtWidgets.QHBoxLayout(); botones.addStretch()
+        cancelar = N.Button("Cancelar", radio=14)
+        cancelar.clicked.connect(self.reject)
+        self.ok = N.Button("Conectar", icono="code", variante="acento", radio=14)
+        self.ok.setObjectName("conectar")
+        self.ok.clicked.connect(self._validar)
+        botones.addWidget(cancelar); botones.addWidget(self.ok)
+        v.addLayout(botones)
+
+    def _validar(self):
+        try:
+            repos.parse_url(self.url.text())
+        except repos.RepoError as e:
+            self.error.setText(str(e))
+            self.error.setVisible(True)
+            return
+        self.accept()
+
+    def valores(self):
+        return self.url.text().strip(), self.rama.text().strip()
+
+
 def _ajustes():
     """Lo que el usuario configura (el resto va fijo en config.FIJAS)."""
     return [
@@ -616,6 +679,10 @@ def _ajustes():
                  secret=True, placeholder="apikey_…",
                  hint="Opcional. Decide si lo que añaden a una pregunta cambia la "
                       "respuesta o es ruido. Sin ella, todo añadido es contexto."),
+            dict(key="github_token", label="Token de GitHub", type="text",
+                 secret=True, placeholder="github_pat_…",
+                 hint="Opcional. Solo para conectar repositorios privados a un "
+                      "agente (permiso de lectura de contenido)."),
         ]),
         ("General", "El idioma de la reunión y cómo se ve el overlay.", [
             dict(key="language", label="Idioma", type="select",
@@ -658,6 +725,11 @@ class HomeWindow(QtWidgets.QWidget):
         # pestana abierta en la pagina de una reunion.
         self._notas_estado = {}
         self.pestana_sesion = "notas"
+        # Repositorios que se estan sincronizando: documento -> lo que esta haciendo.
+        self._sincronizando = {}
+        # La app pasa aqui como precargar el agente que se abre (precarga.py),
+        # para que al iniciar la reunion su conocimiento ya este en cache.
+        self.al_ver_agente = None
         # La app pasa aqui como excluir de la captura las ventanas que abre la
         # Home (el dialogo del tono), igual que la propia Home.
         self.proteger_ventana = None
@@ -889,6 +961,8 @@ class HomeWindow(QtWidgets.QWidget):
             self.vista = tipo, cual = ("agente", self.agente_actual())
         if tipo == "agente":
             pagina = self._vista_portada(self._ag_get(cual))
+            if self.al_ver_agente is not None:
+                self.al_ver_agente(self._ag_get(cual))
         elif tipo == "editar":
             pagina = self._vista_agente(self._ag_get(cual))
         elif tipo == "sesion":
@@ -1324,6 +1398,11 @@ class HomeWindow(QtWidgets.QWidget):
         add.setObjectName("anadir-documento")
         add.clicked.connect(lambda _c=False, aid=a["id"]: self._doc_add(aid))
         col.addWidget(add)
+        repo = N.Button("Conectar repositorio", icono="code", radio=14, color_icono=ACENTO)
+        repo.setObjectName("conectar-repo")
+        repo.setToolTip("Un repositorio de GitHub: el agente se aprende la implementación")
+        repo.clicked.connect(lambda _c=False, aid=a["id"]: self._repo_dialogo(aid))
+        col.addWidget(repo)
         docs = a["conocimiento"]
         if self.sel_doc not in {d["id"] for d in docs}:
             self.sel_doc = docs[0]["id"] if docs else None
@@ -1335,8 +1414,9 @@ class HomeWindow(QtWidgets.QWidget):
                               f"background: transparent; padding: 8px 6px 0 6px;")
         col.addWidget(resumen)
         if total > AVISO_TOKENS:
-            warn = QtWidgets.QLabel("⚠ Mucho texto: sube el coste y el tiempo de la "
-                                    "primera respuesta.")
+            warn = QtWidgets.QLabel("⚠ Mucho texto: encarece cada respuesta. Se "
+                                    "precarga al abrir el agente para que la primera "
+                                    "no tarde.")
             warn.setWordWrap(True)
             warn.setStyleSheet(f"color: {N.AVISO}; font-size: 11px; background: transparent; "
                                f"padding: 0 6px;")
@@ -1359,7 +1439,7 @@ class HomeWindow(QtWidgets.QWidget):
         nm = QtWidgets.QLabel(d["name"])
         nm.setStyleSheet(f"color: {ACENTO if elegido else N.TITULO}; font-weight: 600; "
                          f"font-size: 13px; background: transparent;")
-        tk = QtWidgets.QLabel(f"~{ctx_mod.estimate_tokens(d['body'])} tok")
+        tk = QtWidgets.QLabel(self._sub_doc(d))
         tk.setStyleSheet(f"color: {TXT_FA}; font-family: {MONO}; font-size: 10px; "
                          f"background: transparent;")
         col.addWidget(nm); col.addWidget(tk)
@@ -1368,6 +1448,66 @@ class HomeWindow(QtWidgets.QWidget):
         borrar.confirmed.connect(lambda aid=a["id"], did=d["id"]: self._doc_del(aid, did))
         lay.addWidget(borrar)
         return card
+
+    def _sub_doc(self, d):
+        """Debajo del nombre: tokens, y en un repo de donde sale o que hace."""
+        tokens = f"~{ctx_mod.estimate_tokens(d['body'])} tok"
+        r = d.get("repo")
+        if not r:
+            return tokens
+        if d["id"] in self._sincronizando:
+            return "sincronizando…"
+        if r.get("error") and not d["body"].strip():
+            return "falló · pulsa Actualizar"
+        return f"{(r.get('commit') or '')[:7]} · {tokens}"
+
+    def _cabecera_repo(self, a, d):
+        """De donde sale la memoria, su estado y el boton de actualizar."""
+        r = d["repo"]
+        fila = QtWidgets.QHBoxLayout(); fila.setSpacing(10)
+        col = QtWidgets.QVBoxLayout(); col.setSpacing(2)
+        # El nombre del repo ya va en el titulo del documento.
+        datos = []
+        if r.get("rama"):
+            datos.append(f"rama {r['rama']}")
+        if r.get("commit"):
+            datos.append(f"commit {r['commit'][:7]}")
+        if r.get("archivos"):
+            datos.append(f"{r['archivos']} archivos")
+        if r.get("privado"):
+            datos.append("privado")
+        info = QtWidgets.QLabel(" · ".join(datos) or r.get("url", ""))
+        info.setObjectName("repo-info")
+        info.setWordWrap(True)
+        info.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        info.setStyleSheet(f"color: {N.TEXTO}; font-family: {MONO}; font-size: 12px; "
+                           f"background: transparent;")
+        col.addWidget(info)
+        if d["id"] in self._sincronizando:
+            estado = self._sincronizando[d["id"]]
+        elif r.get("error"):
+            estado = f"No se pudo actualizar: {r['error']}"
+        elif r.get("sincronizado"):
+            estado = f"Memoria escrita el {r['sincronizado'][:16].replace('T', ' ')}"
+        else:
+            estado = ""
+        lab = QtWidgets.QLabel(estado)
+        lab.setObjectName("repo-estado")
+        lab.setWordWrap(True)
+        lab.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        color = N.PELIGRO if r.get("error") and d["id"] not in self._sincronizando else N.APAGADO
+        lab.setStyleSheet(f"color: {color}; font-size: 12px; background: transparent;")
+        col.addWidget(lab)
+        fila.addLayout(col, 1)
+        actualizar = N.Button("Actualizar", icono="refresh", radio=14, color_icono=ACENTO)
+        actualizar.setObjectName("actualizar-repo")
+        actualizar.setToolTip("Vuelve a descargar el código y reescribe la memoria "
+                              "(se pierden los cambios que le hayas hecho)")
+        actualizar.setEnabled(d["id"] not in self._sincronizando)
+        actualizar.clicked.connect(
+            lambda _c=False, aid=a["id"], did=d["id"]: self._repo_sincronizar(aid, did))
+        fila.addWidget(actualizar, 0, QtCore.Qt.AlignVCenter)
+        return fila
 
     def _editor_doc(self, a):
         box = QtWidgets.QWidget()
@@ -1389,9 +1529,17 @@ class HomeWindow(QtWidgets.QWidget):
             lambda t, aid=a["id"], did=d["id"]: self._doc_set(aid, did, "name", t))
         clave = (a["id"], d["id"])
         # Un documento recien creado (vacio) se abre ya para escribir.
+        if d.get("repo"):
+            # La memoria de un repo se lee formateada aunque este vacia: se
+            # escribe sola al sincronizar.
+            vacio = ("Escribiendo la memoria del repositorio…" if d["id"] in self._sincronizando
+                     else "Aún no hay memoria. Pulsa Actualizar.")
+            editando = clave in self._editando
+        else:
+            vacio = "Documento vacío. Pulsa Editar para escribirlo."
+            editando = clave in self._editando or not d["body"].strip()
         cuerpo = MarkdownField(d["body"], "cuerpo-documento", mono=True,
-                               editando=clave in self._editando or not d["body"].strip(),
-                               vacio="Documento vacío. Pulsa Editar para escribirlo.")
+                               editando=editando, vacio=vacio)
         cuerpo.editor.setPlaceholderText("# Mi CV\nSoy desarrollador backend con 6 años…")
         cuerpo.changed.connect(
             lambda t, aid=a["id"], did=d["id"]: self._doc_set(aid, did, "body", t))
@@ -1400,6 +1548,8 @@ class HomeWindow(QtWidgets.QWidget):
         fila.addWidget(N.campo(nombre), 1)
         fila.addWidget(cuerpo.boton, 0, QtCore.Qt.AlignVCenter)
         v.addLayout(fila)
+        if d.get("repo"):
+            v.addLayout(self._cabecera_repo(a, d))
         v.addWidget(cuerpo, 1)
         return box
 
@@ -1675,6 +1825,111 @@ class HomeWindow(QtWidgets.QWidget):
             a["conocimiento"] = [d for d in a["conocimiento"] if d["id"] != did]
             self._marcar()
             self._mostrar()
+
+    # ---------------------------------------------------- acciones: repositorios
+    def _repo_dialogo(self, aid):
+        dialogo = ConectarRepo(self)
+        if self.proteger_ventana is not None:
+            self.proteger_ventana(dialogo)
+        if dialogo.exec() != QtWidgets.QDialog.Accepted:
+            return
+        url, rama = dialogo.valores()
+        self.conectar_repo(aid, url, rama)
+
+    def conectar_repo(self, aid, url, rama=""):
+        """Un documento nuevo para el repo, que se rellena al sincronizar."""
+        a = self._ag_get(aid)
+        if a is None:
+            return None
+        try:
+            owner, nombre, rama_url = repos.parse_url(url)
+        except repos.RepoError as e:
+            self.mostrar_aviso(str(e))
+            return None
+        doc = agents_mod.nuevo_documento(a, f"Repo · {owner}/{nombre}")
+        doc["repo"] = {"url": url, "owner": owner, "nombre": nombre,
+                       "rama": rama or rama_url or ""}
+        a["conocimiento"].append(doc)
+        self.sel_doc = doc["id"]
+        self._marcar()
+        self._repo_sincronizar(aid, doc["id"])
+        return doc["id"]
+
+    def _repo_sincronizar(self, aid, did):
+        """Descarga y memoria en segundo plano; el progreso se ve en el documento."""
+        a = self._ag_get(aid)
+        d = next((x for x in a["conocimiento"] if x["id"] == did), None) if a else None
+        if d is None or not d.get("repo") or did in self._sincronizando:
+            return
+        clave = self.values.get("openai_api_key")
+        if not clave:
+            self.mostrar_aviso("Añade tu API key de OpenAI en Ajustes para conectar un "
+                               "repositorio: la memoria la escribe el modelo.")
+            return
+        r = d["repo"]
+        self._sincronizando[did] = "Empezando…"
+        r.pop("error", None)
+        self._mostrar()
+        modelo = self.values.get("openai_model") or "gpt-6.1-sol"
+        token = self.values.get("github_token") or None
+        aviso = _Trabajo(self)
+        aviso.progreso.connect(lambda t, did=did: self._repo_progreso(did, t))
+        aviso.listo.connect(lambda res, aid=aid, did=did: self._repo_listo(aid, did, res))
+        aviso.fallo.connect(lambda e, aid=aid, did=did: self._repo_fallo(aid, did, e))
+
+        def correr():
+            try:
+                aviso.listo.emit(repos.sincronizar(
+                    r["url"], r.get("rama") or None, token, clave, modelo,
+                    progreso=aviso.progreso.emit))
+            except repos.RepoError as e:
+                aviso.fallo.emit(str(e))
+            except Exception as e:                       # red, clave, modelo...
+                aviso.fallo.emit(f"{type(e).__name__}: {e}"[:200])
+
+        threading.Thread(target=correr, daemon=True, name="repo-sync").start()
+
+    def _repo_progreso(self, did, texto):
+        if did not in self._sincronizando:
+            return
+        self._sincronizando[did] = texto
+        # Sin redibujar la vista (perderias lo que estas escribiendo): solo la etiqueta.
+        if self.sel_doc == did:
+            lab = self.content.widget().findChild(QtWidgets.QLabel, "repo-estado")
+            if lab is not None:
+                lab.setText(texto)
+
+    def _doc_de(self, aid, did):
+        a = self._ag_get(aid)
+        return next((x for x in a["conocimiento"] if x["id"] == did), None) if a else None
+
+    def _repo_listo(self, aid, did, resultado):
+        self._sincronizando.pop(did, None)
+        d = self._doc_de(aid, did)
+        if d is None:
+            return                       # se borro mientras tanto
+        rid, manifest, cuerpo = resultado
+        d["body"] = cuerpo
+        d["name"] = f"Repo · {manifest['owner']}/{manifest['nombre']}"
+        d["repo"] = {"url": d["repo"].get("url") or manifest["url"], "id": rid,
+                     "owner": manifest["owner"], "nombre": manifest["nombre"],
+                     "rama": manifest["rama"], "commit": manifest["commit"],
+                     "fecha_commit": manifest.get("fecha_commit", ""),
+                     "sincronizado": manifest["sincronizado"],
+                     "archivos": len(manifest["archivos"]),
+                     "privado": manifest.get("privado", False)}
+        self._editando.discard((aid, did))         # se ve formateada
+        self._marcar()
+        self._mostrar()
+
+    def _repo_fallo(self, aid, did, error):
+        self._sincronizando.pop(did, None)
+        d = self._doc_de(aid, did)
+        if d is None:
+            return
+        d["repo"]["error"] = error
+        self._marcar()
+        self._mostrar()
 
     # ---------------------------------------------------- acciones: reuniones
     def _sesion_del(self, sid):

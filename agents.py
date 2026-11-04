@@ -30,6 +30,9 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
 - 'forma' y 'color': su mascota (avatares.py), en la Home y en el overlay.
 - 'conocimiento': documentos markdown del agente (CV, oferta, producto...),
   como los de un GPT o un proyecto. Se le dan enteros al empezar la reunion.
+  Un repositorio de GitHub conectado es un documento mas: su cuerpo es la
+  memoria del repo y lleva 'repo' (url, rama, commit, id de la copia local);
+  el codigo exacto se lee en la reunion de esa copia (repos.py).
 - El que se usa es config["agent"]. Al empezar la reunion su texto y su
   conocimiento abren la conversacion del modelo; cambiarlo a mitad la reinicia
   con el historial (ver CoachEngine.set_agent).
@@ -223,9 +226,7 @@ def list_agents():
                     "forma": str(data.get("forma") or base["forma"]),
                     "color": str(data.get("color") or base["color"]),
                     "conocimiento": [
-                        {"id": str(d.get("id") or f"doc-{i + 1}"),
-                         "name": str(d.get("name") or "Documento"),
-                         "body": str(d.get("body") or "")}
+                        _documento(d, i)
                         for i, d in enumerate(docs if isinstance(docs, list) else [])
                         if isinstance(d, dict)]})
     if not out:
@@ -238,6 +239,17 @@ def list_agents():
                         type(e).__name__, AGENTS_DIR)
     out.sort(key=_orden)
     return out
+
+
+def _documento(d, i):
+    doc = {"id": str(d.get("id") or f"doc-{i + 1}"),
+           "name": str(d.get("name") or "Documento"),
+           "body": str(d.get("body") or "")}
+    # Un repositorio de GitHub conectado (repos.py): su cuerpo es la memoria
+    # del repo y 'repo' dice de donde sale y donde esta la copia local.
+    if isinstance(d.get("repo"), dict):
+        doc["repo"] = dict(d["repo"])
+    return doc
 
 
 def write_all(agentes):

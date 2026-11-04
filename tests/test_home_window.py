@@ -329,7 +329,8 @@ def test_settings_are_a_separate_view(make_home):
     assert win.vista == ("ajustes", None) and win.nav_ajustes._activo is True
 
 
-@pytest.mark.parametrize("key", ["openai_api_key", "assemblyai_api_key", "typesafe_api_key"])
+@pytest.mark.parametrize("key", ["openai_api_key", "assemblyai_api_key", "typesafe_api_key",
+                                 "github_token"])
 def test_keys_are_masked_and_saved(make_home, key):
     win = make_home()
     win.ir_a_ajustes()
@@ -769,3 +770,124 @@ def test_picker_previews_shape_and_colour(qtbot):
     assert (dialogo.forma, dialogo.color) == ("triangulo", "rosa")
     assert (dialogo.vista.forma, dialogo.vista.color) == ("triangulo", "rosa")
     assert dialogo._formas["triangulo"].color == "rosa"
+
+
+# ------------------------------------------------------------------ GitHub repos
+import neu as N  # noqa: E402
+import repos  # noqa: E402
+
+MEMORIA = "# Repositorio gus/acme\n## Qué es\nUn ledger."
+MANIFEST = {"owner": "gus", "nombre": "acme", "rama": "main", "commit": "abc1234def",
+            "fecha_commit": "2026-11-03T10:00:00Z", "sincronizado": "2026-11-04T09:30:00",
+            "url": "https://github.com/gus/acme", "privado": True,
+            "archivos": [{"ruta": "a.py"}, {"ruta": "b.py"}]}
+
+
+@pytest.fixture
+def sync(monkeypatch):
+    """repos.sincronizar replaced: records the call and answers at once."""
+    llamadas = []
+    resultado = {"ok": ("gus__acme__main", MANIFEST, MEMORIA), "error": None}
+
+    def sincronizar(url, rama=None, token=None, api_key=None, model=None, progreso=None):
+        llamadas.append((url, rama, token, api_key, model))
+        progreso("Descargando el código…")
+        if resultado["error"]:
+            raise repos.RepoError(resultado["error"])
+        return resultado["ok"]
+
+    monkeypatch.setattr(repos, "sincronizar", sincronizar)
+    return llamadas, resultado
+
+
+def _repo_doc(win, aid="grok"):
+    return next(d for d in win._ag_get(aid)["conocimiento"] if d.get("repo"))
+
+
+def test_connecting_a_repo_writes_its_memory_as_knowledge(make_home, qtbot, sync):
+    llamadas, _ = sync
+    win = make_home(agent="grok", openai_api_key="sk", github_token="ghp")
+    win.editar_agente("grok", "conocimiento")
+
+    did = win.conectar_repo("grok", "https://github.com/gus/acme", "")
+    qtbot.waitUntil(lambda: did not in win._sincronizando, timeout=3000)
+
+    d = _repo_doc(win)
+    assert llamadas == [("https://github.com/gus/acme", None, "ghp", "sk", "gpt-6.1-sol")]
+    assert d["body"] == MEMORIA and d["name"] == "Repo · gus/acme"
+    assert d["repo"]["id"] == "gus__acme__main" and d["repo"]["archivos"] == 2
+    win.guardar_ya()
+    guardado = next(x for x in agents.get("grok")["conocimiento"] if x.get("repo"))
+    assert guardado["repo"]["commit"] == "abc1234def"
+    info = _find(win, QtWidgets.QLabel, "repo-info").text()
+    assert info == "rama main · commit abc1234 · 2 archivos · privado"
+
+
+def test_failed_sync_says_why_and_can_be_retried(make_home, qtbot, sync):
+    llamadas, resultado = sync
+    resultado["error"] = "No encuentro ese repositorio"
+    win = make_home(agent="grok", openai_api_key="sk")
+    win.editar_agente("grok", "conocimiento")
+
+    did = win.conectar_repo("grok", "gus/acme")
+    qtbot.waitUntil(lambda: did not in win._sincronizando, timeout=3000)
+
+    estado = _find(win, QtWidgets.QLabel, "repo-estado").text()
+    assert estado == "No se pudo actualizar: No encuentro ese repositorio"
+    boton = _find(win, N.Button, "actualizar-repo")
+    assert boton.isEnabled()
+
+    resultado["error"] = None
+    boton.click()
+    qtbot.waitUntil(lambda: did not in win._sincronizando, timeout=3000)
+    assert _repo_doc(win)["body"] == MEMORIA and "error" not in _repo_doc(win)["repo"]
+
+
+def test_repo_needs_the_openai_key(make_home, sync):
+    llamadas, _ = sync
+    win = make_home(agent="grok", openai_api_key="")
+
+    win.conectar_repo("grok", "gus/acme")
+
+    assert llamadas == [] and win._sincronizando == {}
+    assert win._aviso.startswith("Añade tu API key de OpenAI")
+
+
+def test_bad_url_is_not_connected(make_home, sync):
+    win = make_home(agent="grok", openai_api_key="sk")
+
+    assert win.conectar_repo("grok", "https://gitlab.com/x/y") is None
+    assert not any(d.get("repo") for d in win._ag_get("grok")["conocimiento"])
+    assert "GitHub" in win._aviso
+
+
+def test_connect_dialog_checks_the_url(qtbot):
+    dialogo = hw.ConectarRepo()
+    qtbot.addWidget(dialogo)
+    dialogo.url.setText("no es una url")
+
+    dialogo.ok.click()
+
+    assert dialogo.error.isVisibleTo(dialogo) is True and dialogo.result() == 0
+    dialogo.url.setText("https://github.com/gus/acme")
+    dialogo.rama.setText(" dev ")
+    dialogo.ok.click()
+    assert dialogo.result() == QtWidgets.QDialog.Accepted
+    assert dialogo.valores() == ("https://github.com/gus/acme", "dev")
+
+
+def test_knowledge_tab_offers_to_connect_a_repo(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "conocimiento")
+
+    assert _find(win, N.Button, "conectar-repo") is not None
+
+
+def test_opening_an_agent_prewarms_it(make_home):
+    win = make_home(agent="grok")
+    vistos = []
+    win.al_ver_agente = lambda a: vistos.append(a["id"])
+
+    win.abrir_agente("directo")
+
+    assert vistos == ["directo"]

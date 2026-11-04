@@ -23,3 +23,18 @@ def test_qt_widgets_render_offscreen(qtbot):
     label.show()
 
     assert QtWidgets.QApplication.platformName() == "offscreen"
+
+
+
+def test_pending_home_autosave_is_cancelled_by_the_teardown_guard(qtbot):
+    """The guard that keeps a late autosave from writing the real config."""
+    import home_window
+    from conftest import cancelar_autoguardados
+    win = home_window.HomeWindow({"agent": "coach"})
+    qtbot.addWidget(win)
+    win._marcar()
+    assert win._guardado.isActive()
+
+    cancelar_autoguardados()
+
+    assert not win._guardado.isActive() and win._dirty is False
