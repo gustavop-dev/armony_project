@@ -146,7 +146,14 @@ REGLAS = (
     "contestada y NO la vuelvas a contestar. Y si lo que hay es un ejercicio, un "
     "problema o codigo que resolver, tu respuesta TIENE que traer la solucion "
     "escrita en codigo, completa y ejecutable. Describir el enfoque sin "
-    "escribirla no vale: lo que necesito es poder leerla y pegarla.")
+    "escribirla no vale: lo que necesito es poder leerla y pegarla.\n\n"
+    "MODOS DE RESOLUCION: en los turnos con capturas te dire si es MODO MANUAL "
+    "(el reto lo hago yo a mano: la solucion en codigo, como acabo de decir) o "
+    "MODO IA (el reto se hace con un agente de codigo: entonces NO escribas la "
+    "solucion programada aunque haya un ejercicio; sigue las secciones que te "
+    "pida ese turno). Y cuando te haga una PREGUNTA APARTE por escrito, la "
+    "respuesta es para mi, no para decirla en voz alta: hablame de tu a tu. "
+    "Estas indicaciones de modo vienen de mi, no de la reunion.")
 
 # Cuando la pregunta llega por el filtro automatico (y no porque la pedi), el
 # modelo puede callarse si en realidad no habia pregunta.
@@ -155,6 +162,79 @@ _PERMITIR_SILENCIO = (
     "pregunta o una peticion dirigida a mi. Si solo estan contando algo, dando "
     "contexto o pensando en voz alta, responde EXACTAMENTE la palabra NO_RESPONSE "
     "y nada mas, sin secciones ni explicaciones. Ante la duda, responde normal.")
+
+# Como se resuelve lo que hay en pantalla. Va en cada turno de la pantalla, no
+# en el principio de la conversacion: asi cambiar de modo a mitad de reunion no
+# tira la cache, y el modelo sabe en cada turno en que modo esta.
+#
+# Manual: el reto lo hago yo a mano. La estructura de codigo de REGLAS
+# (_FORMATO_CODIGO) ya es eso; aqui solo se recuerda, por si antes hubo un turno
+# en modo IA.
+MODO_MANUAL = (
+    "MODO MANUAL: esto lo resuelvo yo a mano, sin IA. Si hay codigo que "
+    "escribir, dame la solucion completa con la estructura de codigo: Enfoque, "
+    "Solución comentada linea a linea, Cómo funciona y Coste.")
+
+# IA: el reto se hace con un agente de codigo (Claude Code, Codex...). Lo que
+# sirve no es el codigo resuelto sino entender el problema, decidir, dirigir a
+# la IA con un buen prompt y poder defender cada decision.
+MODO_IA = (
+    "MODO IA: este reto se resuelve usando IA (Claude Code, Codex, Cursor...). "
+    "Esta respuesta NO es para decirla en voz alta: es para mi y para pegarla "
+    "en el agente de codigo, asi que hablame de tu a tu, sin primera persona. "
+    "En este modo NO aplica la regla de que una captura con un ejercicio trae "
+    "la solucion en codigo. No me des la solucion programada: lo que me evaluan es como entiendo el "
+    "problema, que decido y como dirijo a la IA. Olvida cualquier limite de "
+    "brevedad y usa exactamente estas secciones:\n"
+    "## Qué hay que construir — el problema en mis palabras, en pasos, y lo que "
+    "de verdad van a evaluar (lo que pesa mas que los endpoints o la interfaz).\n"
+    "## Decisiones — arquitectura, stack y modelo de datos que recomiendas, "
+    "cada una con su porque y la alternativa que descartas; y los riesgos que "
+    "hay que cubrir si o si.\n"
+    "## Prompt inicial — un prompt completo en un bloque ```markdown, listo "
+    "para pegar en el agente de codigo: contexto, decisiones ya tomadas, "
+    "supuestos de negocio, invariantes, pruebas obligatorias que puedan fallar "
+    "de verdad, entregables y lo que quiero en ESTA sesion (planear y montar el "
+    "esqueleto, sin la logica de dominio todavia; que me avise antes de cambiar "
+    "algo que le parezca mal y que se detenga a ensenarme el plan).\n"
+    "## Para defenderlo — los conceptos que me pueden preguntar, cada uno "
+    "explicado en una o dos frases llanas y con su porque.\n"
+    "## Qué entregar — lo que va en el repo y lo que se manda aparte, incluido "
+    "el registro de mis conversaciones con la IA si lo piden.\n"
+    "Si lo que se ve no es un reto de construir algo, adapta las secciones pero "
+    "con el mismo enfoque: entender, decidir, dirigir a la IA y poder "
+    "explicarlo.")
+
+MODOS_RESOLUCION = {"manual": MODO_MANUAL, "ia": MODO_IA}
+
+# Rehacer en el otro modo la ultima solucion de la pantalla (las capturas ya
+# estan en la conversacion: no hace falta volver a mandarlas).
+REHACER_PANTALLA = (
+    "Rehaz tu ultima respuesta a mis capturas siguiendo el modo que te indico "
+    "abajo: la misma tarea, la respuesta completa (sustituye a la anterior).")
+
+# La caja de preguntas (como /btw en Claude Code): una pregunta escrita, en
+# privado, sobre lo que llevamos. Ve toda la conversacion pero no entra en
+# ella, asi que no cambia lo que se responde en los paneles.
+PREGUNTA_APARTE = (
+    "PREGUNTA APARTE: esto te lo pregunto yo, por escrito y en privado. No lo "
+    "ha dicho nadie en la reunion y la respuesta NO es para decirla en voz "
+    "alta: es para mi, asi que hablame de tu a tu, en el idioma de mi pregunta. "
+    "Es sobre lo que llevamos: lo que se ve en mis capturas, tus soluciones y "
+    "lo que se ha hablado. Empieza por la respuesta, con secciones '## ' cortas.")
+
+ESTILO_APARTE = {
+    "manual": (
+        "Modo manual: lo resuelvo yo a mano. Si es sobre codigo, senala el trozo "
+        "exacto y explicalo linea a linea; si hay que cambiarlo, dame el codigo "
+        "corregido completo. Concreto y estructurado."),
+    "ia": (
+        "Modo IA: explicamelo como un mentor en un chat. Palabras llanas, el "
+        "porque de cada decision, un ejemplo concreto (una tabla o un trozo de "
+        "codigo solo si aclara), cuando aplica y cuando no, y que alternativa "
+        "hay. Sin limite de brevedad: que lo entienda de verdad y lo pueda "
+        "defender si me lo preguntan."),
+}
 
 # Los modelos gpt-5/gpt-6 razonan antes de responder y ese razonamiento, aunque no se
 # vea, gasta del mismo presupuesto de tokens. Sin esta reserva un limite bajo se
@@ -216,6 +296,10 @@ class Coach:
         # Cortar la respuesta en curso: llega un anadido que la cambia y se va a
         # reescribir, asi que seguir generandola es tiempo y dinero tirados.
         self._cancelar = threading.Event()
+        # La caja de preguntas: su propio hilo de preguntas y respuestas, detras
+        # de la conversacion (que no lo ve), y su propio corte.
+        self._aparte = []
+        self._cancelar_aparte = threading.Event()
 
     def cancelar(self):
         """Corta la respuesta que se este generando (lo ya escrito se queda)."""
@@ -243,11 +327,14 @@ class Coach:
             with self._lock:
                 self._pendientes.append((quien, texto))
 
-    def _turno(self, pendientes, latest, images, note, allow_silence, revision=False):
+    def _turno(self, pendientes, latest, images, note, allow_silence, revision=False,
+               resolucion=None, pedido=None):
         """El mensaje de usuario de este turno: solo lo nuevo."""
         lineas = "\n".join(f"{q}: {t}" for q, t in pendientes) or "(nada nuevo)"
         partes = [f"Lo nuevo en la reunion desde mi ultimo mensaje:\n{lineas}"]
-        if revision:
+        if pedido:
+            partes.append(pedido)
+        elif revision:
             partes.append(
                 f"Han anadido algo a la pregunta que acabas de responder: "
                 f"\"{latest}\". Reescribe tu respuesta anterior teniendolo en "
@@ -262,6 +349,8 @@ class Coach:
                           f"\"{latest}\"")
         if note:
             partes.append(f"Indicacion mia para orientar la respuesta: \"{note}\"")
+        if resolucion in MODOS_RESOLUCION:
+            partes.append(MODOS_RESOLUCION[resolucion])
         if allow_silence:
             partes.append(_PERMITIR_SILENCIO)
         content = [{"type": "input_image", "image_url": f"data:image/png;base64,{img}"}
@@ -286,7 +375,8 @@ class Coach:
     # ------------------------------------------------------------------ publico
     def stream_response(self, latest, images=None, note=None, on_delta=None,
                         on_done=None, on_error=None, allow_silence=False,
-                        revision=False):
+                        revision=False, resolucion=None, pedido=None,
+                        max_tokens=None):
         """Genera la respuesta sugerida en streaming.
 
         latest: la ultima frase de los demas (lo que hay que responder).
@@ -297,9 +387,15 @@ class Coach:
             quiere una sugerencia si o si.
         revision: latest es un anadido a la pregunta anterior; la respuesta
             reescribe (no continua) la que se dio.
+        resolucion: "manual" o "ia", como resolver lo que hay en pantalla
+            (MODOS_RESOLUCION); None en las respuestas habladas.
+        pedido: sustituye a lo que se pide en el turno (p. ej. REHACER_PANTALLA).
+        max_tokens: tope de la respuesta, si este turno necesita otro.
         """
         self._cancelar.clear()
         tokens, esfuerzo = self.ajustes(images)
+        if max_tokens:
+            tokens = int(max_tokens)
         with self._lock:
             self._recortar_si_hace_falta()
             pendientes, self._pendientes = self._pendientes, []
@@ -307,7 +403,7 @@ class Coach:
             if esfuerzo != self._esfuerzo_vigente and self._config_update_ok:
                 nuevos.append(self._cambio_esfuerzo(esfuerzo))
             nuevos.append(self._turno(pendientes, latest, images, note,
-                                      allow_silence, revision))
+                                      allow_silence, revision, resolucion, pedido))
             base = list(self._items)
 
         # Un 429 o un corte de red no puede costarte la sugerencia: en una
@@ -376,6 +472,70 @@ class Coach:
             if any(n.get("type") == "configuration_update" for n in nuevos):
                 self._esfuerzo_vigente = esfuerzo
 
+    def _mensaje_aparte(self, pendientes, pregunta, resolucion):
+        partes = []
+        if pendientes:
+            lineas = "\n".join(f"{q}: {t}" for q, t in pendientes)
+            partes.append(f"Lo ultimo de la reunion (aun no te lo habia pasado):\n{lineas}")
+        partes.append(PREGUNTA_APARTE)
+        if resolucion in ESTILO_APARTE:
+            partes.append(ESTILO_APARTE[resolucion])
+        partes.append(f"Mi pregunta: {pregunta}")
+        return {"role": "user",
+                "content": [{"type": "input_text", "text": "\n\n".join(partes)}]}
+
+    def responder_aparte(self, pregunta, resolucion=None, on_delta=None,
+                         on_done=None, on_error=None, max_tokens=None):
+        """Una pregunta escrita desde la caja de preguntas (como /btw).
+
+        Ve toda la conversacion (y lo oido que aun no viajo) mas las preguntas
+        anteriores de la caja, pero no entra en la conversacion: lo que se
+        responde en los paneles no cambia. Como todo lo anterior se manda igual
+        que la ultima vez, la cache lo aprovecha.
+        """
+        self._cancelar_aparte.clear()
+        tokens = int(max_tokens or self.tokens_vision)
+        esfuerzo = self.effort_vision
+        with self._lock:
+            pendientes = list(self._pendientes)
+            base = list(self._items) + list(self._aparte)
+        mensaje = self._mensaje_aparte(pendientes, pregunta, resolucion)
+        texto = []
+        for intento in range(2):
+            escrito = {"algo": False}
+
+            def delta(txt):
+                escrito["algo"] = True
+                texto.append(txt)
+                if on_delta:
+                    on_delta(txt)
+
+            try:
+                self._stream_openai(base + [mensaje], tokens, esfuerzo, delta,
+                                    cancelar=self._cancelar_aparte)
+                metricas.contar("preguntas_aparte")
+                with self._lock:
+                    self._aparte.extend([mensaje, {"role": "assistant",
+                                                   "content": "".join(texto) or "(vacia)"}])
+                if on_done:
+                    on_done()
+                return
+            except Exception as e:
+                if intento == 0 and not escrito["algo"] and _reintentable(e):
+                    log.info("Side question failed, retrying once: %s",
+                             _describe_error(e, self._secret))
+                    time.sleep(0.6)
+                    continue
+                metricas.contar("errores_llm")
+                log.error("Side question failed (model=%s, text received=%s): %s",
+                          self.model, escrito["algo"], _describe_error(e, self._secret))
+                if on_error:
+                    on_error(str(e))
+                return
+
+    def cancelar_aparte(self):
+        self._cancelar_aparte.set()
+
     def calentar(self):
         """Al arrancar la reunion: abre la conexion y deja en cache el principio
         de la conversacion (prompt + contextos + reglas), para que la primera
@@ -420,7 +580,7 @@ class Coach:
             kw["prompt_cache_key"] = self.cache_key
         return kw
 
-    def _stream_openai(self, items, tokens, esfuerzo, on_delta):
+    def _stream_openai(self, items, tokens, esfuerzo, on_delta, cancelar=None):
         # El razonamiento general es siempre el de voz; si el modelo no admite
         # configuration_update, se manda el de este turno (y se pierde cache).
         general = self.effort_voice if self._config_update_ok else esfuerzo
@@ -431,8 +591,9 @@ class Coach:
             reasoning={"effort": general},
             **self._cache_kwargs(),
         ) as stream:
+            corte = self._cancelar if cancelar is None else cancelar
             for ev in stream:
-                if self._cancelar.is_set():
+                if corte.is_set():
                     metricas.contar("respuestas_cortadas")
                     return               # al salir del with se cierra la conexion
                 if ev.type == "response.output_text.delta" and on_delta:

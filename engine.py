@@ -41,6 +41,10 @@ SENTINEL = "NO_RESPONSE"
 SIN_PREGUNTA_CAPTURA = ("(no han dicho nada nuevo desde la ultima respuesta: lo "
                         "que hay que resolver esta en las capturas)")
 
+# Modo IA en la pantalla: que construir, decisiones, un prompt entero para el
+# agente de codigo y como defenderlo. No cabe en el tope normal de las capturas.
+TOKENS_MODO_IA = 8000
+
 
 class CoachEngine(QtCore.QObject):
     sysLevel = QtCore.Signal(int)
@@ -62,6 +66,12 @@ class CoachEngine(QtCore.QObject):
     # Lo que dijeron parece ir para la solucion en pantalla: se ofrece relanzarla
     # con ello (texto); "" retira la sugerencia.
     screenSuggest = QtCore.Signal(str)
+    # La caja de preguntas (escritas, en privado): su respuesta y sus fallos
+    # van a su panel, no al hablado.
+    askStart = QtCore.Signal()
+    askDelta = QtCore.Signal(str)
+    askDone = QtCore.Signal()
+    askError = QtCore.Signal(str)
     # Notas al terminar (en segundo plano): (id de la reunion) / (id, ok)
     notesStarted = QtCore.Signal(str)
     notesReady = QtCore.Signal(str, bool)
@@ -119,6 +129,12 @@ class CoachEngine(QtCore.QObject):
         self._modo = "automatico"
         self._capturas = True
         self._notas = False
+        # Como se resuelve la pantalla (y la caja de preguntas): manual o ia.
+        # Sale del agente al empezar y se cambia en plena reunion.
+        self._resolucion = "manual"
+        self._solucion_modo = ""        # en que modo se dio la solucion en pantalla
+        self._queue_pregunta = queue.Queue()
+        self._worker_pregunta = None
         self._clave_notas = None        # (api key, modelo) para las notas
         self._queue_pantalla = queue.Queue()
         self._worker_pantalla = None
@@ -153,6 +169,7 @@ class CoachEngine(QtCore.QObject):
         # (Antes quedaban frases viejas y el centinela None, que mataba al worker.)
         self._queue = queue.Queue()
         self._queue_pantalla = queue.Queue()
+        self._queue_pregunta = queue.Queue()
         self._stop_event = threading.Event()
         self._history.clear()
         self._last_question = ""
@@ -167,6 +184,7 @@ class CoachEngine(QtCore.QObject):
         self._registro = []
         self._hilo = None
         self._solucion_pantalla = ""
+        self._solucion_modo = ""
         self._sugerencia_pantalla = ""
         self._recientes_ellos.clear()
         self._eco_avisado = False
@@ -289,6 +307,14 @@ class CoachEngine(QtCore.QObject):
             daemon=True,
         )
         self._worker_pantalla.start()
+        # Las preguntas escritas, en su propia cola: una explicacion larga no
+        # retrasa ni las respuestas habladas ni la solucion de la pantalla.
+        self._worker_pregunta = threading.Thread(
+            target=self._process_loop,
+            args=(self._queue_pregunta, self._stop_event),
+            daemon=True,
+        )
+        self._worker_pregunta.start()
 
         self._audio = AudioEngine(
             # Envolvemos los emit: si ya se detuvo, no tocar la UI (Qt puede estar
@@ -591,10 +617,74 @@ class CoachEngine(QtCore.QObject):
         self._modo = agents_mod.modo(agente)
         self._capturas = agents_mod.usa_capturas(agente)
         self._notas = agents_mod.toma_notas(agente)
+        self._resolucion = agents_mod.resolucion(agente)
 
     @property
     def modo(self):
         return self._modo
+
+    @property
+    def resolucion(self):
+        return self._resolucion
+
+    def set_resolucion(self, modo):
+        """Manual o IA, en plena reunion. Si ya hay una solucion en pantalla
+        hecha en el otro modo, se rehace en este (las capturas ya estan en la
+        conversacion). Devuelve True si se va a rehacer."""
+        import agents as agents_mod
+        if modo not in agents_mod.RESOLUCIONES or modo == self._resolucion:
+            return False
+        self._resolucion = modo
+        if (not self._running or self._test_mode or self._coach_pantalla is None
+                or not self._solucion_pantalla or self._solucion_modo == modo):
+            return False
+        self._sugerir_pantalla("")
+        if self._generando_pantalla:
+            self._coach_pantalla.cancelar()
+        self._queue_pantalla.put({"type": "rehacer"})
+        return True
+
+    def preguntar(self, texto):
+        """Una pregunta escrita en la caja de preguntas. Devuelve False si no se
+        puede hacer (sin reunion, o en modo prueba, que no usa el modelo)."""
+        texto = (texto or "").strip()
+        if not texto or not self._running:
+            return False
+        if self._test_mode:
+            self.askError.emit("Test mode — no AI to ask")
+            return False
+        if self._coach_pantalla is None:
+            self.askError.emit("The model is still starting — ask again in a moment")
+            return False
+        self._queue_pregunta.put({"type": "pregunta", "text": texto})
+        return True
+
+    def _responder_pregunta(self, texto):
+        """Responde en la caja con el coach de la pantalla, que lo ha visto
+        todo: las capturas, sus soluciones y lo que se ha hablado. Pregunta y
+        respuesta quedan en el acta."""
+        coach = self._coach_pantalla
+        if coach is None:
+            return
+        self._registro.append(("Pregunta", texto))
+        estado = {"todo": "", "abierto": False}
+
+        def on_delta(txt):
+            if not estado["abierto"]:
+                estado["abierto"] = True
+                self.askStart.emit()
+            estado["todo"] += txt
+            self.askDelta.emit(txt)
+
+        def on_done():
+            if not estado["abierto"]:
+                self.askStart.emit()
+            self._registro.append(("Sugerido (pregunta)", estado["todo"]))
+            self.askDone.emit()
+
+        coach.responder_aparte(texto, resolucion=self._resolucion,
+                               on_delta=on_delta, on_done=on_done,
+                               on_error=self.askError.emit)
 
     @property
     def permite_capturas(self):
@@ -675,6 +765,11 @@ class CoachEngine(QtCore.QObject):
                     # El tester acepto relanzar la solucion en pantalla.
                     self._respond(item["text"], images=None, revision=True,
                                   carril="pantalla")
+                elif item["type"] == "rehacer":
+                    # Cambio de modo (manual / IA) con una solucion ya dada.
+                    self._respond("", images=None, carril="pantalla", rehacer=True)
+                elif item["type"] == "pregunta":
+                    self._responder_pregunta(item["text"])
             except Exception as e:
                 log.exception("Worker failed on a %r item",
                               item.get("type") if isinstance(item, dict) else None)
@@ -707,7 +802,7 @@ class CoachEngine(QtCore.QObject):
                 self.status.emit(f"Modelo listo ({ms / 1000:.1f} s de calentamiento).")
 
     def _respond(self, latest, images=None, note="", permitir_silencio=False,
-                 revision=False, carril="voz"):
+                 revision=False, carril="voz", rehacer=False):
         # El contexto ya lo lleva la conversacion del coach (todo lo oido,
         # etiquetado por quien lo dijo, y las sugerencias anteriores).
         pantalla = carril == "pantalla"
@@ -786,6 +881,7 @@ class CoachEngine(QtCore.QObject):
             # hilo, para que el arbitro sepa que se le sugirio.
             if pantalla:
                 self._solucion_pantalla = estado["todo"]
+                self._solucion_modo = resolucion
             else:
                 with self._hilo_lock:
                     if self._hilo is not None:
@@ -793,11 +889,22 @@ class CoachEngine(QtCore.QObject):
             # En el acta va la sugerencia ENTERA, con su codigo: es lo que luego
             # quieres releer para ver si la respuesta te sirvio de verdad.
             etiqueta = "Sugerido (pantalla)" if pantalla else "Sugerido"
-            if revision:
-                etiqueta += " (revisada)"
+            if revision or rehacer:
+                etiqueta += " (revisada)" if revision else f" ({resolucion})"
             self._registro.append((etiqueta, estado["todo"]))
             s_fin.emit()
 
+        # La pantalla lleva su modo (manual / IA) en cada turno; el modo IA,
+        # con su prompt para el agente de codigo, necesita mas espacio.
+        extra = {}
+        resolucion = self._resolucion if pantalla else None
+        if pantalla:
+            extra["resolucion"] = resolucion
+            if resolucion == "ia":
+                extra["max_tokens"] = TOKENS_MODO_IA
+            if rehacer:
+                from llm import REHACER_PANTALLA
+                extra["pedido"] = REHACER_PANTALLA
         if pantalla:
             self._generando_pantalla = True
         else:
@@ -812,6 +919,7 @@ class CoachEngine(QtCore.QObject):
                 on_error=on_error,
                 allow_silence=permitir_silencio,
                 revision=revision,
+                **extra,
             )
         finally:
             if pantalla:
@@ -856,7 +964,8 @@ class CoachEngine(QtCore.QObject):
             self._stt_mic = None
 
         for nombre_q, nombre_w in (("_queue", "_worker"),
-                                   ("_queue_pantalla", "_worker_pantalla")):
+                                   ("_queue_pantalla", "_worker_pantalla"),
+                                   ("_queue_pregunta", "_worker_pregunta")):
             q = getattr(self, nombre_q)
             q.put(None)                  # desbloquea al worker si esta esperando
             worker = getattr(self, nombre_w)

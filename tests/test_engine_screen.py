@@ -5,6 +5,7 @@ are read from each lane's queue; no thread, audio, network or LLM is used.
 """
 import pytest
 
+import engine as engine_mod
 import followup
 import hilo
 from engine import CoachEngine
@@ -216,3 +217,177 @@ def test_heard_speech_reaches_both_conversations(monkeypatch):
     expected = [("Yo", "Usaría un diccionario para guardar los vistos.")]
     assert s.engine._coach.heard == expected
     assert s.engine._coach_pantalla.heard == expected
+
+
+# ------------------------------------------------- the ask box and Manual / AI
+class AskingCoach(FakeCoach):
+    def __init__(self, chunks=("## Respuesta\n", "Porque sí.")):
+        super().__init__()
+        self.asks = []
+        self.chunks = chunks
+        self.failure = None
+
+    def responder_aparte(self, pregunta, **kw):
+        self.asks.append((pregunta, kw))
+        if self.failure:
+            kw["on_error"](self.failure)
+            return
+        for c in self.chunks:
+            kw["on_delta"](c)
+        kw["on_done"]()
+
+
+def _ask_session(monkeypatch):
+    s = Session(monkeypatch)
+    s.engine._coach_pantalla = AskingCoach()
+    s.events = []
+    e = s.engine
+    e.askStart.connect(lambda: s.events.append("start"))
+    e.askDelta.connect(lambda t: s.events.append(("delta", t)))
+    e.askDone.connect(lambda: s.events.append("done"))
+    e.askError.connect(lambda m: s.events.append(("error", m)))
+    return s
+
+
+def test_typed_question_goes_to_its_own_lane(monkeypatch):
+    s = _ask_session(monkeypatch)
+
+    assert s.engine.preguntar("  ¿Por qué O(n)?  ") is True
+
+    assert s.drain(s.engine._queue_pregunta) == [("pregunta", "¿Por qué O(n)?")]
+    assert s.voice() == [] and s.screen() == []
+
+
+@pytest.mark.parametrize("texto", ["", "   "])
+def test_empty_question_is_ignored(monkeypatch, texto):
+    s = _ask_session(monkeypatch)
+
+    assert s.engine.preguntar(texto) is False
+    assert s.drain(s.engine._queue_pregunta) == []
+
+
+def test_no_question_outside_a_meeting(monkeypatch):
+    s = _ask_session(monkeypatch)
+    s.engine._running = False
+
+    assert s.engine.preguntar("hola") is False
+
+
+def test_test_mode_says_there_is_no_ai_to_ask(monkeypatch):
+    s = _ask_session(monkeypatch)
+    s.engine._test_mode = True
+
+    assert s.engine.preguntar("hola") is False
+    assert s.events == [("error", "Test mode — no AI to ask")]
+
+
+def test_question_before_the_model_is_ready_says_so(monkeypatch):
+    s = _ask_session(monkeypatch)
+    s.engine._coach_pantalla = None
+
+    assert s.engine.preguntar("hola") is False
+    assert s.events == [("error", "The model is still starting — ask again in a moment")]
+
+
+def test_question_is_answered_by_the_screen_conversation(monkeypatch):
+    s = _ask_session(monkeypatch)
+    s.engine._resolucion = "ia"
+
+    s.engine._responder_pregunta("¿Por qué un diccionario?")
+
+    pregunta, kw = s.engine._coach_pantalla.asks[0]
+    assert pregunta == "¿Por qué un diccionario?" and kw["resolucion"] == "ia"
+    assert s.events == ["start", ("delta", "## Respuesta\n"), ("delta", "Porque sí."), "done"]
+    assert s.engine._registro[-2:] == [("Pregunta", "¿Por qué un diccionario?"),
+                                       ("Sugerido (pregunta)", "## Respuesta\nPorque sí.")]
+
+
+def test_failed_question_reports_to_the_box(monkeypatch):
+    s = _ask_session(monkeypatch)
+    s.engine._coach_pantalla.failure = "503"
+
+    s.engine._responder_pregunta("hola")
+
+    assert s.events == [("error", "503")]
+
+
+def test_screen_answer_carries_the_resolution_and_ai_gets_more_room(monkeypatch):
+    s = Session(monkeypatch)
+    s.engine._resolucion = "ia"
+
+    s.engine._respond("", images=["png"], carril="pantalla")
+
+    kw = s.engine._coach_pantalla.calls[-1]
+    assert kw["resolucion"] == "ia" and kw["max_tokens"] == engine_mod.TOKENS_MODO_IA
+    assert s.engine._solucion_modo == "ia"
+
+
+def test_manual_screen_answer_keeps_the_normal_cap(monkeypatch):
+    s = Session(monkeypatch)
+
+    s.engine._respond("", images=["png"], carril="pantalla")
+
+    kw = s.engine._coach_pantalla.calls[-1]
+    assert kw["resolucion"] == "manual" and "max_tokens" not in kw
+
+
+def test_spoken_answer_has_no_resolution(monkeypatch):
+    s = Session(monkeypatch)
+
+    s.engine._respond("¿Qué tal?")
+
+    assert "resolucion" not in s.engine._coach.calls[-1]
+
+
+def test_switching_mode_redoes_a_solution_made_in_the_other_mode(monkeypatch):
+    s = Session(monkeypatch).solve_screen(SOLUTION)
+    s.engine._solucion_modo = "manual"
+
+    assert s.engine.set_resolucion("ia") is True
+
+    assert s.engine.resolucion == "ia"
+    assert s.screen() == [("rehacer", None)]
+
+
+def test_switching_back_to_the_mode_of_the_solution_does_not_redo(monkeypatch):
+    s = Session(monkeypatch).solve_screen(SOLUTION)
+    s.engine._solucion_modo = "manual"
+    s.engine._resolucion = "ia"
+
+    assert s.engine.set_resolucion("manual") is False
+    assert s.screen() == []
+
+
+def test_switching_mode_without_a_solution_only_changes_the_mode(monkeypatch):
+    s = Session(monkeypatch)
+
+    assert s.engine.set_resolucion("ia") is False
+
+    assert s.engine.resolucion == "ia" and s.screen() == []
+
+
+def test_unknown_mode_is_rejected(monkeypatch):
+    s = Session(monkeypatch)
+
+    assert s.engine.set_resolucion("magia") is False
+    assert s.engine.resolucion == "manual"
+
+
+def test_redo_asks_for_the_same_task_in_the_new_mode(monkeypatch):
+    from llm import REHACER_PANTALLA
+    s = Session(monkeypatch).solve_screen(SOLUTION)
+    s.engine._resolucion = "ia"
+
+    s.engine._respond("", carril="pantalla", rehacer=True)
+
+    kw = s.engine._coach_pantalla.calls[-1]
+    assert kw["pedido"] == REHACER_PANTALLA and kw["resolucion"] == "ia"
+    assert s.engine._registro[-1][0] == "Sugerido (pantalla) (ia)"
+
+
+def test_agent_sets_the_resolution(monkeypatch):
+    s = Session(monkeypatch)
+
+    s.engine._permisos({"modo": "automatico", "resolucion": "ia"})
+
+    assert s.engine.resolucion == "ia"

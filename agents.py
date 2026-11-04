@@ -7,6 +7,7 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
      "reglas": "...como funciona la conversacion, formato, codigo...",
      "tono": "...como hablas: registro, muletillas, ritmo...",
      "modo": "automatico", "capturas": true, "notas": true,
+     "resolucion": "manual",
      "forma": "circulo", "color": "negro",
      "conocimiento": [{"id": "doc-1", "name": "Mi CV", "body": "..."}]}
 
@@ -21,6 +22,11 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
   solo cuando lo pides; automatico: responde en cuanto detecta una pregunta),
   'capturas' (puede usar pantallazos) y 'notas' (notas al terminar; el
   notetaker las toma siempre).
+- 'resolucion': como resuelve los pantallazos y las preguntas escritas.
+  manual: el reto se hace a mano, asi que trae la solucion en codigo
+  explicada linea a linea; ia: el reto se hace con IA (Claude Code, Codex...),
+  asi que trae que construir, las decisiones, el prompt para el agente de
+  codigo y como defenderlo. Se cambia tambien en plena reunion.
 - 'forma' y 'color': su mascota (avatares.py), en la Home y en el overlay.
 - 'conocimiento': documentos markdown del agente (CV, oferta, producto...),
   como los de un GPT o un proyecto. Se le dan enteros al empezar la reunion.
@@ -30,6 +36,7 @@ Cada agente es un archivo agents/<id>.json junto a config.json:
 - Los avisos de cada turno ("responde a esto", "puedes callarte") no son del
   agente: los pone llm.py en cada mensaje.
 """
+import hashlib
 import json
 import logging
 import os
@@ -44,9 +51,26 @@ AGENTS_DIR = os.path.join(cfg_mod.data_dir(), "agents")
 
 DEFAULT_ID = "coach"
 
+# Reglas por defecto de versiones anteriores (sha256 del texto). Un agente que
+# las guarda tal cual nunca las toco: recibe las de ahora, que traen la
+# mecanica nueva (p. ej. los modos manual / IA). Las editadas se respetan.
+_REGLAS_ANTERIORES = {
+    "b678f93072d63b7a9024f700f6eb866fcecb6ebacba1db2a2178cd3ca834a2b3",   # hasta 5da77f9
+}
+
+
+def _reglas_al_dia(reglas):
+    if hashlib.sha256(reglas.encode("utf-8")).hexdigest() in _REGLAS_ANTERIORES:
+        return REGLAS
+    return reglas
+
 # Como responde un agente.
 NOTETAKER, MANUAL, AUTOMATICO = "notetaker", "manual", "automatico"
 MODOS = (NOTETAKER, MANUAL, AUTOMATICO)
+
+# Como resuelve lo que se ve en pantalla y lo que le preguntas por escrito.
+RESOLVER_MANUAL, RESOLVER_IA = "manual", "ia"
+RESOLUCIONES = (RESOLVER_MANUAL, RESOLVER_IA)
 
 
 def prompt_bilingue(es, en):
@@ -120,7 +144,7 @@ def preset(preset_id):
     return {"id": pid, "name": nombre, "preset": pid, "forma": forma, "color": color,
             "instrucciones": instrucciones, "reglas": REGLAS, "tono": "",
             "modo": AUTOMATICO, "capturas": True, "notas": True,
-            "conocimiento": []}
+            "resolucion": RESOLVER_MANUAL, "conocimiento": []}
 
 
 def nuevo(existentes, nombre="Nuevo agente"):
@@ -187,11 +211,14 @@ def list_agents():
                     "name": str(data.get("name") or aid),
                     "preset": base["preset"],
                     "instrucciones": str(data.get("instrucciones", base["instrucciones"])),
-                    "reglas": str(data.get("reglas", base["reglas"])),
+                    "reglas": _reglas_al_dia(str(data.get("reglas", base["reglas"]))),
                     "tono": str(data.get("tono", base["tono"])),
                     "modo": data.get("modo") if data.get("modo") in MODOS else AUTOMATICO,
                     "capturas": bool(data.get("capturas", True)),
                     "notas": bool(data.get("notas", True)),
+                    "resolucion": (data.get("resolucion")
+                                   if data.get("resolucion") in RESOLUCIONES
+                                   else RESOLVER_MANUAL),
                     "forma": str(data.get("forma") or base["forma"]),
                     "color": str(data.get("color") or base["color"]),
                     "conocimiento": [
@@ -225,6 +252,7 @@ def write_all(agentes):
                  "modo": a.get("modo", AUTOMATICO),
                  "capturas": bool(a.get("capturas", True)),
                  "notas": bool(a.get("notas", True)),
+                 "resolucion": resolucion(a),
                  "forma": a.get("forma", ""),
                  "color": a.get("color", ""),
                  "conocimiento": a.get("conocimiento", [])}
@@ -258,6 +286,11 @@ def usa_capturas(agente):
 
 def toma_notas(agente):
     return modo(agente) == NOTETAKER or bool(agente.get("notas", True))
+
+
+def resolucion(agente):
+    r = agente.get("resolucion")
+    return r if r in RESOLUCIONES else RESOLVER_MANUAL
 
 
 def texto_conocimiento(agente):

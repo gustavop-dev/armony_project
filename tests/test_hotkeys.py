@@ -484,7 +484,7 @@ def native(gh, message, wparam, event_type=b"windows_generic_MSG"):
 def test_global_register_returns_all_names(global_hotkeys):
     result = global_hotkeys.register()
 
-    assert result == (["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6"], [])
+    assert result == (["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6", "Alt+7"], [])
 
 
 def test_global_register_reports_failed_names(global_hotkeys, fake_user32):
@@ -492,7 +492,7 @@ def test_global_register_reports_failed_names(global_hotkeys, fake_user32):
 
     result = global_hotkeys.register()
 
-    assert result == (["Alt+1", "Alt+3", "Alt+4", "Alt+6"], ["Alt+2", "Alt+5"])
+    assert result == (["Alt+1", "Alt+3", "Alt+4", "Alt+6", "Alt+7"], ["Alt+2", "Alt+5"])
 
 
 def test_global_register_uses_alt_norepeat_digits(global_hotkeys, fake_user32):
@@ -505,6 +505,7 @@ def test_global_register_uses_alt_norepeat_digits(global_hotkeys, fake_user32):
         (None, 4, 0x4001, 0x34),
         (None, 5, 0x4001, 0x35),
         (None, 6, 0x4001, 0x36),
+        (None, 7, 0x4001, 0x37),
     ]
 
 
@@ -595,7 +596,7 @@ def test_global_unregister_releases_registered_ids(global_hotkeys, fake_user32):
 
     global_hotkeys.unregister()
 
-    assert fake_user32.unregister_calls == [(None, 1), (None, 3), (None, 4), (None, 6)]
+    assert fake_user32.unregister_calls == [(None, 1), (None, 3), (None, 4), (None, 6), (None, 7)]
 
 
 def test_global_unregister_removes_keyboard_hook(global_hotkeys, fake_user32):
@@ -620,7 +621,7 @@ def test_global_unregister_tolerates_unregister_errors(global_hotkeys, fake_user
 
     global_hotkeys.unregister()
 
-    assert len(fake_user32.unregister_calls) == 6
+    assert len(fake_user32.unregister_calls) == 7
 
 
 def test_global_second_unregister_releases_nothing(global_hotkeys, fake_user32):
@@ -629,7 +630,7 @@ def test_global_second_unregister_releases_nothing(global_hotkeys, fake_user32):
 
     global_hotkeys.unregister()
 
-    assert len(fake_user32.unregister_calls) == 6
+    assert len(fake_user32.unregister_calls) == 7
 
 
 @pytest.mark.parametrize("hk_id, expected", [
@@ -698,7 +699,7 @@ def test_meeting_switches_shortcuts_on(global_hotkeys, fake_user32):
     ocupados = global_hotkeys.set_activo(True)
 
     assert (global_hotkeys.caps_layer, ocupados) == (True, [])
-    assert len(fake_user32.register_calls) == 6
+    assert len(fake_user32.register_calls) == 7
 
 
 def test_end_of_meeting_releases_everything(global_hotkeys, fake_user32):
@@ -708,7 +709,7 @@ def test_end_of_meeting_releases_everything(global_hotkeys, fake_user32):
     global_hotkeys.set_activo(False)
 
     assert global_hotkeys.caps_layer is False
-    assert len(fake_user32.unregister_calls) == 6
+    assert len(fake_user32.unregister_calls) == 7
 
 
 def test_switching_on_twice_registers_once(global_hotkeys, fake_user32):
@@ -717,7 +718,7 @@ def test_switching_on_twice_registers_once(global_hotkeys, fake_user32):
 
     global_hotkeys.set_activo(True)
 
-    assert len(fake_user32.register_calls) == 6
+    assert len(fake_user32.register_calls) == 7
 
 
 def test_busy_fallbacks_are_reported(global_hotkeys, fake_user32):
@@ -725,3 +726,8 @@ def test_busy_fallbacks_are_reported(global_hotkeys, fake_user32):
     global_hotkeys.instalar()
 
     assert global_hotkeys.set_activo(True) == ["Alt+2"]
+
+
+def test_caps_e_opens_the_ask_box():
+    assert hotkeys.CAPS_BINDINGS[hotkeys.ACTION_ASK] == (0x45, "Caps+E")
+    assert hotkeys.BINDINGS[hotkeys.ACTION_ASK] == (hotkeys.MOD_ALT, 0x37, "Alt+7")

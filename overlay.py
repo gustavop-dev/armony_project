@@ -135,3 +135,64 @@ def vidrio_disponible() -> bool:
         prueba.close()
         prueba.deleteLater()
     return ok
+
+
+# --------------------------------------------------------------- foco
+# La caja de preguntas es la unica ventana del overlay que se escribe: tiene
+# que poder quitarle el teclado a la app en la que estas (Zoom, el editor...) y
+# devolverselo al cerrarse. Windows no deja que una app en segundo plano se
+# ponga delante por su cuenta (SetForegroundWindow falla en silencio); unirse
+# un momento a la cola de entrada de la ventana activa (AttachThreadInput) es
+# la forma de que lo acepte, sin inyectar teclas.
+
+def _user32():
+    u32 = ctypes.windll.user32
+    u32.GetForegroundWindow.restype = ctypes.c_void_p
+    u32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    u32.GetWindowThreadProcessId.restype = ctypes.c_uint32
+    u32.AttachThreadInput.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_int]
+    u32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+    u32.BringWindowToTop.argtypes = [ctypes.c_void_p]
+    u32.IsWindow.argtypes = [ctypes.c_void_p]
+    return u32
+
+
+def ventana_activa():
+    """HWND de la ventana que tiene el foco ahora (0 si no se sabe)."""
+    try:
+        return int(_user32().GetForegroundWindow() or 0)
+    except Exception:
+        return 0
+
+
+def traer_al_frente(hwnd) -> int:
+    """Pone la ventana delante y con el teclado. Devuelve el HWND que lo tenia
+    (para devolverselo luego), o 0."""
+    try:
+        u32 = _user32()
+        antes = int(u32.GetForegroundWindow() or 0)
+        if antes == int(hwnd):
+            return 0
+        yo = ctypes.windll.kernel32.GetCurrentThreadId()
+        suyo = u32.GetWindowThreadProcessId(antes, None) if antes else 0
+        unido = bool(suyo and suyo != yo and u32.AttachThreadInput(yo, suyo, 1))
+        try:
+            u32.BringWindowToTop(int(hwnd))
+            u32.SetForegroundWindow(int(hwnd))
+        finally:
+            if unido:
+                u32.AttachThreadInput(yo, suyo, 0)
+        return antes
+    except Exception:
+        return 0
+
+
+def devolver_foco(hwnd) -> bool:
+    """Devuelve el teclado a la ventana que lo tenia antes de abrir la caja."""
+    try:
+        u32 = _user32()
+        if not hwnd or not u32.IsWindow(int(hwnd)):
+            return False
+        return bool(u32.SetForegroundWindow(int(hwnd)))
+    except Exception:
+        return False

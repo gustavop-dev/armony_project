@@ -1,8 +1,11 @@
 """Interfaz del overlay, segun 'Interview Overlay.dc.html'.
 
-Dos ventanas flotantes, sin marco, translucidas al 40% y siempre encima:
+Ventanas flotantes, sin marco, translucidas y siempre encima:
   - TopBar          barra de atajos centrada arriba
   - TranscriptPanel ventana de transcripcion + respuesta sugerida, abajo
+                    (y otra igual para la pantalla: capturas y soluciones)
+  - AskPanel        la caja de preguntas escritas (Bloq Mayus+E), debajo
+                    del panel hablado mientras esta abierta
 Mas dos elementos auxiliares: CollapsedButton (cuando el overlay esta oculto)
 y FlashOverlay (destello al capturar pantalla).
 """
@@ -27,6 +30,8 @@ INTERVALO_REPINTADO = 90    # ms
 LATENCIA_LENTA_MS = 1500
 RESPUESTA_LENTA_MS = 3000
 AVISO_MS = 4000              # lo que dura un aviso de paso en la pastilla
+HINT_PREGUNTA = ("Ask about the screen or the meeting — Enter to send, "
+                 "Shift+Enter for a new line, Esc to close.")
 
 # Cuantos mensajes se mantienen vivos en el hilo.
 #
@@ -690,13 +695,18 @@ class Burbuja(QtWidgets.QFrame):
     reunion.
     """
 
+    # Etiqueta de cada tipo. En la caja de preguntas la pregunta es tuya y la
+    # respuesta de la IA: "Question" / "Answer" en vez de Participant / You.
+    ETIQUETAS = {"ellos": "Participant", "tu": "You", "pregunta": "Question",
+                 "respuesta": "Answer"}
+
     def __init__(self, quien, ancho_maximo=700):
         super().__init__()
-        self.quien = quien                       # 'ellos' | 'tu'
+        self.quien = quien                       # 'ellos' | 'tu' | 'pregunta' | 'respuesta'
         self._raw = ""
         self._label = None                       # etiqueta reutilizada del texto
         self.copy_buttons = []
-        mio = quien == "tu"
+        mio = quien in ("tu", "respuesta")
         self.setStyleSheet(f"""
             Burbuja {{
                 background: {'rgba(124,149,255,0.07)' if mio else 'rgba(220,228,255,0.04)'};
@@ -717,10 +727,11 @@ class Burbuja(QtWidgets.QFrame):
         if mio:
             cab.addStretch()
             cab.addWidget(icons.label("sparkles", T.ACCENT, 12))
-            cab.addWidget(_tracked("You", 10, QtGui.QFont.Bold, T.ACCENT, 0.6, upper=True))
+            cab.addWidget(_tracked(self.ETIQUETAS[quien], 10, QtGui.QFont.Bold,
+                                   T.ACCENT, 0.6, upper=True))
         else:
-            cab.addWidget(_tracked("Participant", 10, QtGui.QFont.DemiBold,
-                                   T.TEXT_FAINT, 0.6, upper=True))
+            cab.addWidget(_tracked(self.ETIQUETAS.get(quien, "Participant"), 10,
+                                   QtGui.QFont.DemiBold, T.TEXT_FAINT, 0.6, upper=True))
             cab.addStretch()
         lay.addLayout(cab)
 
@@ -989,6 +1000,67 @@ class SuggestionChip(QtWidgets.QPushButton):
             self._rotular()
 
 
+class ModoChip(QtWidgets.QFrame):
+    """'Manual | AI': como se resuelve lo que hay en pantalla y lo que preguntas
+    por escrito. Manual: el reto lo haces tu a mano (codigo explicado linea a
+    linea). AI: el reto se hace con un agente de codigo (que construir, las
+    decisiones, el prompt para pegarle y como defenderlo). Sale del agente y se
+    cambia aqui en plena reunion; el panel de la pantalla y la caja de
+    preguntas llevan uno cada uno, siempre en el mismo modo."""
+    changed = QtCore.Signal(str)
+
+    OPCIONES = (
+        ("manual", "Manual", "Manual — you solve it by hand: full code explained "
+                             "line by line"),
+        ("ia", "AI", "AI — you solve it with an AI agent: what to build, the "
+                     "decisions, the prompt to paste and how to defend it"),
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("modochip")
+        self.setStyleSheet(
+            "#modochip { background: rgba(220,228,255,0.05); "
+            "border: 1px solid rgba(220,228,255,0.14); border-radius: 10px; }"
+            "#modochip QPushButton {"
+            f"  color: {T.TEXT_FAINT}; background: transparent; border: none;"
+            "   border-radius: 8px; padding: 2px 10px; }"
+            "#modochip QPushButton:checked {"
+            f"  color: {T.TEXT_BRIGHT}; background: rgba(124,149,255,0.32); }}"
+            f"#modochip QPushButton:hover:!checked {{ color: {T.TEXT}; }}")
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(2, 2, 2, 2)
+        lay.setSpacing(2)
+        grupo = QtWidgets.QButtonGroup(self)
+        grupo.setExclusive(True)
+        self.botones = {}
+        for clave, texto, ayuda in self.OPCIONES:
+            b = QtWidgets.QPushButton(texto)
+            f = b.font(); f.setPixelSize(11); f.setWeight(QtGui.QFont.DemiBold); b.setFont(f)
+            b.setObjectName(f"modo-{clave}")
+            b.setCheckable(True)
+            b.setCursor(QtCore.Qt.PointingHandCursor)
+            b.setToolTip(ayuda)
+            b.clicked.connect(lambda _c=False, k=clave: self._elegir(k))
+            grupo.addButton(b)
+            lay.addWidget(b)
+            self.botones[clave] = b
+        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        self.modo = "manual"
+        self.botones["manual"].setChecked(True)
+
+    def set_modo(self, modo):
+        """Lo pone sin avisar (cuando el cambio viene de fuera)."""
+        if modo in self.botones:
+            self.modo = modo
+            self.botones[modo].setChecked(True)
+
+    def _elegir(self, clave):
+        if clave != self.modo:
+            self.modo = clave
+            self.changed.emit(clave)
+
+
 class SkipPill(QtWidgets.QLabel):
     """Aviso de que NO va a haber respuesta.
 
@@ -1075,6 +1147,7 @@ class TopBar(_Draggable, QtWidgets.QWidget):
     generateClicked = QtCore.Signal()
     answerNowClicked = QtCore.Signal()
     toggleClicked = QtCore.Signal()
+    askClicked = QtCore.Signal()
 
     def __init__(self):
         super().__init__()
@@ -1179,6 +1252,12 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         self.btn_shot.clicked.connect(self.screenshotClicked)
         lay.addWidget(self.btn_shot)
 
+        # --- preguntar por escrito (abre la caja de preguntas) ---
+        self.btn_ask = self._pill("Ask", ("Caps", "E"), icono="pencil")
+        self.btn_ask.setToolTip("Type a question about the screen or the meeting")
+        self.btn_ask.clicked.connect(self.askClicked)
+        lay.addWidget(self.btn_ask)
+
         # --- mostrar / ocultar ---
         self.btn_toggle = self._pill("Show / Hide", ("Caps", "Q"), icono="eye")
         self.btn_toggle.clicked.connect(self.toggleClicked)
@@ -1280,6 +1359,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
       sugerencia). Lo que dices tu no se pinta: va solo como contexto.
     - "pantalla": capturas y soluciones de codigo. Solo existe cuando se usan
       pantallazos; trae la sugerencia de relanzar la solucion y un cierre.
+    - "pregunta": la caja de preguntas escritas (ver AskPanel).
+    La pantalla y la caja llevan el selector Manual | AI (ModoChip).
     """
     relaunchClicked = QtCore.Signal()
     closeClicked = QtCore.Signal()
@@ -1288,6 +1369,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
     def __init__(self, modo="voz"):
         super().__init__()
         self.modo = modo
+        # Quien firma la respuesta: en la caja de preguntas, la IA ("Answer").
+        self._quien_resp = "respuesta" if modo == "pregunta" else "tu"
         _frameless(self)
         self._init_drag()
         self._raw = ""
@@ -1402,7 +1485,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
                   self.resize_grip] + self._copy_buttons)
         if self.nuevo_chip.isVisible():
             zonas.append(self.nuevo_chip)
-        for extra in (self.relanzar_chip, self.btn_close, self.agent_chip):
+        for extra in (self.relanzar_chip, self.btn_close, self.agent_chip,
+                      self.modo_chip):
             if extra.isVisible():
                 zonas.append(extra)
         # La horizontal solo esta cuando el codigo no cabe de ancho; si no se
@@ -1448,6 +1532,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         lay.addWidget(self.titulo)
 
         lay.addStretch()
+        # Pantalla y caja de preguntas: Manual | AI.
+        self.modo_chip = ModoChip()
+        lay.addWidget(self.modo_chip)
         self.badge = StatusBadge()
         lay.addWidget(self.badge)
         # Latencias: solo cuando van lentas (ver set_latency / set_e2e).
@@ -1474,16 +1561,21 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self.btn_close.setToolTip("Close the screen panel")
         self.btn_close.clicked.connect(self.closeClicked.emit)
         lay.addWidget(self.btn_close)
-        if self.modo == "pantalla":
+        if self.modo in ("pantalla", "pregunta"):
             self.bars.setVisible(False)
             self.compa.setVisible(False)
             self.agent_chip.setVisible(False)
             self.agent_chip.setEnabled(False)
+            if self.modo == "pregunta":
+                self.titulo._completo = "Ask"
+                self.titulo.setText("Ask")
+                self.btn_close.setToolTip("Close (Esc)")
         else:
             self.bars.setVisible(False)          # el companero ya dice que hay audio
             self.agent_chip.mostrar_cara = False  # su cara va en el companero
             self.titulo.setVisible(False)
             self.btn_close.setVisible(False)
+            self.modo_chip.setVisible(False)
 
         # Con selector: sin el, la linea de abajo la hereda cada hijo y sale
         # subrayado el titulo, el estado...
@@ -1498,7 +1590,10 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        w.setMinimumHeight(240)
+        # La caja de preguntas ocupa un cuarto de pantalla: no se le puede
+        # pedir el alto minimo de un panel entero.
+        w.setMinimumHeight(60 if self.modo == "pregunta" else 240)
+        self._cuerpo = w
 
         # Un unico hilo cronologico, como un chat: lo viejo se queda arriba y lo
         # nuevo entra por abajo. Antes cada pregunta borraba la anterior, asi que
@@ -1554,6 +1649,8 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         if self.modo == "pantalla":
             self.set_hint("Screenshots (Caps+S) and their solutions show up here. "
                           "Caps+D to solve.")
+        elif self.modo == "pregunta":
+            self.set_hint(HINT_PREGUNTA)
         else:
             self.set_hint("Waiting for the first question — the answer will "
                           "draft here.")
@@ -1762,9 +1859,9 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         """
         self._raw = ""
         pregunta = next((b for b in reversed(self._burbujas)
-                         if b.quien == "ellos" and isValid(b)), None)
+                         if b.quien in ("ellos", "pregunta") and isValid(b)), None)
         self._auto["feed"].anotar()
-        self._burbuja_resp = self._nueva_burbuja("tu")
+        self._burbuja_resp = self._nueva_burbuja(self._quien_resp)
         self._ultima_resp = self._burbuja_resp
         self._auto["feed"].anclar(self._burbuja_resp, pregunta)
         QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
@@ -1804,7 +1901,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         self._timer_repintado.stop()
         self._repintado_pendiente = False
         if self._burbuja_resp is None:
-            self._burbuja_resp = self._nueva_burbuja("tu")
+            self._burbuja_resp = self._nueva_burbuja(self._quien_resp)
         with metricas.cronometro(PINTADO):
             self._auto["feed"].anotar()
             self._burbuja_resp.set_markdown(self._raw, self._parrafo, self._vinetas)
@@ -1937,6 +2034,135 @@ def parse_sections(raw):
     es una forma comoda de comprobar por fuera que el modelo respeta el formato.
     """
     return richtext.solo_texto(richtext.parse_answer(raw))
+
+
+class _CajaPregunta(QtWidgets.QPlainTextEdit):
+    """Donde se escribe la pregunta: Enter la manda, Mayus+Enter salta de
+    linea (para pegar un trozo de codigo) y Esc cierra la caja."""
+    enviar = QtCore.Signal()
+    salir = QtCore.Signal()
+
+    def keyPressEvent(self, e):
+        enter = e.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter)
+        if enter and not e.modifiers() & QtCore.Qt.ShiftModifier:
+            self.enviar.emit()
+            return
+        if e.key() == QtCore.Qt.Key_Escape:
+            self.salir.emit()
+            return
+        super().keyPressEvent(e)
+
+
+class AskPanel(TranscriptPanel):
+    """La caja de preguntas, como /btw en Claude Code: escribes una pregunta
+    sobre lo que pasa (un trozo de la solucion en pantalla, algo que dijeron) y
+    la respuesta sale aqui, sin tocar lo que hay en los otros paneles.
+
+    Es dinamica: no ocupa sitio hasta que la abres (Bloq Mayus+E). Entonces se
+    pone debajo del panel hablado, con un cuarto del alto de la pantalla, y se
+    lleva el teclado; cuando llega una respuesta crece hasta la mitad de la
+    columna, para que se pueda leer; al cerrarla (Esc, la X o Bloq Mayus+E) el hablado vuelve
+    a su alto y el teclado a la app en la que estabas. Es la unica ventana del
+    overlay que toma el foco: hay que poder escribir en ella.
+
+    Las preguntas y respuestas se quedan en la caja toda la reunion (y en el
+    acta) y la IA las tiene en cuenta en las siguientes, como en un chat.
+    """
+    submitted = QtCore.Signal(str)
+
+    def __init__(self):
+        super().__init__(modo="pregunta")
+        self.badge.setVisible(False)     # sin preguntas no hay estado que contar
+
+    def _build(self):
+        super()._build()
+        self.card.layout().addWidget(self._entrada())
+        self.resize_grip.raise_()
+
+    def set_status(self, texto, kind=None):
+        self.badge.setVisible(True)
+        super().set_status(texto, kind)
+
+    def _entrada(self):
+        w = QtWidgets.QWidget()
+        w.setStyleSheet("background: transparent;")
+        lay = QtWidgets.QHBoxLayout(w)
+        # A la derecha, hueco para el agarre de redimension de la esquina.
+        lay.setContentsMargins(14, 2, 30, 12)
+        lay.setSpacing(8)
+        self.entrada = _CajaPregunta()
+        self.entrada.setObjectName("entrada")
+        self.entrada.setPlaceholderText("Ask about the screen or the meeting…")
+        self.entrada.setTabChangesFocus(True)
+        f = self.entrada.font(); f.setPixelSize(14); self.entrada.setFont(f)
+        self.entrada.setStyleSheet(
+            "QPlainTextEdit#entrada {"
+            f"  color: {T.TEXT_BRIGHT}; background: rgba(220,228,255,0.06);"
+            "   border: 1px solid rgba(124,149,255,0.38); border-radius: 10px;"
+            "   padding: 4px 6px; selection-background-color: rgba(124,149,255,0.45);"
+            "}"
+            "QPlainTextEdit#entrada QScrollBar:vertical { background: transparent; "
+            "width: 8px; margin: 3px 2px 3px 0; }"
+            "QPlainTextEdit#entrada QScrollBar::handle:vertical { "
+            "background: rgba(124,149,255,0.28); border-radius: 4px; min-height: 14px; }"
+            "QPlainTextEdit#entrada QScrollBar::add-line:vertical, "
+            "QPlainTextEdit#entrada QScrollBar::sub-line:vertical { height: 0; }")
+        # Dos lineas a la vista; si escribes mas, se desplaza dentro.
+        alto = self.entrada.fontMetrics().lineSpacing() * 2 + 20
+        self.entrada.setFixedHeight(alto)
+        self.entrada.enviar.connect(self._enviar)
+        self.entrada.salir.connect(self.closeClicked.emit)
+        lay.addWidget(self.entrada, 1)
+        self.btn_enviar = QtWidgets.QPushButton()
+        self.btn_enviar.setObjectName("enviar")
+        self.btn_enviar.setIcon(QtGui.QIcon(icons.pixmap("chevron_right", T.ACCENT_BTN_INK, 16)))
+        self.btn_enviar.setFixedSize(34, 34)
+        self.btn_enviar.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_enviar.setToolTip("Send (Enter)")
+        self.btn_enviar.setStyleSheet(
+            "QPushButton#enviar { border: none; border-radius: 17px; background: "
+            f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {T.ACCENT_BTN_TOP}, "
+            f"stop:1 {T.ACCENT_BTN_BOT}); }}"
+            "QPushButton#enviar:hover { background: #8ea6ff; }")
+        self.btn_enviar.clicked.connect(self._enviar)
+        lay.addWidget(self.btn_enviar, 0, QtCore.Qt.AlignBottom)
+        return w
+
+    def _enviar(self):
+        texto = self.entrada.toPlainText().strip()
+        if not texto:
+            return
+        self.entrada.clear()
+        self.submitted.emit(texto)
+
+    def add_question(self, texto):
+        """Tu pregunta entra en el hilo; la respuesta llegara debajo."""
+        self._auto["feed"].anotar()
+        b = self._nueva_burbuja("pregunta")
+        b.set_texto(texto)
+        QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
+
+    def enfocar(self):
+        """El cursor, en la caja de texto."""
+        self.entrada.setFocus(QtCore.Qt.ActiveWindowFocusReason)
+
+    def tiene_foco(self):
+        return self.isVisible() and self.isActiveWindow()
+
+    def keyPressEvent(self, e):
+        if e.key() == QtCore.Qt.Key_Escape:
+            self.closeClicked.emit()
+            return
+        super().keyPressEvent(e)
+
+    def limpiar_hilo(self):
+        super().limpiar_hilo()
+        self.entrada.clear()
+        self.badge.setVisible(False)
+        self.set_hint(HINT_PREGUNTA)
+
+    def interactive_widgets(self):
+        return super().interactive_widgets() + [self.entrada, self.btn_enviar]
 
 
 # --------------------------------------------------------------- auxiliares

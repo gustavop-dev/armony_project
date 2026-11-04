@@ -644,6 +644,26 @@ def test_screens_and_notes_toggles_are_saved(make_home, qtbot):
     assert (g["capturas"], g["notas"]) == (False, False)
 
 
+def test_permissions_tab_saves_how_it_solves(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "permisos")
+
+    _find(win, hw.Segmented, "resolucion")._btns["ia"].click()
+    win.guardar_ya()
+
+    assert agents.get("grok")["resolucion"] == "ia"
+    explica = _find(win, QtWidgets.QLabel, "resolucion-explicacion").text()
+    assert explica.startswith("El reto se hace con un agente de código")
+
+
+def test_solving_by_hand_is_the_default(make_home):
+    win = make_home(agent="grok")
+    win.editar_agente("grok", "permisos")
+
+    selector = _find(win, hw.Segmented, "resolucion")
+    assert selector._btns["manual"].isChecked()
+
+
 def test_agent_page_says_how_it_answers(make_home):
     lista = agents.list_agents()
     lista[2]["modo"] = "notetaker"

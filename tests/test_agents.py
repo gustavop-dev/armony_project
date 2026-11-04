@@ -220,3 +220,46 @@ def test_mascot_survives_a_round_trip():
 
     c = agents.get("coach")
     assert (c["forma"], c["color"]) == ("triangulo", "marron")
+
+
+# ------------------------------------------------- manual / IA
+def test_presets_solve_by_hand():
+    assert agents.preset("coach")["resolucion"] == "manual"
+    assert agents.nuevo(agents.list_agents())["resolucion"] == "manual"
+
+
+def test_resolution_survives_a_round_trip():
+    lista = agents.list_agents()
+    lista[2]["resolucion"] = "ia"
+    agents.write_all(lista)
+
+    assert agents.get("grok")["resolucion"] == "ia"
+    assert agents.get("coach")["resolucion"] == "manual"
+
+
+def test_unknown_resolution_falls_back_to_manual(isolated_data_dir):
+    agents.list_agents()
+    (isolated_data_dir / "agents" / "agente-1.json").write_text(
+        json.dumps({"name": "Raro", "resolucion": "magia"}), encoding="utf-8")
+
+    assert agents.get("agente-1")["resolucion"] == "manual"
+    assert agents.resolucion({"resolucion": "magia"}) == "manual"
+    assert agents.resolucion({}) == "manual"
+
+
+def test_untouched_old_default_rules_follow_the_app(isolated_data_dir, monkeypatch):
+    viejas = "reglas de antes"
+    monkeypatch.setattr(agents, "_REGLAS_ANTERIORES",
+                        {__import__("hashlib").sha256(viejas.encode()).hexdigest()})
+    agents.list_agents()
+    (isolated_data_dir / "agents" / "agente-1.json").write_text(
+        json.dumps({"name": "Viejo", "reglas": viejas}), encoding="utf-8")
+    (isolated_data_dir / "agents" / "agente-2.json").write_text(
+        json.dumps({"name": "Mio", "reglas": "mis reglas"}), encoding="utf-8")
+
+    assert agents.get("agente-1")["reglas"] == REGLAS
+    assert agents.get("agente-2")["reglas"] == "mis reglas"
+
+
+def test_rules_know_the_solving_modes():
+    assert "MODO IA" in REGLAS and "PREGUNTA APARTE" in REGLAS

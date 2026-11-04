@@ -15,7 +15,8 @@ Como la de ChatGPT, Claude o Grok, pero para reuniones:
   - cada agente tiene su mascota: una figura lisa (circulo, cuadrado o
     triangulo) de su color, solo con ojos (avatares.py); se cambia pulsandola.
   - permisos de cada agente: notetaker, responder al pedir o automatico,
-    capturas de pantalla y notas al terminar. Las notas de una reunion se
+    capturas de pantalla, notas al terminar y como resuelve los pantallazos
+    y las preguntas escritas (a mano o con IA). Las notas de una reunion se
     leen en su pagina, junto a la transcripcion.
   - "Ajustes" es una vista aparte: claves, idioma y opacidad.
 
@@ -572,6 +573,17 @@ MODOS = [
     (agents_mod.AUTOMATICO, "Automático",
      "Responde en cuanto detecta una pregunta, sin que tengas que pedirlo."),
 ]
+RESOLUCIONES = [
+    (agents_mod.RESOLVER_MANUAL, "Manual",
+     "El reto lo haces tú a mano: la solución en código completa, explicada "
+     "línea a línea. Las preguntas escritas, igual: el trozo exacto y su "
+     "explicación."),
+    (agents_mod.RESOLVER_IA, "Con IA",
+     "El reto se hace con un agente de código (Claude Code, Codex…): qué hay "
+     "que construir, las decisiones con su porqué, el prompt listo para pegar "
+     "y cómo defenderlo. Las preguntas escritas, explicadas como un mentor."),
+]
+
 MODO_CORTO = {
     agents_mod.NOTETAKER: "Notetaker · solo toma notas",
     agents_mod.MANUAL: "Responde al pedir · Bloq Mayús+A",
@@ -1105,6 +1117,26 @@ class HomeWindow(QtWidgets.QWidget):
             "abiertas junto a la transcripción."
             + (" El notetaker las toma siempre." if notetaker else ""),
             agents_mod.toma_notas(a), habilitado=not notetaker))
+
+        # Manual o con IA: pantallazos y caja de preguntas (Bloq Mayus+E).
+        resolucion = agents_mod.resolucion(a)
+        titulo2 = QtWidgets.QLabel("Cómo resuelve pantallazos y preguntas")
+        titulo2.setFont(tf)
+        titulo2.setStyleSheet(f"color: {TXT_LB}; background: transparent; padding-top: 10px;")
+        tv.addWidget(titulo2)
+        selector2 = Segmented([(r, nombre) for r, nombre, _ in RESOLUCIONES], resolucion)
+        selector2.setObjectName("resolucion")
+        selector2.changed.connect(
+            lambda r, aid=a["id"]: self._permiso(aid, "resolucion", r))
+        fila2 = QtWidgets.QHBoxLayout(); fila2.addWidget(selector2); fila2.addStretch()
+        tv.addLayout(fila2)
+        explica2 = QtWidgets.QLabel(next(d for r, _, d in RESOLUCIONES if r == resolucion)
+                                    + " Se cambia también en plena reunión (Manual | AI).")
+        explica2.setObjectName("resolucion-explicacion")
+        explica2.setWordWrap(True)
+        explica2.setStyleSheet(f"color: {N.APAGADO}; font-size: 12px; background: transparent; "
+                               f"padding: 2px 4px 8px 4px;")
+        tv.addWidget(explica2)
         return tarjeta
 
     def _fila_permiso(self, a, campo, titulo, ayuda, valor, habilitado=True):
@@ -1135,8 +1167,8 @@ class HomeWindow(QtWidgets.QWidget):
             return
         a[campo] = valor
         self._marcar()
-        if campo == "modo":
-            self._mostrar()            # cambia lo que se puede tocar
+        if campo in ("modo", "resolucion"):
+            self._mostrar()            # cambia lo que se puede tocar o se explica
 
     def _modo(self, clave, editando):
         """Recuerda que campos estan en edicion al redibujar la vista."""

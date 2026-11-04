@@ -162,7 +162,7 @@ respuesta hablada. Por eso las capturas tienen su propio límite, 4000 (el de vo
 Mantén **Bloq Mayús** y pulsa la tecla: todo queda junto a la mano izquierda en
 reposo. Funcionan aunque el foco esté en Zoom, Meet o Excel, y no chocan con sus
 atajos (Zoom usa Alt+A, Alt+S, Alt+Q…). **Solo existen durante la reunión**: en la
-Home, Bloq Mayús y Alt+1…6 funcionan como siempre en todas las apps. En la reunión,
+Home, Bloq Mayús y Alt+1…7 funcionan como siempre en todas las apps. En la reunión,
 Bloq Mayús ya no bloquea mayúsculas ni le llega a la aplicación de debajo;
 **`Shift+Bloq Mayús`** sí las activa, como siempre.
 
@@ -172,6 +172,7 @@ Bloq Mayús ya no bloquea mayúsculas ni le llega a la aplicación de debajo;
 | `Bloq Mayús+S` | `Alt+2` | Captura de pantalla (se pueden encadenar varias) |
 | `Bloq Mayús+D` | `Alt+3` | Generar respuesta con las capturas tomadas |
 | `Bloq Mayús+F` | `Alt+6` | Actualizar la solución en pantalla con lo que acaban de decir |
+| `Bloq Mayús+E` | `Alt+7` | Escribir una pregunta: abre la caja de preguntas, la enfoca o la cierra |
 | `Bloq Mayús+Q` | `Alt+1` | Mostrar / ocultar el overlay |
 | `Bloq Mayús+Esc` | `Alt+4` | Terminar la reunión (a propósito, difícil de pulsar sin querer) |
 
@@ -190,10 +191,40 @@ Bloq Mayús está remapeada a otra tecla o Windows no deja instalar el hook.
   capturas se apila con su solución. El panel se cierra con su `×`.
 - **Cada panel tiene su conversación con el modelo** (mismo modelo, caché compartida
   del principio): una solución de código larga no retrasa una respuesta hablada.
+- **Manual | AI**, en la cabecera de la pantalla (y en la caja de preguntas): cómo
+  se resuelve lo que capturas. *Manual*: el reto lo haces tú a mano, así que trae
+  la solución en código completa, comentada línea a línea, con su explicación y su
+  coste. *AI*: el reto se hace con un agente de código (Claude Code, Codex…), así
+  que trae qué hay que construir, las decisiones con su porqué, el **prompt
+  inicial listo para pegar** y los conceptos para defenderlo. Cada agente trae el
+  suyo por defecto (Permisos); si lo cambias con una solución ya en pantalla, se
+  rehace en el otro modo debajo de la anterior.
 - **La solución en pantalla no se relanza sola.** Si el entrevistador dice algo que
   va para ella ("hay un error, hazlo así", "¿y qué cambiarías para…?"), Jev lo
   detecta y el panel ofrece `↻ Update with: «…» — Caps+F`. Lo decides tú; al
   aceptarlo, la solución se reescribe en su sitio, marcada como actualizada.
+
+### La caja de preguntas (`Bloq Mayús+E`)
+
+Como `/btw` en Claude Code: escribes una pregunta sobre lo que está pasando ("¿por
+qué ese `select_for_update`?", "explícame la línea 12", "¿qué es un ledger de doble
+partida?") y la respuesta sale en la caja, sin tocar lo que hay en los otros paneles.
+
+- **Es dinámica**: no ocupa sitio hasta que la abres. Aparece debajo del panel
+  hablado con **un cuarto del alto de la pantalla**, y cuando llega una respuesta
+  crece hasta la **mitad de la columna** para que se pueda leer. Al cerrarla, el
+  hablado recupera su alto.
+- **Se lleva el teclado** al abrirla (es la única ventana del overlay que lo hace)
+  y **lo devuelve** a la app en la que estabas al cerrarla. `Enter` manda,
+  `Shift+Enter` salta de línea (para pegar código), `Esc` cierra.
+- **Ve todo**: las capturas, las soluciones y lo que se ha hablado (con la caché
+  de la conversación de la pantalla), pero **no entra** en esa conversación.
+  Las preguntas anteriores de la caja sí cuentan, como en un chat.
+- **Sigue el modo**: en *Manual*, el trozo exacto y su explicación línea a línea;
+  en *AI*, explicado como un mentor (el porqué, un ejemplo, cuándo aplica y la
+  alternativa).
+- Las preguntas van de una en una: si escribes otra mientras llega una respuesta,
+  espera su turno. Preguntas y respuestas quedan en el acta de la reunión.
 
 **Para desplazar el hilo basta con poner el cursor encima**, con la rueda del ratón
 o con dos dedos en el panel táctil. Sigue el final según entra conversación, pero si
@@ -350,6 +381,10 @@ escribe y pone **ojitos felices** con un saltito al terminarla.
     generan en segundo plano y se leen en la página de la reunión, junto a la
     transcripción (el notetaker las toma siempre). Se guardan como
     `sesiones/<reunión>.notas.md`.
+  - *Cómo resuelve pantallazos y preguntas*: *Manual* (el reto se hace a mano:
+    código explicado línea a línea) o *Con IA* (el reto se hace con un agente de
+    código: plan, decisiones, prompt para pegar y cómo defenderlo). Es el modo con
+    el que empieza la reunión; se cambia en plena reunión con `Manual | AI`.
 - **Conocimiento**: sus documentos (tu CV, la oferta, el producto…), como los de un
   GPT o un proyecto. Se le dan enteros al empezar la reunión. Los contextos activos
   de versiones anteriores pasaron, una sola vez, al agente que estaba en uso.

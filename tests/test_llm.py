@@ -424,3 +424,130 @@ def test_switching_instructions_keeps_the_conversation(coach):
 
     assert _developer_text(coach) == "OTRO\n\nOTRAS REGLAS"
     assert len(coach._items) == turnos + 2       # history kept, new turn added
+
+
+# ------------------------------------------------- manual / IA on the screen
+@pytest.mark.parametrize("resolucion, presente, ausente", [
+    ("manual", llm.MODO_MANUAL, llm.MODO_IA),
+    ("ia", llm.MODO_IA, llm.MODO_MANUAL),
+])
+def test_screen_turn_carries_its_resolution(coach, resolucion, presente, ausente):
+    _run(coach, images=["png"], resolucion=resolucion)
+
+    texto = _turn_text(coach)
+    assert presente in texto and ausente not in texto
+
+
+def test_spoken_turn_has_no_resolution(coach):
+    _run(coach)
+
+    texto = _turn_text(coach)
+    assert llm.MODO_MANUAL not in texto and llm.MODO_IA not in texto
+
+
+def test_resolution_never_touches_the_cached_start(coach):
+    """Switching Manual/AI mid-meeting must not rewrite the developer message."""
+    coach.client = FakeOpenAI(_text_stream("uno"), _text_stream("dos"))
+    _run(coach, images=["png"], resolucion="manual")
+    inicio = coach.client.calls[0]["input"][0]
+
+    _run(coach, resolucion="ia", pedido=llm.REHACER_PANTALLA)
+
+    assert coach.client.calls[1]["input"][0] == inicio
+    assert llm.REHACER_PANTALLA in _turn_text(coach)
+    assert "Responde ahora" not in _turn_text(coach)
+
+
+def test_ai_mode_asks_for_the_build_plan_and_a_prompt_to_paste():
+    for seccion in ("## Qué hay que construir", "## Decisiones", "## Prompt inicial",
+                    "## Para defenderlo", "## Qué entregar"):
+        assert seccion in llm.MODO_IA
+    assert "```markdown" in llm.MODO_IA
+
+
+def test_max_tokens_overrides_the_cap_for_this_turn(coach):
+    _run(coach, images=["png"], max_tokens=8000)
+
+    assert coach.client.calls[-1]["max_output_tokens"] == 8000 + llm._RESERVA_RAZONAMIENTO
+
+
+# ------------------------------------------------- the ask box (side questions)
+def _ask(coach, pregunta="¿Por qué un diccionario?", **kwargs):
+    out = {"deltas": [], "done": 0, "errors": []}
+    coach.responder_aparte(
+        pregunta, on_delta=out["deltas"].append,
+        on_done=lambda: out.__setitem__("done", out["done"] + 1),
+        on_error=out["errors"].append, **kwargs)
+    return out
+
+
+def test_side_question_sees_the_conversation_but_stays_out_of_it(coach):
+    coach.client = FakeOpenAI(_text_stream("solución"), _text_stream("porque ", "sí"))
+    _run(coach, images=["png"])
+    conversacion = list(coach._items)
+
+    out = _ask(coach)
+
+    enviado = coach.client.calls[-1]["input"]
+    assert enviado[:len(conversacion)] == conversacion
+    assert "Mi pregunta: ¿Por qué un diccionario?" in enviado[-1]["content"][0]["text"]
+    assert llm.PREGUNTA_APARTE in enviado[-1]["content"][0]["text"]
+    assert out == {"deltas": ["porque ", "sí"], "done": 1, "errors": []}
+    assert coach._items == conversacion          # the meeting thread is untouched
+
+
+def test_follow_up_side_question_keeps_the_previous_ones(coach):
+    coach.client = FakeOpenAI(_text_stream("uno"), _text_stream("dos"))
+    _ask(coach, "primera")
+
+    _ask(coach, "segunda")
+
+    enviado = coach.client.calls[-1]["input"]
+    primero = coach.client.calls[0]["input"]
+    # The earlier question goes byte for byte as before: the cache reuses it.
+    assert enviado[:len(primero)] == primero
+    assert enviado[len(primero)] == {"role": "assistant", "content": "uno"}
+    assert "Mi pregunta: segunda" in enviado[-1]["content"][0]["text"]
+
+
+def test_side_question_includes_unsent_speech_without_consuming_it(coach):
+    coach.anotar("Ellos", "Hazlo en O(n).")
+
+    _ask(coach)
+
+    assert "Ellos: Hazlo en O(n)." in coach.client.calls[-1]["input"][-1]["content"][0]["text"]
+    assert coach._pendientes == [("Ellos", "Hazlo en O(n).")]
+
+
+@pytest.mark.parametrize("resolucion", ["manual", "ia"])
+def test_side_question_follows_the_resolution(coach, resolucion):
+    _ask(coach, resolucion=resolucion)
+
+    texto = coach.client.calls[-1]["input"][-1]["content"][0]["text"]
+    assert llm.ESTILO_APARTE[resolucion] in texto
+
+
+def test_side_question_uses_the_screen_budget(coach):
+    _ask(coach)
+
+    assert coach.client.calls[-1]["max_output_tokens"] == 900 + llm._RESERVA_RAZONAMIENTO
+
+
+def test_side_question_is_not_cut_by_the_meeting_cancel(coach):
+    coach._cancelar.set()            # an answer in the panels was being cut
+
+    out = _ask(coach)
+
+    assert out["deltas"] == ["ok"]
+
+
+def test_side_question_retries_once_then_reports(coach):
+    error = RuntimeError("503 overloaded")
+    coach.client = FakeOpenAI(_Stream([], fail_after=0, error=error),
+                              _Stream([], fail_after=0, error=error))
+
+    out = _ask(coach)
+
+    assert len(coach.client.calls) == 2
+    assert out["errors"] == ["503 overloaded"] and out["done"] == 0
+    assert coach._aparte == []
