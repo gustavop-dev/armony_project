@@ -4,11 +4,16 @@ El modelo contesta en markdown. Hasta ahora se pegaban todas las lineas con
 espacios, lo que daba igual para una explicacion hablada pero destrozaba
 cualquier codigo: sin saltos de linea ni indentacion no se entiende nada.
 
-Aqui se distinguen tres cosas dentro de cada seccion '## Etiqueta':
+Dentro de cada seccion ('# Etiqueta' o '## Etiqueta') se distingue, como en
+ChatGPT o Claude:
 
-    (TEXT, "parrafo")            texto corrido, con negritas y `codigo` en linea
-    (CODE, "python", "…")        bloque cercado con ``` — se respeta tal cual
-    (BULLETS, ["uno", "dos"])    lista
+    (TEXT, "parrafo")                 texto corrido, con negritas y `codigo`
+    (CODE, "python", "…")             bloque cercado con ``` — se respeta tal cual
+    (LIST, [(nivel, "1.", "texto")])  lista, numerada o no ("•"), con sublistas
+    (SUBHEAD, "titulo")               '### Subtitulo' dentro de la seccion
+    (TABLE, [cabecera], [[fila]])     tabla '| a | b |'
+    (QUOTE, "texto")                  cita '> ...'
+    (RULE,)                           separador '---'
 
 Se parsea en cada trozo que llega del streaming, asi que tiene que aguantar un
 bloque de codigo a medias: si la valla no se ha cerrado todavia, se pinta lo que
@@ -17,38 +22,74 @@ haya llegado en vez de esperar (y de tragarselo si nunca cierra).
 import html
 import re
 
-TEXT, CODE, BULLETS = "text", "code", "bullets"
+TEXT, CODE, LIST = "text", "code", "list"
+SUBHEAD, TABLE, QUOTE, RULE = "subhead", "table", "quote", "rule"
 
 ETIQUETA_POR_DEFECTO = "Answer"
 
-# ``` o ~~~, con lenguaje opcional detras
-_VALLA = re.compile(r"^\s*(?:```+|~~~+)\s*([A-Za-z0-9_+#.\-]*)\s*$")
-# '## Etiqueta' (y '###', que el modelo cuela a veces)
-_ENCABEZADO = re.compile(r"^\s*#{2,}\s+(.+?)\s*#*\s*$")
-# '- item', '* item', '1. item', '2) item'
-_VINETA = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.*)$")
+# ``` o ~~~ (tres o mas), con lenguaje opcional detras. Se cierra con la misma
+# marca y al menos tan larga, como en CommonMark: asi un prompt cercado con
+# cuatro acentos puede llevar dentro codigo con tres sin que se corte.
+_VALLA = re.compile(r"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+#.\-]*)\s*$")
+# '# Etiqueta' y '## Etiqueta': secciones. '### Algo': subtitulo dentro.
+_ENCABEZADO = re.compile(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$")
+# '- item', '* item', '+ item', '1. item', '2) item', con su sangria
+_VINETA = re.compile(r"^(\s*)([-*+•]|\d+[.)])\s+(.*)$")
+_FILA = re.compile(r"^\s*\|.*\|\s*$")
+_SEPARADOR_TABLA = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
+_CITA = re.compile(r"^\s*>\s?(.*)$")
+_REGLA = re.compile(r"^\s*(-{3,}|\*{3,}|_{3,})\s*$")
+
+
+def _celdas(linea):
+    return [c.strip() for c in linea.strip().strip("|").split("|")]
+
+
+def _nivel(sangria):
+    return min(3, len(sangria.replace("\t", "    ")) // 2)
 
 
 def parse_answer(raw):
     """Devuelve [(etiqueta, [bloques])] listo para pintar."""
     secciones, bloques = [], []
     etiqueta = None
-    parrafo, vinetas, codigo = [], [], None
+    parrafo, lista, tabla, cita = [], [], [], []
+    codigo = None
 
     def cerrar_parrafo():
         if parrafo:
             bloques.append((TEXT, " ".join(parrafo).strip()))
             parrafo.clear()
 
-    def cerrar_vinetas():
-        if vinetas:
-            bloques.append((BULLETS, list(vinetas)))
-            vinetas.clear()
+    def cerrar_lista():
+        if lista:
+            bloques.append((LIST, list(lista)))
+            lista.clear()
+
+    def cerrar_tabla():
+        if not tabla:
+            return
+        if len(tabla) >= 2 and _SEPARADOR_TABLA.match(tabla[1]):
+            filas = [_celdas(f) for f in tabla[2:]]
+            bloques.append((TABLE, _celdas(tabla[0]), filas))
+        else:                               # no era una tabla: texto
+            parrafo.extend(f.strip() for f in tabla)
+            cerrar_parrafo()
+        tabla.clear()
+
+    def cerrar_cita():
+        if cita:
+            bloques.append((QUOTE, " ".join(c for c in cita if c).strip()))
+            cita.clear()
+
+    def cerrar_bloques():
+        cerrar_parrafo()
+        cerrar_lista()
+        cerrar_tabla()
+        cerrar_cita()
 
     def cerrar_seccion():
-        nonlocal etiqueta
-        cerrar_parrafo()
-        cerrar_vinetas()
+        cerrar_bloques()
         if bloques:
             secciones.append((etiqueta or ETIQUETA_POR_DEFECTO, list(bloques)))
         bloques.clear()
@@ -56,7 +97,9 @@ def parse_answer(raw):
     for linea in raw.splitlines():
         # Dentro de un bloque de codigo no se interpreta nada: ni '#' ni '-'.
         if codigo is not None:
-            if _VALLA.match(linea):
+            valla = _VALLA.match(linea)
+            if (valla and not valla.group(2) and valla.group(1)[0] == codigo["marca"]
+                    and len(valla.group(1)) >= codigo["largo"]):
                 bloques.append((CODE, codigo["lang"], "\n".join(codigo["lineas"])))
                 codigo = None
             else:
@@ -65,29 +108,63 @@ def parse_answer(raw):
 
         valla = _VALLA.match(linea)
         if valla:
-            cerrar_parrafo()
-            cerrar_vinetas()
-            codigo = {"lang": (valla.group(1) or "").lower(), "lineas": []}
+            cerrar_bloques()
+            codigo = {"lang": (valla.group(2) or "").lower(), "lineas": [],
+                      "marca": valla.group(1)[0], "largo": len(valla.group(1))}
             continue
+
+        if tabla and not _FILA.match(linea):
+            cerrar_tabla()
+        if cita and not _CITA.match(linea):
+            cerrar_cita()
 
         cabecera = _ENCABEZADO.match(linea)
         if cabecera:
-            cerrar_seccion()
-            etiqueta = cabecera.group(1)
+            if len(cabecera.group(1)) <= 2:
+                cerrar_seccion()
+                etiqueta = cabecera.group(2)
+            else:
+                cerrar_bloques()
+                bloques.append((SUBHEAD, cabecera.group(2)))
+            continue
+
+        if _FILA.match(linea):
+            cerrar_parrafo()
+            cerrar_lista()
+            tabla.append(linea)
+            continue
+
+        if _CITA.match(linea):
+            cerrar_parrafo()
+            cerrar_lista()
+            cita.append(_CITA.match(linea).group(1).strip())
+            continue
+
+        if _REGLA.match(linea):
+            cerrar_bloques()
+            bloques.append((RULE,))
             continue
 
         vineta = _VINETA.match(linea)
         if vineta:
             cerrar_parrafo()
-            vinetas.append(vineta.group(1).strip())
+            marca = vineta.group(2)
+            marca = marca[:-1] + "." if marca[0].isdigit() else "•"
+            lista.append((_nivel(vineta.group(1)), marca, vineta.group(3).strip()))
             continue
 
         if not linea.strip():
             cerrar_parrafo()
-            cerrar_vinetas()
+            cerrar_lista()
             continue
 
-        cerrar_vinetas()
+        if lista and linea[:1] in (" ", "\t"):
+            # Continuacion sangrada del ultimo punto de la lista.
+            nivel, marca, texto = lista[-1]
+            lista[-1] = (nivel, marca, f"{texto} {linea.strip()}")
+            continue
+
+        cerrar_lista()
         parrafo.append(linea.strip())
 
     if codigo is not None:
@@ -105,9 +182,13 @@ def solo_texto(secciones):
         for bloque in bloques:
             if bloque[0] == TEXT:
                 trozos.append(bloque[1])
-            elif bloque[0] == BULLETS:
-                trozos.extend(bloque[1])
-            else:
+            elif bloque[0] == LIST:
+                trozos.extend(t for _n, _m, t in bloque[1])
+            elif bloque[0] in (SUBHEAD, QUOTE):
+                trozos.append(bloque[1])
+            elif bloque[0] == TABLE:
+                trozos.extend(" ".join(f) for f in [bloque[1]] + bloque[2])
+            elif bloque[0] == CODE:
                 trozos.append(bloque[2])
         texto = " ".join(t for t in trozos if t).strip()
         if texto:
@@ -243,6 +324,90 @@ def _con_numeros(lineas):
         salida.append(f'<span style="color:{COLOR_NUMERO};">{numero}'
                       f'&nbsp;&nbsp;&nbsp;</span>{"".join(partes)}')
     return "<br>".join(salida)
+
+
+# --- prompts y markdown dentro de un bloque ------------------------------------
+# Un prompt para pegar va en un bloque de codigo (```markdown): se ve tal cual,
+# con sus '#' y sus '-', pero coloreado como hacen ChatGPT o Claude: titulos,
+# listas, negritas y codigo se distinguen de un vistazo. Y se parte por el ancho
+# del panel en vez de obligar a desplazarse en horizontal.
+LENGUAJES_PROSA = {"markdown", "md", "prompt", "text", "txt", "plaintext", "plain"}
+
+COLORES_MD = {
+    "h1": "#c3ceff",        # '# Titulo'
+    "h": "#93a8ff",         # '## ...' y siguientes
+    "marca": "#7c95ff",     # '-', '1.', '>'
+    "negrita": "#ffffff",
+    "codigo": "#89ddf0",    # `codigo` y lo que va dentro de ``` en el prompt
+    "cursiva": "#d6dcf0",
+    "cita": "#9aa3b8",
+    "regla": "#5c6478",
+    "texto": "#e6e9f2",
+}
+
+
+def _md_inline(texto):
+    t = html.escape(texto)
+    codigos = []
+
+    def _guardar(m):
+        codigos.append(f'<span style="color:{COLORES_MD["codigo"]};">`{m.group(1)}`</span>')
+        return f"\x00{len(codigos) - 1}\x00"
+
+    t = re.sub(r"`([^`\n]+)`", _guardar, t.replace("\x00", ""))
+    t = re.sub(r"\*\*([^*\n]+)\*\*",
+               rf'<b style="color:{COLORES_MD["negrita"]};">**\1**</b>', t)
+    t = re.sub(r"(?<![\*\w])\*([^*\n]+)\*(?![\*\w])",
+               rf'<i style="color:{COLORES_MD["cursiva"]};">*\1*</i>', t)
+    t = re.sub(r"\[([^\]\n]+)\]\(([^)\s]+)\)",
+               rf'<span style="color:{COLORES_MD["codigo"]};">[\1](\2)</span>', t)
+    return re.sub(r"\x00(\d+)\x00", lambda m: codigos[int(m.group(1))], t)
+
+
+def _sangria(linea):
+    hueco = len(linea) - len(linea.lstrip(" \t"))
+    return "&nbsp;" * len(linea[:hueco].replace("\t", "    ")), linea[hueco:]
+
+
+def resaltar_markdown(texto):
+    """El markdown de un bloque (un prompt) coloreado, sin tocar su texto."""
+    salida, valla = [], None
+    for linea in texto.split("\n"):
+        hueco, resto = _sangria(linea)
+        v = _VALLA.match(linea)
+        if v and (valla is None or (v.group(1)[0] == valla[0] and len(v.group(1)) >= valla[1])):
+            valla = None if valla is not None else (v.group(1)[0], len(v.group(1)))
+            salida.append(f'<span style="color:{COLORES_MD["codigo"]};">'
+                          f'{hueco}{html.escape(resto)}</span>')
+            continue
+        if valla is not None:                  # codigo dentro del prompt
+            salida.append(f'<span style="color:{COLORES_MD["codigo"]};">'
+                          f'{hueco}{html.escape(resto).replace(" ", "&nbsp;")}</span>')
+            continue
+        h = _ENCABEZADO.match(linea)
+        if h:
+            color = COLORES_MD["h1"] if len(h.group(1)) == 1 else COLORES_MD["h"]
+            salida.append(f'<b style="color:{color};">{hueco}{html.escape(resto)}</b>')
+            continue
+        l = _VINETA.match(linea)
+        if l:
+            salida.append(f'{hueco}<b style="color:{COLORES_MD["marca"]};">'
+                          f'{html.escape(l.group(2))}</b> {_md_inline(l.group(3))}')
+            continue
+        c = _CITA.match(linea)
+        if c:
+            salida.append(f'{hueco}<span style="color:{COLORES_MD["marca"]};">&gt;</span> '
+                          f'<i style="color:{COLORES_MD["cita"]};">{_md_inline(c.group(1))}</i>')
+            continue
+        if _REGLA.match(linea):
+            salida.append(f'<span style="color:{COLORES_MD["regla"]};">'
+                          f'{html.escape(linea.strip())}</span>')
+            continue
+        salida.append(f"{hueco}{_md_inline(resto)}")
+    while salida and not salida[-1].strip():
+        salida.pop()
+    return (f'<span style="color:{COLORES_MD["texto"]};">' + "<br>".join(salida)
+            + "</span>")
 
 
 def inline_html(texto, code_style=""):

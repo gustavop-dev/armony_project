@@ -531,10 +531,18 @@ class CodeBlock(QtWidgets.QFrame):
     que hace legible el codigo.
     """
 
-    def __init__(self, lenguaje, codigo):
+    def __init__(self, lenguaje, codigo, titulo=None):
         super().__init__()
         self._codigo = codigo
-        color_leng = _COLOR_LENGUAJE.get((lenguaje or "").lower(), T.ACCENT_LABEL)
+        lenguaje = (lenguaje or "").lower()
+        # Markdown o texto (un prompt para pegar): coloreado como markdown y
+        # partido por el ancho del panel. Si va en la seccion del prompt, se
+        # rotula PROMPT y el boton dice lo que copia.
+        self.prosa = lenguaje in richtext.LENGUAJES_PROSA
+        self.es_prompt = self.prosa and "prompt" in (titulo or "").lower()
+        self._rotulo_copiar = "Copy prompt" if self.es_prompt else "Copy"
+        color_leng = (T.ACCENT if self.prosa
+                      else _COLOR_LENGUAJE.get(lenguaje, T.ACCENT_LABEL))
         # Fondo bastante mas opaco que el resto del panel: el codigo tiene que
         # leerse como un editor, no como texto flotando sobre la reunion. Y un
         # filo del color del lenguaje, que es lo que lo marca como bloque de
@@ -568,7 +576,8 @@ class CodeBlock(QtWidgets.QFrame):
         punto.setStyleSheet(f"background: {color_leng}; border-radius: 3px;")
         cl.addWidget(punto)
 
-        etq = QtWidgets.QLabel((lenguaje or "code").upper())
+        etq = QtWidgets.QLabel("PROMPT" if self.es_prompt else (lenguaje or "code").upper())
+        etq.setObjectName("lenguaje")
         ef = etq.font(); ef.setPixelSize(10); ef.setWeight(QtGui.QFont.DemiBold)
         ef.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 0.8)
         etq.setFont(ef)
@@ -585,7 +594,7 @@ class CodeBlock(QtWidgets.QFrame):
         """)
         bl = QtWidgets.QHBoxLayout(self.btn_copy)
         bl.setContentsMargins(8, 3, 8, 3)
-        self.lbl_copy = QtWidgets.QLabel("Copy")
+        self.lbl_copy = QtWidgets.QLabel(self._rotulo_copiar)
         cf = self.lbl_copy.font(); cf.setPixelSize(10); self.lbl_copy.setFont(cf)
         self.lbl_copy.setStyleSheet(f"color: {T.TEXT_DIM}; background: transparent;")
         bl.addWidget(self.lbl_copy)
@@ -598,9 +607,14 @@ class CodeBlock(QtWidgets.QFrame):
         sep.setStyleSheet(f"background: {T.DIVIDER_FAINT}; border: none;")
         lay.addWidget(sep)
 
-        coloreado = richtext.resaltar(codigo, lenguaje, numerar=True)
         cuerpo = QtWidgets.QLabel()
-        if coloreado:
+        coloreado = None if self.prosa else richtext.resaltar(codigo, lenguaje, numerar=True)
+        if self.prosa:
+            # Sin numeros de linea y con espacios normales: se parte por el ancho.
+            cuerpo.setTextFormat(QtCore.Qt.RichText)
+            cuerpo.setText(f'<div style="font-family:{T.MONO_STACK}; font-size:12.5px; '
+                           f'line-height:150%;">{richtext.resaltar_markdown(codigo)}</div>')
+        elif coloreado:
             # &nbsp; y <br> conservan sangria y saltos, que es lo unico que hace
             # legible el codigo, y ademas cada token va con su color.
             cuerpo.setTextFormat(QtCore.Qt.RichText)
@@ -625,7 +639,8 @@ class CodeBlock(QtWidgets.QFrame):
         self.lbl_copy.setText("Copied")
         # Context-object overload: Qt drops the call if the label is destroyed
         # first (answer re-render, row pruning, limpiar_hilo).
-        QtCore.QTimer.singleShot(1400, self.lbl_copy, lambda: self.lbl_copy.setText("Copy"))
+        QtCore.QTimer.singleShot(1400, self.lbl_copy,
+                                 lambda: self.lbl_copy.setText(self._rotulo_copiar))
 
 
 class ShotThumb(QtWidgets.QFrame):
@@ -784,23 +799,35 @@ class Burbuja(QtWidgets.QFrame):
             self.cuerpo.addWidget(self._label)
         self._label.setText(html_)
 
-    def set_markdown(self, raw, parrafo, vinetas):
-        """Respuesta del modelo: secciones, codigo, listas."""
+    def set_markdown(self, raw, pintor):
+        """Respuesta del modelo: secciones, codigo, listas, tablas...
+
+        pintor (el panel) da los widgets de cada tipo de bloque: _parrafo,
+        _lista, _subtitulo, _tabla, _cita y _regla."""
         self._raw = raw
         self._vaciar()
         for etiqueta, bloques in richtext.parse_answer(raw):
             self.cuerpo.addWidget(_tracked(etiqueta, 10, QtGui.QFont.Bold,
                                            T.ACCENT_LABEL, 0.9, upper=True))
             for bloque in bloques:
-                if bloque[0] == richtext.CODE:
-                    cb = CodeBlock(bloque[1], bloque[2])
+                tipo = bloque[0]
+                if tipo == richtext.CODE:
+                    cb = CodeBlock(bloque[1], bloque[2], titulo=etiqueta)
                     self.copy_buttons.append(cb.btn_copy)
                     self._seleccionable(cb.cuerpo)
                     self.cuerpo.addWidget(cb)
-                elif bloque[0] == richtext.BULLETS:
-                    self.cuerpo.addWidget(self._seleccionable(vinetas(bloque[1])))
+                elif tipo == richtext.LIST:
+                    self.cuerpo.addWidget(self._seleccionable(pintor._lista(bloque[1])))
+                elif tipo == richtext.SUBHEAD:
+                    self.cuerpo.addWidget(self._seleccionable(pintor._subtitulo(bloque[1])))
+                elif tipo == richtext.TABLE:
+                    self.cuerpo.addWidget(self._seleccionable(pintor._tabla(bloque[1], bloque[2])))
+                elif tipo == richtext.QUOTE:
+                    self.cuerpo.addWidget(self._seleccionable(pintor._cita(bloque[1])))
+                elif tipo == richtext.RULE:
+                    self.cuerpo.addWidget(pintor._regla())
                 else:
-                    self.cuerpo.addWidget(self._seleccionable(parrafo(bloque[1])))
+                    self.cuerpo.addWidget(self._seleccionable(pintor._parrafo(bloque[1])))
 
     def _seleccionable(self, label):
         if self.seleccionable is not None:
@@ -2031,7 +2058,7 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
             self._burbuja_resp = self._nueva_burbuja(self._quien_resp)
         with metricas.cronometro(PINTADO):
             self._auto["feed"].anotar()
-            self._burbuja_resp.set_markdown(self._raw, self._parrafo, self._vinetas)
+            self._burbuja_resp.set_markdown(self._raw, self)
         QtCore.QTimer.singleShot(0, self._auto["feed"].restaurar)
 
     def cerrar_respuesta(self):
@@ -2130,18 +2157,88 @@ class TranscriptPanel(_Draggable, QtWidgets.QWidget):
         lab.setStyleSheet("background: transparent;")
         return lab
 
-    def _vinetas(self, items):
-        filas = "".join(
-            f'<tr><td style="color:{T.ACCENT};padding-right:7px;">•</td>'
-            f'<td>{richtext.inline_html(it, self._CODE_INLINE)}</td></tr>'
-            for it in items)
-        lab = QtWidgets.QLabel(
-            f'<table style="line-height:150%; color:{T.ANSWER_TEXT}; '
-            f'font-size:14px;" cellspacing="0">{filas}</table>')
+    @staticmethod
+    def _etiqueta_rica(html_):
+        lab = QtWidgets.QLabel(html_)
         lab.setWordWrap(True)
         lab.setTextFormat(QtCore.Qt.RichText)
         lab.setStyleSheet("background: transparent;")
         return lab
+
+    def _lista(self, items):
+        """Lista con su numero o su punto, y sublistas sangradas."""
+        # Las columnas de una tabla son comunes a todas las filas, asi que una
+        # sublista no puede tener su propia columna de sangria: su punto va
+        # dentro de la columna del texto, debajo del texto de su padre (como en
+        # ChatGPT o Claude), y cada nivel mas, un poco mas adentro.
+        filas = []
+        for nivel, marca, texto in items:
+            numero = marca != "•"
+            contenido = richtext.inline_html(texto, self._CODE_INLINE)
+            peso = "font-weight:600;" if numero else ""
+            if nivel == 0:
+                filas.append(
+                    f'<tr><td align="right" style="color:{T.ACCENT};padding-right:8px;'
+                    f'{peso}">{marca}</td><td>{contenido}</td></tr>')
+            else:
+                punto = marca if numero else "◦"
+                filas.append(
+                    f'<tr><td></td><td style="padding-left:{16 * (nivel - 1)}px;">'
+                    f'<span style="color:{T.ACCENT};{peso}">{punto}</span>'
+                    f'&nbsp;&nbsp;{contenido}</td></tr>')
+        return self._etiqueta_rica(
+            f'<table style="line-height:150%; color:{T.ANSWER_TEXT}; font-size:14px;" '
+            f'cellspacing="0" cellpadding="1">{"".join(filas)}</table>')
+
+    def _vinetas(self, items):
+        """Lista simple de puntos (compatibilidad)."""
+        return self._lista([(0, "•", t) for t in items])
+
+    def _subtitulo(self, texto):
+        lab = self._etiqueta_rica(
+            f'<div style="color:{T.TEXT_BRIGHT}; font-size:14.5px; font-weight:600;">'
+            f'{richtext.inline_html(texto, self._CODE_INLINE)}</div>')
+        lab.setContentsMargins(0, 4, 0, 0)
+        return lab
+
+    def _tabla(self, cabecera, filas):
+        """Tabla con la cabecera marcada y filas separadas, como en un chat."""
+        ancho = max([len(cabecera)] + [len(f) for f in filas])
+
+        def celdas(valores, etiqueta, estilo, extra=""):
+            valores = list(valores) + [""] * (ancho - len(valores))
+            return "".join(f'<{etiqueta}{extra} style="{estilo}">'
+                           f'{richtext.inline_html(v, self._CODE_INLINE)}</{etiqueta}>'
+                           for v in valores)
+
+        borde = "border-bottom:1px solid rgba(220,228,255,0.12);"
+        # Color de celda (atributo, opaco): con un fondo translucido Qt lo
+        # pintaba dos veces, en la celda y detras del texto.
+        cab = ("<tr>"
+               + celdas(cabecera, "th", f"color:{T.TEXT_BRIGHT}; text-align:left; "
+                                        f"font-weight:600; padding:5px 10px; {borde}",
+                        extra=' bgcolor="#2a3150"')
+               + "</tr>")
+        cuerpo = "".join(
+            f'<tr>{celdas(f, "td", f"padding:5px 10px; {borde}")}</tr>' for f in filas)
+        return self._etiqueta_rica(
+            f'<table style="color:{T.ANSWER_TEXT}; font-size:13.5px;" cellspacing="0" '
+            f'cellpadding="5" border="0">{cab}{cuerpo}</table>')
+
+    def _cita(self, texto):
+        lab = self._etiqueta_rica(
+            f'<div style="color:{T.TEXT_MUTED}; font-size:14px; font-style:italic; '
+            f'line-height:150%;">{richtext.inline_html(texto, self._CODE_INLINE)}</div>')
+        lab.setStyleSheet(f"background: rgba(124,149,255,0.06); border: none; "
+                          f"border-left: 3px solid {T.ACCENT}; padding: 6px 10px; "
+                          f"border-radius: 4px;")
+        return lab
+
+    def _regla(self):
+        linea = QtWidgets.QFrame()
+        linea.setFixedHeight(1)
+        linea.setStyleSheet(f"background: {T.DIVIDER}; border: none; margin: 4px 0;")
+        return linea
 
     @property
     def _copy_buttons(self):

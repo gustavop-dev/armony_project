@@ -199,6 +199,12 @@ Bloq Mayús está remapeada a otra tecla o Windows no deja instalar el hook.
   inicial listo para pegar** y los conceptos para defenderlo. Cada agente trae el
   suyo por defecto (Permisos); si lo cambias con una solución ya en pantalla, se
   rehace en el otro modo debajo de la anterior.
+- **Las respuestas se pintan como en ChatGPT o Claude**: secciones, subtítulos,
+  listas numeradas con sublistas, tablas, citas, separadores y bloques de código
+  coloreados con su botón de copiar. En modo AI el prompt sale en su propio
+  bloque **PROMPT** (con **Copy prompt**), con el markdown coloreado (títulos,
+  listas, negritas, `código`) y partido por el ancho del panel; puede llevar
+  código dentro sin cortarse (va cercado con cuatro acentos).
 - **La solución en pantalla no se relanza sola.** Si el entrevistador pide
   cambiarla ("hay un error, hazlo así", "ahora que también soporte X"), Jev lo
   detecta y el panel ofrece `↻ Update with: «…» — Caps+F`. Lo decides tú; al

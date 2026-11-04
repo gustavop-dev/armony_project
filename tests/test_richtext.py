@@ -2,8 +2,12 @@
 import pytest
 
 from richtext import (
-    BULLETS,
     CODE,
+    LIST,
+    QUOTE,
+    RULE,
+    SUBHEAD,
+    TABLE,
     TEXT,
     _clase,
     inline_html,
@@ -86,7 +90,7 @@ def test_parse_answer_text_before_first_header_gets_default_label():
 @pytest.mark.parametrize(
     ("raw", "etiqueta"),
     [
-        ("### Sub\nx", "Sub"),
+        ("# Title\nx", "Title"),
         ("## Closed ##\nx", "Closed"),
         ("  ##   Spaced label   \nx", "Spaced label"),
     ],
@@ -99,12 +103,20 @@ def test_parse_answer_header_label_is_trimmed(raw, etiqueta):
     assert secciones == [(etiqueta, [(TEXT, "x")])]
 
 
-def test_parse_answer_single_hash_line_is_plain_text():
+def test_parse_answer_hash_without_space_is_plain_text():
     # Arrange / Act
-    secciones = parse_answer("# Title")
+    secciones = parse_answer("#1 priority")
 
     # Assert
-    assert secciones == [("Answer", [(TEXT, "# Title")])]
+    assert secciones == [("Answer", [(TEXT, "#1 priority")])]
+
+
+def test_parse_answer_level_three_heading_is_a_subheading_in_the_section():
+    # Arrange / Act
+    secciones = parse_answer("## Plan\n### Fase 1\nx")
+
+    # Assert
+    assert secciones == [("Plan", [(SUBHEAD, "Fase 1"), (TEXT, "x")])]
 
 
 def test_parse_answer_header_without_content_is_dropped():
@@ -126,7 +138,8 @@ def test_parse_answer_collects_all_bullet_markers_into_one_list():
     secciones = parse_answer(raw)
 
     # Assert
-    assert secciones == [("Answer", [(BULLETS, ["a", "b", "c", "d", "e"])])]
+    assert secciones == [("Answer", [(LIST, [(0, "•", "a"), (0, "•", "b"), (0, "•", "c"),
+                                             (0, "1.", "d"), (0, "2.", "e")])])]
 
 
 def test_parse_answer_paragraph_before_bullets_is_closed():
@@ -137,7 +150,7 @@ def test_parse_answer_paragraph_before_bullets_is_closed():
     secciones = parse_answer(raw)
 
     # Assert
-    assert secciones == [("Answer", [(TEXT, "Intro"), (BULLETS, ["a", "b"])])]
+    assert secciones == [("Answer", [(TEXT, "Intro"), (LIST, [(0, "•", "a"), (0, "•", "b")])])]
 
 
 def test_parse_answer_text_line_after_bullets_starts_new_paragraph():
@@ -148,7 +161,7 @@ def test_parse_answer_text_line_after_bullets_starts_new_paragraph():
     secciones = parse_answer(raw)
 
     # Assert
-    assert secciones == [("Answer", [(BULLETS, ["a"]), (TEXT, "after")])]
+    assert secciones == [("Answer", [(LIST, [(0, "•", "a")]), (TEXT, "after")])]
 
 
 def test_parse_answer_blank_line_separates_bullet_lists():
@@ -159,7 +172,7 @@ def test_parse_answer_blank_line_separates_bullet_lists():
     secciones = parse_answer(raw)
 
     # Assert
-    assert secciones == [("Answer", [(BULLETS, ["a"]), (BULLETS, ["b"])])]
+    assert secciones == [("Answer", [(LIST, [(0, "•", "a")]), (LIST, [(0, "•", "b")])])]
 
 
 def test_parse_answer_bold_line_is_not_a_bullet():
@@ -227,7 +240,7 @@ def test_parse_answer_code_closes_pending_bullets():
     secciones = parse_answer(raw)
 
     # Assert
-    assert secciones == [("Answer", [(BULLETS, ["a"]), (CODE, "sh", "ls")])]
+    assert secciones == [("Answer", [(LIST, [(0, "•", "a")]), (CODE, "sh", "ls")])]
 
 
 def test_parse_answer_unterminated_fence_keeps_partial_code():
@@ -261,7 +274,8 @@ def test_solo_texto_empty_sections_return_empty_list():
 
 def test_solo_texto_flattens_every_block_kind_with_spaces():
     # Arrange
-    secciones = [("A", [(TEXT, "t"), (BULLETS, ["x", "y"]), (CODE, "py", "c = 1")])]
+    secciones = [("A", [(TEXT, "t"), (LIST, [(0, "•", "x"), (1, "1.", "y")]),
+                        (CODE, "py", "c = 1")])]
 
     # Act
     salida = solo_texto(secciones)
@@ -608,3 +622,74 @@ def test_inline_html_does_not_format_inside_inline_code(texto, esperado):
 )
 def test_inline_html_emphasis_around_inline_code(texto, esperado):
     assert inline_html(texto) == esperado
+
+
+# --- richer markdown, like ChatGPT / Claude ------------------------------------
+
+def test_numbered_lists_keep_their_numbers_and_nesting():
+    secciones = parse_answer("1. Uno\n   - detalle\n     sigue\n2) Dos")
+
+    assert secciones == [("Answer", [(LIST, [(0, "1.", "Uno"), (1, "•", "detalle sigue"),
+                                             (0, "2.", "Dos")])])]
+
+
+def test_tables_are_parsed_with_header_and_rows():
+    secciones = parse_answer("| Op | cash |\n|---|:---:|\n| Depósito | +1000 |\n| Pago | +200 |")
+
+    assert secciones == [("Answer", [(TABLE, ["Op", "cash"],
+                                      [["Depósito", "+1000"], ["Pago", "+200"]])])]
+
+
+def test_pipes_without_a_separator_are_just_text():
+    secciones = parse_answer("| no es | una tabla |")
+
+    assert secciones == [("Answer", [(TEXT, "| no es | una tabla |")])]
+
+
+def test_quotes_and_rules():
+    secciones = parse_answer("> Ojo\n> con esto\n---\nfin")
+
+    assert secciones == [("Answer", [(QUOTE, "Ojo con esto"), (RULE,), (TEXT, "fin")])]
+
+
+def test_prompt_fenced_with_four_backticks_keeps_its_inner_code():
+    raw = "## Prompt\n````markdown\n# Contexto\n```python\nx = 1\n```\n````\ndespués"
+
+    secciones = parse_answer(raw)
+
+    assert secciones == [("Prompt", [
+        (CODE, "markdown", "# Contexto\n```python\nx = 1\n```"), (TEXT, "después")])]
+
+
+def test_a_fence_only_closes_with_the_same_mark():
+    secciones = parse_answer("~~~\n```\nsigue\n~~~")
+
+    assert secciones == [("Answer", [(CODE, "", "```\nsigue")])]
+
+
+def test_markdown_highlight_colours_headings_lists_bold_and_code():
+    from richtext import COLORES_MD, resaltar_markdown
+
+    html_ = resaltar_markdown("# Contexto\n- **Stack**: `Django`\n  1. paso\n> nota")
+
+    assert f'<b style="color:{COLORES_MD["h1"]};"># Contexto</b>' in html_
+    assert f'<b style="color:{COLORES_MD["marca"]};">-</b>' in html_
+    assert f'<b style="color:{COLORES_MD["negrita"]};">**Stack**</b>' in html_
+    assert f'<span style="color:{COLORES_MD["codigo"]};">`Django`</span>' in html_
+    assert "&nbsp;&nbsp;<b" in html_                      # nested item keeps indent
+    assert f'<i style="color:{COLORES_MD["cita"]};">nota</i>' in html_
+
+
+def test_markdown_highlight_wraps_prose_but_not_inner_code():
+    from richtext import resaltar_markdown
+
+    html_ = resaltar_markdown("texto con espacios\n```py\na = 1\n```")
+
+    assert "texto con espacios" in html_                  # normal spaces: it wraps
+    assert "a&nbsp;=&nbsp;1" in html_                     # code inside keeps spacing
+
+
+def test_markdown_highlight_escapes_html():
+    from richtext import resaltar_markdown
+
+    assert "&lt;script&gt;" in resaltar_markdown("<script>")
