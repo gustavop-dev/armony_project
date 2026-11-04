@@ -62,7 +62,7 @@ def test_load_config_returns_independent_copy_of_defaults():
     ("language", "en"),           # overridden by the file
     ("window_opacity", 0.9),      # overridden by the file
     ("openai_model", "gpt-6.1-sol"),   # missing from the file: default kept
-    ("openai_tokens_vision", 4000),
+    ("openai_tokens_vision", 12000),
 ])
 def test_load_config_merges_partial_file_over_defaults(key, expected):
     _write_config({"language": "en", "window_opacity": 0.9})
@@ -260,7 +260,7 @@ def test_stored_internal_setting_is_replaced_by_default(key, stored):
 def test_tokens_are_at_the_maximum():
     cfg = config.load_config()
 
-    assert (cfg["openai_tokens_voice"], cfg["openai_tokens_vision"]) == (1000, 4000)
+    assert (cfg["openai_tokens_voice"], cfg["openai_tokens_vision"]) == (1000, 12000)
 
 
 def test_save_does_not_write_internal_settings():

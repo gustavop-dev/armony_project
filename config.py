@@ -103,9 +103,11 @@ DEFAULTS = {
     # respuestas a medias. El razonamiento tiene su reserva aparte (llm.py).
     "openai_tokens_voice": 1000,
     "openai_effort_vision": "medium",
-    # El codigo comentado linea a linea mas el enfoque y el coste ocupan: con
-    # 1200 se quedaba a medias.
-    "openai_tokens_vision": 4000,
+    # El codigo comentado linea a linea mas el enfoque y el coste ocupan, y el
+    # tope incluye lo que el modelo razona antes de escribir: con 4000 las
+    # soluciones largas se cortaban a mitad (visto en uso real). Solo se paga
+    # lo que se escribe.
+    "openai_tokens_vision": 12000,
     # --- Arbitro de anadidos (Jev, TypeSafe) ---
     # Decide si lo que anaden a una pregunta abierta cambia la respuesta, pide
     # otra o es ruido (followup.py). Sin clave se usa la regla fija de hilo.py:

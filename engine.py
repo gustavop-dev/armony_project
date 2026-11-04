@@ -43,7 +43,7 @@ SIN_PREGUNTA_CAPTURA = ("(no han dicho nada nuevo desde la ultima respuesta: lo 
 
 # Modo IA en la pantalla: que construir, decisiones, un prompt entero para el
 # agente de codigo y como defenderlo. No cabe en el tope normal de las capturas.
-TOKENS_MODO_IA = 8000
+TOKENS_MODO_IA = 20000
 
 
 class CoachEngine(QtCore.QObject):

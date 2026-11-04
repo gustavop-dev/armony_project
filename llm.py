@@ -293,6 +293,9 @@ TURNOS_TRAS_RECORTE = 30
 # ronda es una ida y vuelta al modelo; despues de estas, responde con lo que ya
 # leyo (tool_choice "none").
 MAX_RONDAS_HERRAMIENTAS = 3
+
+# Lo que se anade a una respuesta que se quedo sin sitio.
+AVISO_CORTADA = "\n\n*[…the answer was cut here: too long]*"
 _TIPOS_HERRAMIENTA = ("function_call", "function_call_output", "reasoning")
 
 
@@ -717,13 +720,29 @@ class Coach:
             **self._cache_kwargs(),
         ) as stream:
             corte = self._cancelar if cancelar is None else cancelar
+            incompleta = None
             for ev in stream:
                 if corte.is_set():
                     metricas.contar("respuestas_cortadas")
                     return None          # al salir del with se cierra la conexion
                 if ev.type == "response.output_text.delta" and on_delta:
                     on_delta(ev.delta)
-            final = stream.get_final_response()
+                elif ev.type == "response.incomplete":
+                    incompleta = getattr(ev, "response", None)
+            if incompleta is not None:
+                # Se acabo el tope (o lo paro el proveedor): no es un fallo. Lo
+                # escrito se queda y se avisa de que sigue cortado, en vez de
+                # tirarlo como error (get_final_response lo lanzaria).
+                motivo = getattr(getattr(incompleta, "incomplete_details", None),
+                                 "reason", None) or "unknown"
+                metricas.contar("respuestas_incompletas")
+                log.warning("LLM answer cut short (%s), max_output_tokens=%d",
+                            motivo, tokens + _RESERVA_RAZONAMIENTO)
+                if on_delta:
+                    on_delta(AVISO_CORTADA)
+                final = incompleta
+            else:
+                final = stream.get_final_response()
         uso = getattr(final, "usage", None)
         if uso is not None:
             detalle = getattr(uso, "input_tokens_details", None)

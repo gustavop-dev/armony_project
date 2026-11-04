@@ -563,3 +563,26 @@ def test_ai_prompt_follows_the_build_prompt_template():
                     "# Invariantes no negociables", "# Pruebas obligatorias",
                     "# Entregables finales", "# Lo que quiero en ESTA sesion"):
         assert seccion in llm.MODO_IA
+
+
+# ------------------------------------------------- answers that run out of room
+class _IncompleteStream(_Stream):
+    def __init__(self, texts):
+        incomplete = SimpleNamespace(
+            type="response.incomplete",
+            response=SimpleNamespace(usage=None, output=[],
+                                     incomplete_details=SimpleNamespace(reason="max_output_tokens")))
+        super().__init__([_delta(t) for t in texts] + [incomplete])
+
+    def get_final_response(self):
+        raise RuntimeError("Didn't receive a `response.completed` event.")
+
+
+def test_answer_cut_by_the_cap_is_kept_with_a_note_not_an_error(coach):
+    coach.client = FakeOpenAI(_IncompleteStream(["## Solución\n", "def f():"]))
+
+    out = _run(coach)
+
+    assert out["errors"] == [] and out["done"] == 1
+    assert out["deltas"] == ["## Solución\n", "def f():", llm.AVISO_CORTADA]
+    assert coach._items[-1]["content"].startswith("## Solución\ndef f():")
