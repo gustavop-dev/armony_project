@@ -233,7 +233,6 @@ class OverlayApp(QtCore.QObject):
         self.top.startStopClicked.connect(self.toggle_meeting)
         self.top.screenshotClicked.connect(self.take_shot)
         self.top.toggleClicked.connect(self.toggle_overlay)
-        self.top.generateClicked.connect(self.generate)
         self.top.answerNowClicked.connect(self.answer_now)
         self.top.askClicked.connect(self.toggle_ask)
         self.top.spokenClicked.connect(self.resolve_spoken)
@@ -444,9 +443,9 @@ class OverlayApp(QtCore.QObject):
     def take_shot(self):
         """Guarda una captura en la cola. No genera nada todavia.
 
-        Puedes encadenar varias (Bloq Mayus+S) y despues pulsar Generate: asi se
-        manda todo junto, que es lo util cuando el enunciado no cabe en una
-        sola pantalla.
+        Puedes encadenar varias (Bloq Mayus+S) y despues pulsar Answer: asi se
+        manda todo junto (con lo que dijeron), que es lo util cuando el
+        enunciado no cabe en una sola pantalla.
         """
         if not self._running:
             return
@@ -471,34 +470,24 @@ class OverlayApp(QtCore.QObject):
         # pantalla (y el hablado se pasa a la izquierda).
         self.set_screen_mode(True)
         self.screen.add_shot(pm)
-        self.top.set_generate_enabled(True)
+        self.top.set_staged(len(self._shots))
         self._capturas_reunion += 1
         self.screen.set_shots(self._capturas_reunion)
         n = len(self._shots)
         # Estado: hay capturas sin resolver. Lo que hay que hacer, de paso.
         self.screen.set_status("Pending")
-        self.screen.aviso(f"{n} screenshot{'s' if n != 1 else ''} ready — Caps+D to solve")
+        self.screen.aviso(f"{n} screenshot{'s' if n != 1 else ''} ready — Caps+A answers "
+                          f"with them and what they said")
 
-    def generate(self, _=""):
-        """Bloq Mayus+D: envia las capturas acumuladas. Sin capturas nuevas,
-        rehace la ultima solucion del panel grande en el modo actual (para
-        cuando cambias de Manual a AI o al reves)."""
-        if not self._running:
-            return
-        if not self._shots:
-            if self.engine.rehacer_pantalla():
-                nombre = "AI" if self.engine.resolucion == "ia" else "Manual"
-                self.screen.set_status("Redoing…", "drafting")
-                self.screen.aviso(f"Redoing the solution in {nombre} mode")
-            else:
-                self.panel.aviso("Take a screenshot first (Caps+S) — or Caps+R to "
-                                 "solve what they said")
-            return
+    def _enviar_capturas(self):
+        """Las capturas en espera, juntas, al panel grande. El motor les
+        empareja lo ultimo que dijeron si aun no tenia respuesta: asi va
+        "lo que dijo el participante + el pantallazo" en una sola peticion."""
         self.engine.request_screenshots(list(self._shots))
         self._shots.clear()
         # Las miniaturas se quedan: acompañan a la respuesta que van a producir.
         self._answer_lleva_capturas = True
-        self.top.set_generate_enabled(False)
+        self.top.set_staged(0)
         self.screen.set_status("Analyzing…")
 
     def relaunch_screen(self):
@@ -509,15 +498,31 @@ class OverlayApp(QtCore.QObject):
         self.engine.relaunch_screen()
 
     def answer_now(self):
-        """Bloq Mayus+A: fuerza la respuesta a lo ultimo que dijeron.
+        """Bloq Mayus+A, el unico boton de responder: manda lo que este en
+        espera, con todo el contexto.
 
-        Sirve cuando preguntaron pero la transcripcion no puso los signos y el
-        filtro lo tomo por contexto.
+        - Capturas tomadas: van juntas al panel grande, con lo ultimo que
+          dijeron si aun no tenia respuesta (participante + pantallazo).
+        - Sin capturas, y la solucion del panel grande hecha en el otro modo
+          (cambiaste Manual / AI): se rehace en el modo actual.
+        - Si no: responde a lo ultimo que dijeron, aunque no pareciera una
+          pregunta (la transcripcion se comio los signos, o era una peticion).
         """
         if not self._running:
             return
         if self.engine.modo == agents_mod.NOTETAKER:
             self.panel.aviso("This agent only takes notes")
+            return
+        if self._shots:
+            if self.engine.permite_capturas:
+                self._enviar_capturas()
+                return
+            self._shots.clear()
+            self.top.set_staged(0)
+        if self.engine.solucion_desfasada and self.engine.rehacer_pantalla():
+            nombre = "AI" if self.engine.resolucion == "ia" else "Manual"
+            self.screen.set_status("Redoing…", "drafting")
+            self.screen.aviso(f"Redoing the solution in {nombre} mode")
             return
         self.panel.hide_skip()
         self.panel.set_status("Answering…")
@@ -702,7 +707,7 @@ class OverlayApp(QtCore.QObject):
             return
         self.engine.set_resolucion(modo)
         nombre = "AI" if modo == "ia" else "Manual"
-        extra = " — Caps+D redoes the solution in this mode" if self.engine.hay_solucion else ""
+        extra = " — Caps+A redoes the solution in this mode" if self.engine.hay_solucion else ""
         (self.screen if self._modo_pantalla else self.panel).aviso(f"{nombre} mode{extra}")
 
     def _quit_app(self):
@@ -890,7 +895,6 @@ def main():
     hk = HK.GlobalHotkeys({
         HK.ACTION_TOGGLE: ui.toggle_overlay,
         HK.ACTION_SHOT: ui.take_shot,
-        HK.ACTION_GENERATE: ui.generate,
         HK.ACTION_MEETING: ui.toggle_meeting,
         HK.ACTION_ANSWER: ui.answer_now,
         HK.ACTION_RELAUNCH: ui.relaunch_screen,

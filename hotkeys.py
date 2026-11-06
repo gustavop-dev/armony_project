@@ -5,9 +5,9 @@ Zoom / Meet / Teams, no en el overlay. Un atajo de Qt solo dispara con la ventan
 enfocada, asi que no serviria de nada.
 
 Atajos (Bloq Mayus mantenido + tecla, todo junto a la mano izquierda en reposo):
-    Bloq Mayus+A    responder ahora a lo ultimo que dijeron (el mas usado)
+    Bloq Mayus+A    responder con lo que este en espera: las capturas tomadas mas
+                    lo que dijeron, o si no lo ultimo que dijeron (el mas usado)
     Bloq Mayus+S    captura de pantalla (se pueden encadenar varias)
-    Bloq Mayus+D    generar respuesta con las capturas tomadas
     Bloq Mayus+F    actualizar la solucion en pantalla con lo que acaban de decir
     Bloq Mayus+E    escribir una pregunta (el campo del panel hablado)
     Bloq Mayus+R    resolver en grande lo que plantearon hablando
@@ -71,7 +71,6 @@ ACTION_SPOKEN = 9         # resolver en grande lo planteado hablando
 CAPS_BINDINGS = {
     ACTION_ANSWER: (VK_A, "Caps+A"),
     ACTION_SHOT: (VK_S, "Caps+S"),
-    ACTION_GENERATE: (VK_D, "Caps+D"),
     ACTION_RELAUNCH: (VK_F, "Caps+F"),
     ACTION_ASK: (VK_E, "Caps+E"),
     ACTION_SPOKEN: (VK_R, "Caps+R"),
@@ -85,7 +84,6 @@ CAPS_BINDINGS = {
 BINDINGS = {
     1: (MOD_ALT, VK_1, "Alt+1"),
     2: (MOD_ALT, VK_2, "Alt+2"),
-    3: (MOD_ALT, VK_3, "Alt+3"),
     4: (MOD_ALT, VK_4, "Alt+4"),
     5: (MOD_ALT, VK_5, "Alt+5"),
     6: (MOD_ALT, VK_6, "Alt+6"),

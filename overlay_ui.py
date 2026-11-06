@@ -1377,7 +1377,6 @@ class AudioBars(QtWidgets.QWidget):
 class TopBar(_Draggable, QtWidgets.QWidget):
     startStopClicked = QtCore.Signal()
     screenshotClicked = QtCore.Signal()
-    generateClicked = QtCore.Signal()
     answerNowClicked = QtCore.Signal()
     toggleClicked = QtCore.Signal()
     askClicked = QtCore.Signal()
@@ -1464,35 +1463,19 @@ class TopBar(_Draggable, QtWidgets.QWidget):
         lay.addWidget(self.btn_meeting)
         self._paint_meeting()
 
-        # Orden de izquierda a derecha: meeting, generate, answer now,
-        # screenshot, show/hide. Se agrupan los dos que hacen responder a la IA
-        # (generate y answer now), que es como se usan.
-
-        # --- generar (se ilumina cuando hay capturas listas) ---
-        self.btn_gen = ClickFrame()
-        gl = QtWidgets.QHBoxLayout(self.btn_gen)
-        gl.setContentsMargins(12, 8, 12, 8)
-        gl.setSpacing(7)
-        self.ico_gen = icons.label("sparkles", T.TEXT, 16)
-        gl.addWidget(self.ico_gen)
-        self.lbl_gen = QtWidgets.QLabel("Generate")
-        # Mismo peso que el resto de la barra: antes iba en negrita para
-        # sostener el fondo amarillo, que ya no esta.
-        gf = self.lbl_gen.font(); gf.setPixelSize(13); gf.setWeight(QtGui.QFont.Medium)
-        self.lbl_gen.setFont(gf)
-        gl.addWidget(self.lbl_gen)
-        self.keys_gen = _keys("D")
-        gl.addWidget(self.keys_gen)
-        self.btn_gen.clicked.connect(self.generateClicked)
-        lay.addWidget(self.btn_gen)
-        self.set_generate_enabled(False)
-
-        # --- responder ahora (red de seguridad si no se detecto la pregunta) ---
+        # --- responder: UN boton para todo lo preparado ---
+        # Manda lo que haya en espera, con todo el contexto: las capturas
+        # tomadas (con lo ultimo que dijeron) van al panel grande; sin capturas,
+        # responde a lo ultimo que dijeron. Antes eran dos (Generate y Answer
+        # now) y no estaba claro cual tocaba.
         self.btn_answer = self._pill("Answer", ("Caps", "A"), icono="chat")
         self.btn_answer.setToolTip(
-            "Responde a lo último que dijeron, aunque no pareciera una pregunta")
+            "Answer what is staged, with all the context: the screenshots taken "
+            "plus what they said, or else what they said last")
         self.btn_answer.clicked.connect(self.answerNowClicked)
         lay.addWidget(self.btn_answer)
+        self._lbl_answer = next(lab for lab in self.btn_answer.findChildren(QtWidgets.QLabel)
+                                if lab.text() == "Answer")
 
         # --- lo hablado, resuelto en grande en el panel de la pantalla ---
         self.btn_spoken = self._pill("Solve", ("Caps", "R"), icono="code")
@@ -1535,31 +1518,15 @@ class TopBar(_Draggable, QtWidgets.QWidget):
             f"color: {'#6fa0ff' if activo else T.TEXT}; background: transparent;"
             + ("font-weight: 600;" if activo else ""))
 
-    def set_generate_enabled(self, on):
-        """Encendido = hay capturas listas. Se maneja por Bloq Mayus+D; aqui solo se ve."""
-        on = bool(on)
-        if on:
-            # Encendido = el mismo tono que Screenshot o Answer now. Antes se
-            # ponia de un amarillo macizo que gritaba en una barra que es toda
-            # oscura: llamaba mas la atencion el boton que la propia respuesta.
-            # Que este disponible ya se ve en que el texto deja de estar apagado.
-            self.btn_gen.setStyleSheet(f"""
-                QFrame {{ border: 1px solid {T.BTN_BORDER}; border-radius: {T.R_BTN}px;
-                          background: {T.BTN_BG}; }}
-                QFrame:hover {{ background: {T.BTN_BG_HOVER}; }}
-                QLabel {{ border: none; background: transparent; }}
-            """)
-            self.lbl_gen.setStyleSheet(f"color: {T.TEXT}; background: transparent;")
-            self.ico_gen.setPixmap(icons.pixmap("sparkles", T.TEXT, 16))
+    def set_staged(self, capturas):
+        """Lo que mandara Answer: con capturas en espera, se dice cuantas."""
+        if capturas:
+            self._lbl_answer.setText(f"Answer · {capturas} shot{'s' if capturas != 1 else ''}")
+            self._lbl_answer.setStyleSheet(
+                f"color: {T.ACCENT_LIGHT}; background: transparent; font-weight: 600;")
         else:
-            self.btn_gen.setStyleSheet(f"""
-                QFrame {{ border: 1px solid {T.BTN_BORDER}; border-radius: {T.R_BTN}px;
-                          background: {T.BTN_BG}; }}
-                QLabel {{ border: none; background: transparent; }}
-            """)
-            self.lbl_gen.setStyleSheet(f"color: {T.TEXT_FAINT}; background: transparent;")
-            self.ico_gen.setPixmap(icons.pixmap("sparkles", T.TEXT_FAINT, 16))
-        self.keys_gen.setEnabled(on)
+            self._lbl_answer.setText("Answer")
+            self._lbl_answer.setStyleSheet(f"color: {T.TEXT}; background: transparent;")
 
     def _pill(self, texto, teclas, icono=None, ancho=None):
         b = ClickFrame()

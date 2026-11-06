@@ -484,7 +484,7 @@ def native(gh, message, wparam, event_type=b"windows_generic_MSG"):
 def test_global_register_returns_all_names(global_hotkeys):
     result = global_hotkeys.register()
 
-    assert result == ([f"Alt+{n}" for n in range(1, 10)], [])
+    assert result == ([f"Alt+{n}" for n in (1, 2, 4, 5, 6, 7, 8, 9)], [])
 
 
 def test_global_register_reports_failed_names(global_hotkeys, fake_user32):
@@ -492,7 +492,7 @@ def test_global_register_reports_failed_names(global_hotkeys, fake_user32):
 
     result = global_hotkeys.register()
 
-    assert result == (["Alt+1", "Alt+3", "Alt+4", "Alt+6", "Alt+7", "Alt+8", "Alt+9"],
+    assert result == (["Alt+1", "Alt+4", "Alt+6", "Alt+7", "Alt+8", "Alt+9"],
                       ["Alt+2", "Alt+5"])
 
 
@@ -502,7 +502,6 @@ def test_global_register_uses_alt_norepeat_digits(global_hotkeys, fake_user32):
     assert fake_user32.register_calls == [
         (None, 1, 0x4001, 0x31),
         (None, 2, 0x4001, 0x32),
-        (None, 3, 0x4001, 0x33),
         (None, 4, 0x4001, 0x34),
         (None, 5, 0x4001, 0x35),
         (None, 6, 0x4001, 0x36),
@@ -556,7 +555,6 @@ def test_global_set_caps_layer_on_restores_layer(global_hotkeys):
 @pytest.mark.parametrize("vk, expected", [
     (VK_A, ["answer"]),
     (VK_S, ["shot"]),
-    (VK_D, ["generate"]),
     (VK_ESCAPE, ["meeting"]),
 ])
 def test_global_hook_caps_key_runs_mapped_action(global_hotkeys, fake_user32,
@@ -599,7 +597,7 @@ def test_global_unregister_releases_registered_ids(global_hotkeys, fake_user32):
 
     global_hotkeys.unregister()
 
-    assert fake_user32.unregister_calls == [(None, n) for n in (1, 3, 4, 6, 7, 8, 9)]
+    assert fake_user32.unregister_calls == [(None, n) for n in (1, 4, 6, 7, 8, 9)]
 
 
 def test_global_unregister_removes_keyboard_hook(global_hotkeys, fake_user32):
@@ -624,7 +622,7 @@ def test_global_unregister_tolerates_unregister_errors(global_hotkeys, fake_user
 
     global_hotkeys.unregister()
 
-    assert len(fake_user32.unregister_calls) == 9
+    assert len(fake_user32.unregister_calls) == 8
 
 
 def test_global_second_unregister_releases_nothing(global_hotkeys, fake_user32):
@@ -633,13 +631,12 @@ def test_global_second_unregister_releases_nothing(global_hotkeys, fake_user32):
 
     global_hotkeys.unregister()
 
-    assert len(fake_user32.unregister_calls) == 9
+    assert len(fake_user32.unregister_calls) == 8
 
 
 @pytest.mark.parametrize("hk_id, expected", [
     (1, ["toggle"]),
     (2, ["shot"]),
-    (3, ["generate"]),
 ])
 def test_global_native_hotkey_runs_callback(global_hotkeys, actions, hk_id,
                                             expected):
@@ -702,7 +699,7 @@ def test_meeting_switches_shortcuts_on(global_hotkeys, fake_user32):
     ocupados = global_hotkeys.set_activo(True)
 
     assert (global_hotkeys.caps_layer, ocupados) == (True, [])
-    assert len(fake_user32.register_calls) == 9
+    assert len(fake_user32.register_calls) == 8
 
 
 def test_end_of_meeting_releases_everything(global_hotkeys, fake_user32):
@@ -712,7 +709,7 @@ def test_end_of_meeting_releases_everything(global_hotkeys, fake_user32):
     global_hotkeys.set_activo(False)
 
     assert global_hotkeys.caps_layer is False
-    assert len(fake_user32.unregister_calls) == 9
+    assert len(fake_user32.unregister_calls) == 8
 
 
 def test_switching_on_twice_registers_once(global_hotkeys, fake_user32):
@@ -721,7 +718,7 @@ def test_switching_on_twice_registers_once(global_hotkeys, fake_user32):
 
     global_hotkeys.set_activo(True)
 
-    assert len(fake_user32.register_calls) == 9
+    assert len(fake_user32.register_calls) == 8
 
 
 def test_busy_fallbacks_are_reported(global_hotkeys, fake_user32):
@@ -742,3 +739,10 @@ def test_caps_q_is_the_blue_mouse_w_hides_and_r_solves_what_was_said():
     assert hotkeys.CAPS_BINDINGS[hotkeys.ACTION_SPOKEN] == (0x52, "Caps+R")
     assert hotkeys.BINDINGS[hotkeys.ACTION_MOUSE][2] == "Alt+8"
     assert hotkeys.BINDINGS[hotkeys.ACTION_SPOKEN][2] == "Alt+9"
+
+
+def test_there_is_one_answer_shortcut():
+    """Answer sends whatever is staged: no separate Caps+D / Alt+3 generate."""
+    assert hotkeys.ACTION_GENERATE not in hotkeys.CAPS_BINDINGS
+    assert hotkeys.ACTION_GENERATE not in hotkeys.BINDINGS
+    assert hotkeys.CAPS_BINDINGS[hotkeys.ACTION_ANSWER] == (0x41, "Caps+A")

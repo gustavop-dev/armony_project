@@ -168,10 +168,9 @@ Bloq Mayús ya no bloquea mayúsculas ni le llega a la aplicación de debajo;
 
 | Atajo | Respaldo | Qué hace |
 |---|---|---|
-| `Bloq Mayús+A` | `Alt+5` | Responder ahora a lo último que dijeron |
+| `Bloq Mayús+A` | `Alt+5` | **Responder** con lo que esté en espera y todo el contexto: las capturas tomadas junto con lo que dijo el participante (al panel grande); sin capturas, lo último que dijeron; si cambiaste Manual / AI, rehace la solución en el modo nuevo |
 | `Bloq Mayús+R` | `Alt+9` | Resolver en grande, en el panel grande, lo que plantearon hablando (un ejercicio dictado, algo que pide más que una respuesta para decir) |
 | `Bloq Mayús+S` | `Alt+2` | Captura de pantalla (se pueden encadenar varias) |
-| `Bloq Mayús+D` | `Alt+3` | Resolver las capturas tomadas; sin capturas nuevas, rehacer la última solución en el modo actual (Manual / AI) |
 | `Bloq Mayús+F` | `Alt+6` | Actualizar la solución con lo que acaban de decir (cuando se ofrece) |
 | `Bloq Mayús+E` | `Alt+7` | Escribir una pregunta (el campo del panel hablado); otra vez, devuelve el teclado |
 | `Bloq Mayús+Q` | `Alt+8` | Encender / apagar el **ratón azul** |
@@ -228,7 +227,7 @@ seleccionar sobre la nada. Con el ratón azul encendido:
   inicial listo para pegar** y los conceptos para defenderlo. Cada agente trae el
   suyo por defecto (Permisos); si lo cambias con una solución ya en pantalla, se
   queda para lo siguiente: no se rehace nada solo. Para rehacer la solución en el
-  modo nuevo, `Bloq Mayús+D` (sin capturas nuevas).
+  modo nuevo, `Bloq Mayús+A`.
 - **Las respuestas se pintan como en ChatGPT o Claude**: secciones, subtítulos,
   listas numeradas con sublistas, tablas, citas, separadores y bloques de código
   coloreados con su botón de copiar. En modo AI el prompt sale en su propio

@@ -69,7 +69,6 @@ def frame(qtbot):
     ("btn_meeting", "startStopClicked"),
     ("btn_shot", "screenshotClicked"),
     ("btn_toggle", "toggleClicked"),
-    ("btn_gen", "generateClicked"),
     ("btn_answer", "answerNowClicked"),
 ])
 def test_topbar_button_emits_signal(qtbot, bar, button, signal):
@@ -125,22 +124,16 @@ def test_set_timer_shows_text(bar):
     assert bar.lbl_timer.text() == "12:34"
 
 
-def test_generate_starts_disabled(bar):
-    assert bar.keys_gen.isEnabled() is False
+def test_there_is_no_separate_generate_button(bar):
+    assert not hasattr(bar, "btn_gen")
 
 
-@pytest.mark.parametrize("on, enabled", [(True, True), (False, False), (1, True)])
-def test_set_generate_enabled_toggles_shortcut_keys(bar, on, enabled):
-    bar.set_generate_enabled(on)
+@pytest.mark.parametrize("capturas, texto", [(0, "Answer"), (1, "Answer · 1 shot"),
+                                             (3, "Answer · 3 shots")])
+def test_answer_says_how_many_screenshots_it_will_send(bar, capturas, texto):
+    bar.set_staged(capturas)
 
-    assert bar.keys_gen.isEnabled() is enabled
-
-
-@pytest.mark.parametrize("on, color", [(True, "#e3e7f2"), (False, "#7d869c")])
-def test_set_generate_enabled_dims_label(bar, on, color):
-    bar.set_generate_enabled(on)
-
-    assert f"color: {color};" in bar.lbl_gen.styleSheet()
+    assert bar._lbl_answer.text() == texto
 
 
 def test_topbar_interactive_widget_is_the_drag_zone(bar):

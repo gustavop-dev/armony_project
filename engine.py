@@ -603,7 +603,7 @@ class CoachEngine(QtCore.QObject):
 
     def set_resolucion(self, modo):
         """Manual o IA, en plena reunion. Solo cambia el modo de lo siguiente:
-        no rehace nada solo (para eso, rehacer_pantalla: Bloq Mayus+D).
+        no rehace nada solo (para eso, rehacer_pantalla: Bloq Mayus+A).
         Devuelve True si cambio."""
         import agents as agents_mod
         if modo not in agents_mod.RESOLUCIONES or modo == self._resolucion:
@@ -614,6 +614,12 @@ class CoachEngine(QtCore.QObject):
     @property
     def hay_solucion(self):
         return bool(self._solucion_pantalla)
+
+    @property
+    def solucion_desfasada(self):
+        """La solucion del panel grande se hizo en el otro modo (Manual / AI)."""
+        return bool(self._solucion_pantalla and self._solucion_modo
+                    and self._solucion_modo != self._resolucion)
 
     def rehacer_pantalla(self):
         """Rehace la ultima solucion del panel grande en el modo actual (las

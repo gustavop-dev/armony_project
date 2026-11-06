@@ -459,3 +459,14 @@ def test_cross_notes_stay_out_of_the_transcript(monkeypatch):
     s.engine._respond("", images=["png"], carril="pantalla")
 
     assert [q for q, _ in s.engine._registro] == ["Sugerido (pantalla)"]
+
+
+def test_a_solution_made_in_the_other_mode_is_out_of_date(monkeypatch):
+    s = Session(monkeypatch).solve_screen(SOLUTION)
+    s.engine._solucion_modo = "manual"
+
+    assert s.engine.solucion_desfasada is False
+    s.engine.set_resolucion("ia")
+    assert s.engine.solucion_desfasada is True
+    s.engine.set_resolucion("manual")
+    assert s.engine.solucion_desfasada is False

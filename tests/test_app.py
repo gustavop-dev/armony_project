@@ -52,6 +52,7 @@ class FakeEngine(QtCore.QObject):
         self.redo = False
         self.questions = []
         self.ask_ok = True
+        self.solucion_desfasada = False
 
     def set_resolucion(self, modo):
         self.resoluciones.append(modo)
@@ -360,7 +361,7 @@ class TestMeeting:
 
 
 class TestActions:
-    @pytest.mark.parametrize("action", ["take_shot", "generate", "answer_now"])
+    @pytest.mark.parametrize("action", ["take_shot", "answer_now"])
     def test_idle_action_requests_meeting(self, ui, action):
         """Catch model or screen actions proceeding before a meeting starts."""
         getattr(ui, action)()
@@ -391,33 +392,43 @@ class TestActions:
         assert (decoded.width(), decoded.height()) == expected
         assert decoded.pixelColor(0, 0).name() == "#ff0000"
         assert ui.screen.badge._lbl.text() == "Pending"
-        assert ui.screen.skip_pill.text() == "1 screenshot ready — Caps+D to solve"
+        assert ui.screen.skip_pill.text() == ("1 screenshot ready — Caps+A answers with "
+                                              "them and what they said")
         assert ui.screen.titulo.text() == "Screen · 1 shot"
-        assert ui.top.keys_gen.isEnabled() is True
+        assert ui.top._lbl_answer.text() == "Answer · 1 shot"
         assert ui.engine.screenshots == []
 
-    def test_generate_requires_screenshots(self, ui):
-        """Catch Generate submitting an empty screenshot batch."""
-        ui.start_meeting()
-
-        ui.generate()
-
-        assert ui.panel.skip_pill.text() == ("Take a screenshot first (Caps+S) — or "
-                                             "Caps+R to solve what they said")
-        assert ui.engine.screenshots == []
-
-    def test_generate_transfers_snapshot(self, ui):
-        """Catch clearing the pending shots also clearing the submitted images."""
+    def test_one_answer_sends_the_staged_screenshots(self, ui):
+        """One button: staged screenshots go together (the engine pairs what
+        they said with them); no separate spoken answer on top."""
         ui.start_meeting()
         ui._shots = ["png-a", "png-b"]
+        ui.top.set_staged(2)
 
-        ui.generate()
+        ui.answer_now()
 
         assert ui.engine.screenshots == [["png-a", "png-b"]]
+        assert ui.engine.answers == 0
         assert ui._shots == []
         assert ui._answer_lleva_capturas is True
-        assert ui.top.keys_gen.isEnabled() is False
+        assert ui.top._lbl_answer.text() == "Answer"
         assert ui.screen.badge._lbl.text() == "Analyzing…"
+
+    def test_without_screenshots_answer_replies_to_what_they_said(self, ui):
+        ui.start_meeting()
+
+        ui.answer_now()
+
+        assert ui.engine.answers == 1 and ui.engine.screenshots == []
+
+    def test_agent_without_screenshots_drops_them_and_answers(self, ui):
+        ui.start_meeting()
+        ui.engine.permite_capturas = False
+        ui._shots = ["png-a"]
+
+        ui.answer_now()
+
+        assert ui.engine.screenshots == [] and ui._shots == [] and ui.engine.answers == 1
 
     def test_manual_answer_clears_skip_notice(self, ui):
         """Catch forced answering retaining a stale no-question notice."""
@@ -1282,18 +1293,29 @@ class TestResolution:
 
         ui.screen.modo_chip.changed.emit("ia")
 
-        assert ui.screen.skip_pill.text() == "AI mode — Caps+D redoes the solution in this mode"
+        assert ui.screen.skip_pill.text() == "AI mode — Caps+A redoes the solution in this mode"
         assert getattr(ui.engine, "redos", 0) == 0
 
-    def test_caps_d_without_new_shots_redoes_in_the_current_mode(self, ui):
+    def test_answer_after_switching_mode_redoes_the_solution(self, ui):
         ui.start_meeting()
         ui.engine.redo = True
+        ui.engine.solucion_desfasada = True
         ui.engine.resolucion = "ia"
 
-        ui.generate()
+        ui.answer_now()
 
         assert ui.engine.redos == 1 and ui.engine.screenshots == []
+        assert ui.engine.answers == 0
         assert ui.screen.skip_pill.text() == "Redoing the solution in AI mode"
+
+    def test_answer_with_an_up_to_date_solution_answers_what_they_said(self, ui):
+        ui.start_meeting()
+        ui.engine.redo = True
+        ui.engine.solucion_desfasada = False
+
+        ui.answer_now()
+
+        assert getattr(ui.engine, "redos", 0) == 0 and ui.engine.answers == 1
 
     def test_switch_outside_a_meeting_only_moves_the_chips(self, ui):
         ui.set_resolucion("ia")
