@@ -196,7 +196,8 @@ class OverlayApp(QtCore.QObject):
     def _protect(self):
         """Excluye las ventanas de la captura de pantalla y evita que tomen el foco."""
         activo = bool(self.cfg.get("invisible_on_share", True))
-        for w in (self.top, self.panel, self.screen, self.collapsed, self.raton.cursor):
+        for w in (self.top, self.panel, self.screen, self.collapsed, self.raton.cursor,
+                  self.raton.atrapa):
             set_capture_protection(w.winId(), activo)
             # El overlay nunca roba el foco: al pulsar un boton sigues "dentro"
             # de la aplicacion en la que estabas trabajando. El campo de
@@ -214,54 +215,18 @@ class OverlayApp(QtCore.QObject):
             else:
                 w.setWindowOpacity(op)
 
-    def _cursor_over(self, widgets):
-        """True si el cursor esta sobre alguno de esos widgets (visibles)."""
-        pos = QtGui.QCursor.pos()
-        for w in widgets:
-            if w is not None and w.isVisible():
-                tl = w.mapToGlobal(QtCore.QPoint(0, 0))
-                if QtCore.QRect(tl, w.size()).contains(pos):
-                    return True
-        return False
-
     def _update_click_through(self):
-        # Durante un arrastre (boton pulsado) no cambiamos el estado, para no
-        # cortar el movimiento a medio camino.
-        if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
-            return
+        """El raton real atraviesa siempre el overlay, como si fuera de cristal
+        (clics y rueda van a la app de debajo): ni se ve tocar nada invisible
+        al compartir pantalla ni se mueve nada sin querer. El overlay solo se
+        toca con el raton azul (Bloq Mayus+Q), que no usa el cursor real."""
         if self._escribiendo and not self.panel.isActiveWindow():
             self._soltar_pregunta(devolver=False)     # se fue a otra app
-        if self.raton.activo:
-            # Con el raton azul, el real no toca el overlay: todo de cristal y
-            # la rueda la lleva el raton azul.
-            for win in (self.top, self.panel, self.screen, self.collapsed):
-                if win.isVisible() and self._ct_state.get(win) is not True:
-                    set_click_through(win.winId(), True)
-                    self._ct_state[win] = True
-            self.wheel.set_zones([])
-            return
-        zonas_rueda = ((self.panel.wheel_zones() + self.screen.wheel_zones())
-                       if self._running else [])
-        objetivos = [
-            (self.top, self.top.interactive_widgets()),
-            (self.panel, self.panel.interactive_widgets()),
-            (self.screen, self.screen.interactive_widgets()),
-            (self.collapsed, [self.collapsed]),   # el boton de restaurar, entero
-        ]
-        for win, zonas in objetivos:
-            if not win.isVisible():
-                continue
-            interactivo = self._cursor_over(zonas)
-            if win in (self.panel, self.screen) and interactivo:
-                # Con el panel activo, Qt ya recibe la rueda por su cuenta: si
-                # ademas la desviara el hook, cada muesca contaria dos veces.
-                zonas_rueda = []
-            # click_through activo = NO interactivo (deja pasar el clic)
-            deseado = not interactivo
-            if self._ct_state.get(win) != deseado:
-                set_click_through(win.winId(), deseado)
-                self._ct_state[win] = deseado
-        self.wheel.set_zones(zonas_rueda)
+        for win in (self.top, self.panel, self.screen, self.collapsed):
+            if win.isVisible() and self._ct_state.get(win) is not True:
+                set_click_through(win.winId(), True)
+                self._ct_state[win] = True
+        self.wheel.set_zones([])
 
     # ------------------------------------------------ conexiones
     def _wire(self):

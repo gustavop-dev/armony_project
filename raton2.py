@@ -118,15 +118,48 @@ class CursorAzul(QtWidgets.QWidget):
         p.drawPolygon(flecha)
 
 
+class AtrapaRueda(QtWidgets.QWidget):
+    """Ventanita invisible bajo el cursor real (quieto) mientras el raton azul
+    esta encendido. El gesto de scroll del panel tactil no pasa por el hook:
+    Windows lo entrega a la ventana que hay bajo el cursor real. Asi esa
+    ventana es esta, y el scroll se lleva al panel que hay bajo el azul.
+    Pixeles casi transparentes (alfa 1): invisibles, pero Windows los cuenta
+    para el raton (con alfa 0 la ventana dejaria pasar todo)."""
+
+    LADO = 64
+
+    def __init__(self, al_rodar):
+        super().__init__()
+        self._al_rodar = al_rodar
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint
+                            | QtCore.Qt.Tool | QtCore.Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        self.setFixedSize(self.LADO, self.LADO)
+
+    def paintEvent(self, _e):
+        p = QtGui.QPainter(self)
+        p.fillRect(self.rect(), QtGui.QColor(0, 0, 0, 1))
+
+    def colocar(self, centro):
+        self.move(centro.x() - self.LADO // 2, centro.y() - self.LADO // 2)
+
+    def wheelEvent(self, e):
+        delta = e.angleDelta().y() or e.angleDelta().x()
+        if delta:
+            self._al_rodar(delta)
+        e.accept()
+
+
 class _Puente(QtCore.QObject):
     """Del hilo del hook al de Qt, siempre en cola."""
-    movido = QtCore.Signal(int, int)
+    movido = QtCore.Signal()
     boton = QtCore.Signal(int, bool)
     rueda = QtCore.Signal(int)
 
     def __init__(self, raton):
         super().__init__()
-        self.movido.connect(raton._mover, QtCore.Qt.QueuedConnection)
+        self.movido.connect(raton._mover_pendiente, QtCore.Qt.QueuedConnection)
         self.boton.connect(raton._boton, QtCore.Qt.QueuedConnection)
         self.rueda.connect(raton._rueda, QtCore.Qt.QueuedConnection)
 
@@ -146,7 +179,15 @@ class SegundoRaton(QtCore.QObject):
         self._al_rodar = al_rodar
         self._reloj = reloj
         self.cursor = CursorAzul()
+        self.atrapa = AtrapaRueda(self._rueda)
         self.pos = QtCore.QPointF()
+        # Movimiento acumulado por el hook y aun no aplicado. Se junta: un raton
+        # da cientos de movimientos por segundo y, uno a uno, Qt se quedaba
+        # atras (con mucho texto o redimensionando) y hasta el soltar llegaba
+        # tarde, al final de la cola: el panel seguia "pegado" al raton.
+        self._mov_lock = threading.Lock()
+        self._mov = [0, 0]
+        self._mov_pendiente = False
         self.activo = False                  # lo lee el hook (bool: atomico)
         self._ancla = (0, 0)                 # donde se quedo el cursor real
         self._latido = reloj()
@@ -207,6 +248,8 @@ class SegundoRaton(QtCore.QObject):
         self.pos = QtCore.QPointF(QtGui.QCursor.pos())
         self._latido = self._reloj()
         self._colocar()
+        self.atrapa.colocar(self.pos.toPoint())
+        self.atrapa.show()
         self.cursor.show()
         self.cursor.raise_()
         self.activo = True
@@ -219,6 +262,10 @@ class SegundoRaton(QtCore.QObject):
         for boton in list(self._presionado):      # nada se queda pulsado
             self._boton(boton, False)
         self.cursor.hide()
+        self.atrapa.hide()
+        with self._mov_lock:
+            self._mov = [0, 0]
+            self._mov_pendiente = False
         self.cambiado.emit(False)
 
     def alternar(self):
@@ -255,7 +302,13 @@ class SegundoRaton(QtCore.QObject):
         if wParam == WM_MOUSEMOVE:
             dx, dy = ms.pt.x - self._ancla[0], ms.pt.y - self._ancla[1]
             if dx or dy:
-                self._puente.movido.emit(dx, dy)
+                with self._mov_lock:
+                    self._mov[0] += dx
+                    self._mov[1] += dy
+                    avisar = not self._mov_pendiente
+                    self._mov_pendiente = True
+                if avisar:                       # uno en cola como mucho
+                    self._puente.movido.emit()
             return True
         if wParam in BOTONES:
             boton, abajo = BOTONES[wParam]
@@ -273,6 +326,15 @@ class SegundoRaton(QtCore.QObject):
         for pantalla in QtGui.QGuiApplication.screens():
             rect = rect.united(pantalla.geometry())
         return rect
+
+    def _mover_pendiente(self):
+        """Aplica de una vez todo lo que se movio desde la ultima vez."""
+        with self._mov_lock:
+            dx, dy = self._mov
+            self._mov = [0, 0]
+            self._mov_pendiente = False
+        if dx or dy:
+            self._mover(dx, dy)
 
     def _mover(self, dx, dy):
         if not self.activo:
@@ -330,6 +392,7 @@ class SegundoRaton(QtCore.QObject):
         if abajo:
             if not self.activo:
                 return
+            self._mover_pendiente()            # el clic, donde esta el raton ya
             ventana = self._destino()
             if ventana is None:
                 return                           # fuera del overlay: nada
@@ -340,6 +403,7 @@ class SegundoRaton(QtCore.QObject):
             self._inyectar("mover", ventana)
             self._inyectar("pulsar", ventana, boton)
             return
+        self._mover_pendiente()                # soltar donde se solto
         ventana = self._presionado.pop(boton, None)
         if ventana is not None and ventana.isVisible():
             self._inyectar("soltar", ventana, boton)

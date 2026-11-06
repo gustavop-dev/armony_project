@@ -123,6 +123,7 @@ class FakeRaton(QtCore.QObject):
         self.ventanas = ventanas
         self.al_rodar = al_rodar
         self.cursor = QtWidgets.QWidget()
+        self.atrapa = QtWidgets.QWidget()
         self.activo = False
         self.installed = False
 
@@ -203,7 +204,8 @@ def ui(qtbot, monkeypatch, cfg, native, tmp_path):
     monkeypatch.setattr(app.cfg_mod, "load_config", lambda: dict(cfg))
     controller = app.OverlayApp()
     for widget in (controller.top, controller.panel, controller.screen,
-                   controller.collapsed, controller.home, controller.raton.cursor):
+                   controller.collapsed, controller.home, controller.raton.cursor,
+                   controller.raton.atrapa):
         qtbot.addWidget(widget)
     controller._ct_timer.stop()
     yield controller
@@ -696,7 +698,7 @@ class TestWindows:
     def test_constructor_protects_all_windows(self, ui, native):
         """Catch a new overlay window missing capture protection or no-activate styling."""
         ventanas = [int(w.winId()) for w in (ui.top, ui.panel, ui.screen, ui.collapsed,
-                                             ui.raton.cursor)]
+                                             ui.raton.cursor, ui.raton.atrapa)]
         assert native["capture"] == ([(w, True) for w in ventanas]
                                      + [(int(ui.home.winId()), True)])
         assert native["activate"] == ventanas
@@ -711,35 +713,19 @@ class TestWindows:
 
         assert native["click"] == [(int(ui.top.winId()), True), (int(ui.panel.winId()), True)]
 
-    def test_interactive_control_disables_click_through(self, ui, native, monkeypatch):
-        """Catch the drag handle remaining click-through under the cursor."""
+    def test_real_mouse_passes_through_even_over_controls(self, ui, native, monkeypatch):
+        """Only the blue mouse touches the overlay: the real one goes through,
+        even over the drag handle or a panel, and its wheel too."""
         ui.start_meeting()
         ui._update_click_through()
         native["click"].clear()
-        position = ui.top.drag_zone.mapToGlobal(ui.top.drag_zone.rect().center())
-        monkeypatch.setattr(QtGui.QCursor, "pos", lambda: position)
+        for widget in (ui.top.drag_zone, ui.panel._drag_header, ui.panel.entrada):
+            position = widget.mapToGlobal(widget.rect().center())
+            monkeypatch.setattr(QtGui.QCursor, "pos", lambda p=position: p)
 
-        ui._update_click_through()
+            ui._update_click_through()
 
-        assert native["click"] == [(int(ui.top.winId()), False)]
-
-    def test_drag_suspends_click_through_changes(self, ui, native, monkeypatch):
-        """Catch polling changing mouse transparency midway through a drag."""
-        monkeypatch.setattr(QtWidgets.QApplication, "mouseButtons", lambda: QtCore.Qt.LeftButton)
-
-        ui._update_click_through()
-
-        assert native["click"] == []
-        assert ui.wheel.zones is None
-
-    def test_interactive_panel_disables_wheel_forwarding(self, ui, monkeypatch):
-        """Catch Qt and the mouse hook both processing the same wheel event."""
-        ui.start_meeting()
-        position = ui.panel._drag_header.mapToGlobal(ui.panel._drag_header.rect().center())
-        monkeypatch.setattr(QtGui.QCursor, "pos", lambda: position)
-
-        ui._update_click_through()
-
+        assert native["click"] == []                 # stays click-through
         assert ui.wheel.zones == []
 
     def test_shutdown_releases_engine_hooks(self, ui):

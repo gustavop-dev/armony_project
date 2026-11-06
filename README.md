@@ -188,10 +188,15 @@ El overlay es invisible al compartir pantalla, pero tu cursor no: si lo llevas
 encima para hacer scroll, subrayar o redimensionar, quien te ve lo ve moverse y
 seleccionar sobre la nada. Con el ratón azul encendido:
 
-- **Tu cursor real se queda quieto** donde estaba. El ratón físico mueve un
-  cursor azul fuerte, invisible al compartir pantalla como el resto del overlay.
+- **El overlay solo se toca con el ratón azul.** El ratón de verdad lo atraviesa
+  siempre, como si fuera de cristal: sus clics y su rueda van a la app de debajo.
+- **Tu cursor real se queda quieto** donde estaba. El ratón físico (y el panel
+  táctil) mueve un cursor azul fuerte, invisible al compartir pantalla como el
+  resto del overlay.
 - Con él haces de todo en el overlay: clic en los botones, subrayar texto
-  (✦ Explain), scroll con la rueda, arrastrar y **redimensionar** los paneles.
+  (✦ Explain), scroll con la rueda **o con dos dedos en el panel táctil**,
+  arrastrar y **redimensionar** los paneles: mientras arrastras la esquina se ve
+  solo un contorno y el panel cambia de tamaño una vez, al soltar.
   Fuera del overlay no hace nada (ningún clic a ciegas en otras apps).
 - `Bloq Mayús+Q` lo apaga y el ratón vuelve a mover el cursor real, desde donde
   se quedó. Minimizar los paneles (`Bloq Mayús+W`) o terminar la reunión también

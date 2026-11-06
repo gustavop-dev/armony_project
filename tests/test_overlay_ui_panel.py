@@ -301,7 +301,9 @@ def test_width_change_unfreezes_to_viewport_width(qtbot, shown_panel):
     assert shown_panel._cont.width() == shown_panel.scroll.viewport().width()
 
 
-def test_resize_grip_drag_grows_window(shown_panel):
+def test_resize_grip_drag_shows_an_outline_and_resizes_once_on_release(shown_panel):
+    """Resizing a panel full of text on every move made the drag stutter:
+    while dragging only the outline moves; the panel resizes on release."""
     grip = shown_panel.resize_grip
     shown_panel.resize(640, 340)
 
@@ -309,7 +311,13 @@ def test_resize_grip_drag_grows_window(shown_panel):
     send(grip, mouse(QtCore.QEvent.MouseMove, (560, 540),
                               button=QtCore.Qt.NoButton))
 
+    assert shown_panel.size() == QtCore.QSize(640, 340)
+    assert grip._contorno.isVisible() and grip._contorno.size() == QtCore.QSize(700, 380)
+
+    send(grip, mouse(QtCore.QEvent.MouseButtonRelease, (560, 540)))
+
     assert shown_panel.size() == QtCore.QSize(700, 380)
+    assert not grip._contorno.isVisible()
 
 
 def test_resize_grip_drag_respects_minimum_size(shown_panel):
@@ -318,8 +326,24 @@ def test_resize_grip_drag_respects_minimum_size(shown_panel):
     send(grip, mouse(QtCore.QEvent.MouseButtonPress, (500, 500)))
     send(grip, mouse(QtCore.QEvent.MouseMove, (0, 0),
                               button=QtCore.Qt.NoButton))
+    send(grip, mouse(QtCore.QEvent.MouseButtonRelease, (0, 0)))
 
-    assert shown_panel.width() == 520
+    assert shown_panel.width() == overlay_ui.ResizeGrip.MIN_W
+
+
+def test_resize_grip_never_sticks_if_the_release_is_lost(shown_panel):
+    """A move with no button down ends the drag, even if the release never
+    arrived: the panel can never stay glued to the mouse."""
+    grip = shown_panel.resize_grip
+    shown_panel.resize(640, 340)
+    send(grip, mouse(QtCore.QEvent.MouseButtonPress, (500, 500)))
+    send(grip, mouse(QtCore.QEvent.MouseMove, (560, 540), button=QtCore.Qt.NoButton))
+
+    send(grip, mouse(QtCore.QEvent.MouseMove, (600, 600), button=QtCore.Qt.NoButton,
+                     buttons=QtCore.Qt.NoButton))
+
+    assert grip._start is None and not grip._contorno.isVisible()
+    assert shown_panel.size() == QtCore.QSize(700, 380)
 
 
 def test_resize_grip_ignores_move_after_release(shown_panel):
@@ -470,3 +494,16 @@ def test_screen_panel_has_no_companion(qtbot):
 
     assert pantalla.compa.isVisibleTo(pantalla) is False
     qtbot.wait(overlay_ui.INTERVALO_REPINTADO + 20)
+
+
+
+def test_header_drag_never_sticks_if_the_release_is_lost(shown_panel):
+    shown_panel.move(100, 100)
+    header = shown_panel._drag_header
+    send(header, mouse(QtCore.QEvent.MouseButtonPress, (150, 110)))
+
+    send(header, mouse(QtCore.QEvent.MouseMove, (300, 300), button=QtCore.Qt.NoButton,
+                       buttons=QtCore.Qt.NoButton))
+    send(header, mouse(QtCore.QEvent.MouseMove, (400, 400), button=QtCore.Qt.NoButton))
+
+    assert shown_panel.pos() == QtCore.QPoint(100, 100)

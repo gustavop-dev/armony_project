@@ -66,16 +66,13 @@ def test_off_it_lets_the_real_mouse_through(raton):
     assert hook(raton, raton2.WM_LBUTTONDOWN, evento()) != 1
 
 
-def test_on_it_swallows_moves_and_sends_the_delta(raton, qtbot):
+def test_on_it_swallows_moves_and_sends_the_delta(raton):
     raton.activar()
-    movidas = []
-    raton._puente.movido.disconnect()
-    raton._puente.movido.connect(lambda dx, dy: movidas.append((dx, dy)))
 
     assert hook(raton, raton2.WM_MOUSEMOVE, evento(512, 395)) == 1
-    qtbot.wait(5)
 
-    assert movidas == [(12, -5)]          # relative to where the real cursor froze
+    # Relative to where the real cursor froze, waiting for Qt to apply it.
+    assert raton._mov == [12, -5] and raton._mov_pendiente is True
 
 
 def test_on_it_swallows_clicks_and_the_wheel(raton):
@@ -202,3 +199,74 @@ def test_the_blue_cursor_never_takes_the_mouse_or_focus(raton):
     assert flags & QtCore.Qt.WindowTransparentForInput
     assert flags & QtCore.Qt.WindowDoesNotAcceptFocus
     assert raton.cursor.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+
+
+# ------------------------------------------------------------------ coalescing
+def test_many_hook_moves_become_one_pending_move(raton, qtbot):
+    """A mouse gives hundreds of moves a second: they pile into one pending
+    move, so Qt never falls behind (and a release never waits at the end of
+    a long queue, which left the panel glued to the mouse)."""
+    raton.activar()
+    ir_a(raton, qtbot, 300, 300)
+    llamadas = []
+    original = raton._mover
+    raton._mover = lambda dx, dy: (llamadas.append((dx, dy)), original(dx, dy))
+
+    for _ in range(50):
+        hook(raton, raton2.WM_MOUSEMOVE, evento(502, 401))
+    qtbot.wait(10)
+
+    assert llamadas == [(100, 50)]
+    assert raton.pos == QtCore.QPointF(400, 350)
+
+
+def test_a_click_first_applies_the_pending_move(raton, ventana, qtbot):
+    raton.activar()
+    ir_a(raton, qtbot, 150, 150)                  # outside the window
+    raton._mov = [110, 110]                       # moved onto the button, not applied yet
+    raton._mov_pendiente = True
+    clics = []
+    ventana.boton.clicked.connect(lambda: clics.append(1))
+
+    raton._boton(1, True)
+    qtbot.wait(5)
+    raton._boton(1, False)
+    qtbot.wait(5)
+
+    assert clics == [1]
+
+
+# ------------------------------------------------------------------ touchpad scroll
+def test_touchpad_scroll_is_caught_under_the_frozen_real_cursor(raton, qtbot):
+    """The touchpad gesture skips the hook and goes to the window under the
+    real cursor: a tiny invisible window sits there while the blue mouse is on."""
+    raton.activar()
+    real = raton.pos.toPoint()                    # where the real cursor froze
+    ir_a(raton, qtbot, 250, 250)
+
+    assert raton.atrapa.isVisible()
+    centro = raton.atrapa.geometry().center()
+    assert abs(centro.x() - real.x()) <= 1 and abs(centro.y() - real.y()) <= 1
+
+    from PySide6 import QtGui
+    ev = QtGui.QWheelEvent(QtCore.QPointF(5, 5), QtCore.QPointF(5, 5), QtCore.QPoint(0, 0),
+                           QtCore.QPoint(0, 120), QtCore.Qt.NoButton, QtCore.Qt.NoModifier,
+                           QtCore.Qt.NoScrollPhase, False)
+    QtWidgets.QApplication.sendEvent(raton.atrapa, ev)
+
+    assert raton.rodadas == [(QtCore.QPoint(250, 250), 1)]
+
+
+
+def test_the_catcher_goes_away_with_the_blue_mouse(raton):
+    raton.activar()
+    raton.desactivar()
+
+    assert not raton.atrapa.isVisible()
+
+
+def test_the_catcher_is_hit_testable_but_never_takes_focus(raton):
+    flags = raton.atrapa.windowFlags()
+
+    assert not flags & QtCore.Qt.WindowTransparentForInput
+    assert flags & QtCore.Qt.WindowDoesNotAcceptFocus

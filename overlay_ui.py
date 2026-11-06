@@ -254,6 +254,9 @@ class DragBar(QtWidgets.QWidget):
         # Sin cambio de cursor: la senal de que se puede arrastrar son los
         # punticos (GripDots), no el puntero.
         self._off = None
+        # Movimientos aun sin boton: si el soltar se pierde, el primero sin
+        # boton termina el arrastre (el panel nunca se queda pegado al raton).
+        self.setMouseTracking(True)
 
     def mousePressEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton:
@@ -262,9 +265,13 @@ class DragBar(QtWidgets.QWidget):
             e.accept()
 
     def mouseMoveEvent(self, e):
-        if self._off is not None and e.buttons() & QtCore.Qt.LeftButton:
-            self.window().move(e.globalPosition().toPoint() - self._off)
-            e.accept()
+        if self._off is None:
+            return
+        if not e.buttons() & QtCore.Qt.LeftButton:
+            self._off = None
+            return
+        self.window().move(e.globalPosition().toPoint() - self._off)
+        e.accept()
 
     def mouseReleaseEvent(self, e):
         self._off = None
@@ -297,19 +304,63 @@ class GripDots(QtWidgets.QWidget):
         p.end()
 
 
+class _ContornoResize(QtWidgets.QWidget):
+    """El contorno del tamano nuevo mientras se arrastra el agarre. Es lo unico
+    que se mueve: redimensionar de verdad un panel con mucho texto en cada
+    movimiento obligaba a recolocarlo todo cada vez y el arrastre iba a tirones.
+    Invisible al compartir pantalla, como el resto del overlay."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint
+                            | QtCore.Qt.Tool | QtCore.Qt.WindowTransparentForInput
+                            | QtCore.Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        self._protegido = False
+
+    def mostrar(self, rect):
+        self.setGeometry(rect)
+        if not self._protegido:
+            try:
+                from overlay import set_capture_protection, set_no_activate
+                set_capture_protection(self.winId(), True)
+                set_no_activate(self.winId())
+            except Exception:
+                pass
+            self._protegido = True
+        self.show()
+        self.raise_()
+
+    def paintEvent(self, _e):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setBrush(QtGui.QColor(124, 149, 255, 26))
+        p.setPen(QtGui.QPen(QtGui.QColor(T.ACCENT), 2, QtCore.Qt.DashLine))
+        p.drawRoundedRect(QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1),
+                          T.R_PANEL, T.R_PANEL)
+
+
 class ResizeGrip(QtWidgets.QWidget):
     """Agarre en la esquina inferior derecha para redimensionar el panel.
 
     Estilo de punticos diagonales, como la barra de arriba. No cambia el cursor
-    (el usuario lo pidio asi). Redimensiona la ventana de nivel superior.
+    (el usuario lo pidio asi). Solo mientras se mantiene pulsado: al arrastrar
+    se ve el contorno del tamano nuevo y el panel se redimensiona una vez, al
+    soltar.
     """
 
-    MIN_W, MIN_H = 520, 200
+    MIN_W, MIN_H = 360, 200
 
     def __init__(self):
         super().__init__()
         self.setFixedSize(18, 18)
+        # Recibe movimientos aun sin boton pulsado: asi, si el soltar se pierde,
+        # el primer movimiento sin boton termina el arrastre (nunca se pega).
+        self.setMouseTracking(True)
         self._start = None
+        self._tamano = None
+        self._contorno = None
 
     def paintEvent(self, _e):
         p = QtGui.QPainter(self)
@@ -326,19 +377,36 @@ class ResizeGrip(QtWidgets.QWidget):
     def mousePressEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton:
             self._start = (e.globalPosition().toPoint(), self.window().size())
+            self._tamano = None
             e.accept()
 
     def mouseMoveEvent(self, e):
-        if self._start is not None and e.buttons() & QtCore.Qt.LeftButton:
-            ini, size0 = self._start
-            d = e.globalPosition().toPoint() - ini
-            w = max(self.MIN_W, size0.width() + d.x())
-            h = max(self.MIN_H, size0.height() + d.y())
-            self.window().resize(w, h)
-            e.accept()
+        if self._start is None:
+            return
+        if not e.buttons() & QtCore.Qt.LeftButton:
+            self._terminar()                  # se solto sin que llegara el aviso
+            return
+        ini, size0 = self._start
+        d = e.globalPosition().toPoint() - ini
+        self._tamano = QtCore.QSize(max(self.MIN_W, size0.width() + d.x()),
+                                    max(self.MIN_H, size0.height() + d.y()))
+        if self._contorno is None:
+            self._contorno = _ContornoResize()
+        self._contorno.mostrar(QtCore.QRect(self.window().frameGeometry().topLeft(),
+                                            self._tamano))
+        e.accept()
 
     def mouseReleaseEvent(self, e):
-        self._start = None
+        self._terminar()
+        e.accept()
+
+    def _terminar(self):
+        """Fin del arrastre: fuera el contorno y el panel, a su tamano nuevo."""
+        tamano, self._tamano, self._start = self._tamano, None, None
+        if self._contorno is not None:
+            self._contorno.hide()
+        if tamano is not None:
+            self.window().resize(tamano)
 
 
 class StatusBadge(QtWidgets.QWidget):
