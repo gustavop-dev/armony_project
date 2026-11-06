@@ -91,7 +91,7 @@ Desmárcalo y añade la API key para las sugerencias reales.
 3. Verifica que las barras **Reunión** y **Micro** se mueven con el audio.
 4. Cuando alguien hable en la reunión, verás la transcripción **en vivo** y, cuando
    te pregunten algo, la **respuesta sugerida**.
-5. **`Bloq Mayús+S`** captura la pantalla (puedes encadenar varias) y **`Bloq Mayús+D`** las manda.
+5. **`Bloq Mayús+S`** captura la pantalla (puedes encadenar varias) y **`Bloq Mayús+A`** las manda junto con lo que dijo el participante.
    La miniatura se queda en el panel de respuesta, alineada a la derecha como el
    mensaje que acabas de enviar, y la respuesta aparece debajo.
 
